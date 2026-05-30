@@ -13,9 +13,9 @@ namespace potfit {
 //   density   — g_i(r)     electron density contributed by a type-i atom, ntypes entries
 //   embedding — F_i(ρ)     cohesive energy at density ρ for a type-i atom, ntypes entries
 struct EAMForceCalculator : ForceCalculatorBase<EAMForceCalculator> {
-  PotentialPairMatrix pair;
-  PotentialTypeArray  density;
-  PotentialTypeArray  embedding;
+  PotentialPair pair;
+  PotentialArray density;
+  PotentialArray embedding;
 
   void eval_forces(Configuration &cfg) const;
 };

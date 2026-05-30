@@ -19,9 +19,9 @@ namespace potfit {
 //   angular — g_{jk}(cos θ)  angular function, indexed by the two *neighbor*
 //                             types tj and tk,              paircol entries
 struct AngularForceCalculator : ForceCalculatorBase<AngularForceCalculator> {
-  PotentialPairMatrix pair;
-  PotentialPairMatrix radial;
-  PotentialPairMatrix angular;
+  PotentialPair pair;
+  PotentialPair radial;
+  PotentialPair angular;
 
   void eval_forces(Configuration &cfg) const;
 };

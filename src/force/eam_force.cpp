@@ -20,14 +20,14 @@ void EAMForceCalculator::eval_forces(Configuration &cfg) const {
   for (auto &ai : cfg.atoms) {
     for (const auto &nb : ai.neighbors) {
       const double r = nb.dist.norm();
-      ai.rho += density(nb.neighbor->type).eval(r);
+      ai.rho += density[*nb.neighbor].eval(r);
     }
   }
 
   // ── After pass 1: embedding energy + gradF_i = dF_i/dρ_i ────────────────
   for (auto &ai : cfg.atoms) {
-    cfg.calc_energy += embedding(ai.type).eval(ai.rho);
-    ai.gradF = embedding(ai.type).deriv(ai.rho);
+    cfg.calc_energy += embedding[ai].eval(ai.rho);
+    ai.gradF = embedding[ai].deriv(ai.rho);
   }
 
   // ── Pass 2: pair + embedding-gradient forces ─────────────────────────────
@@ -46,10 +46,10 @@ void EAMForceCalculator::eval_forces(Configuration &cfg) const {
         continue;
       const double inv_r = 1.0 / r;
 
-      const double phi    = pair(ai.type, aj.type).eval(r);
-      const double dphi   = pair(ai.type, aj.type).deriv(r);
-      const double drho_j = density(aj.type).deriv(r);
-      const double drho_i = density(ai.type).deriv(r);
+      const double phi    = pair[ai, aj].eval(r);
+      const double dphi   = pair[ai, aj].deriv(r);
+      const double drho_j = density[aj].deriv(r);
+      const double drho_i = density[ai].deriv(r);
 
       const double fscale = (dphi + ai.gradF * drho_j + aj.gradF * drho_i) * inv_r;
       const Vec3 fvec = fscale * nb.dist;

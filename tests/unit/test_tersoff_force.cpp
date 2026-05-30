@@ -27,8 +27,8 @@ static TersoffParams si_tersoff() {
 
 static TersoffForceCalculator make_calc(const TersoffParams& p = si_tersoff()) {
     TersoffForceCalculator calc;
-    calc.ntypes = 1;
-    calc.params.push_back(p);
+    calc.params.reserve(1);
+    calc.params.emplace_back(p);
     return calc;
 }
 

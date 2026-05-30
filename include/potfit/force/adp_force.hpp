@@ -28,11 +28,11 @@ namespace potfit {
 //   dipole     — u_{ij}(r)  dipole coupling,         paircol entries
 //   quadrupole — w_{ij}(r)  quadrupole coupling,     paircol entries
 struct ADPForceCalculator : ForceCalculatorBase<ADPForceCalculator> {
-  PotentialPairMatrix pair;
-  PotentialTypeArray  density;
-  PotentialTypeArray  embedding;
-  PotentialPairMatrix dipole;
-  PotentialPairMatrix quadrupole;
+  PotentialPair pair;
+  PotentialArray density;
+  PotentialArray embedding;
+  PotentialPair dipole;
+  PotentialPair quadrupole;
 
   void eval_forces(Configuration &cfg) const;
 };
