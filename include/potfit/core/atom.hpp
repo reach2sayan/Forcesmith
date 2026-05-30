@@ -25,6 +25,12 @@ struct Atom : Serializable<Atom> {
   Vec3 force = Vec3::Zero();      // reference (target) force
   Vec3 calc_force = Vec3::Zero(); // written by ForceCalculator
   std::vector<NeighborEntry> neighbors;
+
+  // EAM/ADP scratch fields — zeroed before each force evaluation, not serialized.
+  double  rho    = 0.0;              // accumulated electron density
+  double  gradF  = 0.0;             // dF/dρ (embedding energy gradient)
+  Vec3    mu     = Vec3::Zero();     // dipole distortion (ADP)
+  SymTens lambda = SymTens::Zero();  // quadrupole distortion (ADP)
 };
 
 struct Configuration : Serializable<Configuration> {
