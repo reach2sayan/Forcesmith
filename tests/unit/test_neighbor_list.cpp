@@ -3,6 +3,7 @@
 
 #include <gtest/gtest.h>
 #include <cmath>
+#include <ranges>
 
 using namespace potfit;
 
@@ -105,37 +106,35 @@ TEST(NeighborList, PairSlotSingleType) {
     cfg.atoms = {make_atom(0, {0.0, 0.0, 0.0}),
                  make_atom(0, {1.0, 0.0, 0.0})};
 
-    // One pair type (0,0) → pots[0]
-    std::vector<Potential> pots;
-    pots.emplace_back(ConstPot{});
+    PotentialPair pots;
+    pots.reserve(1);
+    pots.emplace_back(ConstPot{});  // (0,0)
     build_neighbor_list(cfg, 5.0, pots);
 
     ASSERT_EQ(cfg.atoms[0].neighbors.size(), 1u);
-    EXPECT_EQ(cfg.atoms[0].neighbors[0].pot, &pots[0]);
+    EXPECT_EQ(cfg.atoms[0].neighbors[0].pot, &(pots[0, 0]));
 }
 
 TEST(NeighborList, PairSlotTwoTypes) {
     auto cfg = make_box(10.0);
-    // ntypes = 2; pair table: (0,0)→0, (0,1)→1, (1,1)→2
     cfg.atoms = {make_atom(0, {0.0, 0.0, 0.0}),
                  make_atom(1, {1.0, 0.0, 0.0}),
                  make_atom(1, {0.0, 1.0, 0.0})};
 
-    std::vector<Potential> pots;
-    pots.emplace_back(ConstPot{});  // slot 0: (0,0)
-    pots.emplace_back(ConstPot{});  // slot 1: (0,1)
-    pots.emplace_back(ConstPot{});  // slot 2: (1,1)
+    PotentialPair pots;
+    pots.reserve(2);
+    pots.emplace_back(ConstPot{});  // (0,0)
+    pots.emplace_back(ConstPot{});  // (0,1)
+    pots.emplace_back(ConstPot{});  // (1,1)
     build_neighbor_list(cfg, 5.0, pots);
 
-    // atom 0 (type 0) sees atom 1 (type 1) and atom 2 (type 1) → pots[1]
     for (const auto& nb : cfg.atoms[0].neighbors)
-        EXPECT_EQ(nb.pot, &pots[1]) << "expected pots[1] for (0,1) pair";
+        EXPECT_EQ(nb.pot, &(pots[0, 1])) << "expected (0,1) pair potential";
 
-    // atom 1 (type 1) sees atom 2 (type 1) → pots[2]
     bool found_type1_type1 = false;
     for (const auto& nb : cfg.atoms[1].neighbors) {
         if (nb.neighbor->type == 1) {
-            EXPECT_EQ(nb.pot, &pots[2]);
+            EXPECT_EQ(nb.pot, &(pots[1, 1]));
             found_type1_type1 = true;
         }
     }
@@ -155,14 +154,10 @@ static Configuration make_fcc(double a, int m = 2) {
         {0.0,   a/2.0, a/2.0},
     };
 
-    for (int nx = 0; nx < m; ++nx)
-        for (int ny = 0; ny < m; ++ny)
-            for (int nz = 0; nz < m; ++nz)
-                for (const auto& b : basis)
-                    cfg.atoms.push_back(
-                        make_atom(0, {nx * a + b[0],
-                                      ny * a + b[1],
-                                      nz * a + b[2]}));
+    for (const auto& [nx, ny, nz, b] : std::views::cartesian_product(
+             std::views::iota(0, m), std::views::iota(0, m), std::views::iota(0, m),
+             std::span<const Vec3>(basis)))
+        cfg.atoms.push_back(make_atom(0, {nx * a + b[0], ny * a + b[1], nz * a + b[2]}));
     return cfg;
 }
 

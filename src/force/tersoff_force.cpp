@@ -66,16 +66,13 @@ constexpr double dbond_dzeta(double zeta, const TersoffParams &p) noexcept {
 
 } // anonymous namespace
 
-// ─────────────────────────────────────────────────────────────────────────────
-
 void TersoffForceCalculator::eval_forces(Configuration &cfg) const {
   cfg.calc_energy = 0.0;
   cfg.calc_stress = SymTens::Zero();
-  for (auto &a : cfg.atoms)
-    a.calc_force = Vec3::Zero();
+  std::for_each(cfg.atoms.begin(), cfg.atoms.end(),
+                [](auto &a) { a.calc_force = Vec3::Zero(); });
 
   const int natoms = static_cast<int>(cfg.atoms.size());
-
   for (int ii = 0; ii < natoms; ++ii) {
     Atom &ai = cfg.atoms[ii];
     const int ti = ai.type;
@@ -111,14 +108,16 @@ void TersoffForceCalculator::eval_forces(Configuration &cfg) const {
         const NeighborEntry &nb_k = ai.neighbors[kk];
         const Vec3 &d2 = nb_k.dist;
         const double r2 = d2.norm();
-        if (r2 < 1e-14)
+        if (r2 < 1e-14) {
           continue;
+        }
 
         const int tk = nb_k.neighbor->type;
         const TersoffParams &p_ik = params[ti, tk];
         const double fc_ik = fc_val(r2, p_ik.R, p_ik.S);
-        if (fc_ik == 0.0)
+        if (fc_ik == 0.0) {
           continue;
+        }
 
         const double cos_theta = d1.dot(d2) / (r1 * r2);
         zeta += fc_ik * g_val(cos_theta, p);
@@ -145,30 +144,33 @@ void TersoffForceCalculator::eval_forces(Configuration &cfg) const {
       //
       // Note: E = (1/2) f_c [VR − b VA] so ∂E/∂b = −(1/2) f_c VA
       //       F_n = −∂E/∂b × db/dζ × ∂ζ/∂r_n = (1/2) f_c VA db/dζ × ∂ζ/∂r_n
-      if (zeta == 0.0)
+      if (zeta == 0.0) {
         continue;
+      }
 
       const double db_dz = dbond_dzeta(zeta, p);
       const double P = 0.5 * fc_ij * VA * db_dz; // < 0 (db/dz < 0, VA > 0)
 
       const double inv_r1 = 1.0 / r1;
-
       for (int kk = 0; kk < nn; ++kk) {
-        if (kk == jj)
+        if (kk == jj) {
           continue;
+        }
         const NeighborEntry &nb_k = ai.neighbors[kk];
         Atom &ak = const_cast<Atom &>(*nb_k.neighbor);
         const Vec3 &d2 = nb_k.dist;
         const double r2 = d2.norm();
-        if (r2 < 1e-14)
+        if (r2 < 1e-14) {
           continue;
+        }
 
         const int tk = nb_k.neighbor->type;
         const TersoffParams &p_ik = params[ti, tk];
         const double fc_ik = fc_val(r2, p_ik.R, p_ik.S);
         const double dfc_ik = dfc_val(r2, p_ik.R, p_ik.S);
-        if (fc_ik == 0.0 && dfc_ik == 0.0)
+        if (fc_ik == 0.0 && dfc_ik == 0.0) {
           continue;
+        }
 
         const double inv_r2 = 1.0 / r2;
         const double cos_theta = d1.dot(d2) * inv_r1 * inv_r2;

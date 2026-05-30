@@ -26,18 +26,12 @@ struct Atom : Serializable<Atom> {
   Vec3 calc_force = Vec3::Zero(); // written by ForceCalculator
   std::vector<NeighborEntry> neighbors;
 
-  // EAM/ADP scratch fields — zeroed before each force evaluation, not serialized.
-  double  rho    = 0.0;              // accumulated electron density
-  double  gradF  = 0.0;             // dF/dρ (embedding energy gradient)
-  Vec3    mu     = Vec3::Zero();     // dipole distortion (ADP)
-  SymTens lambda = SymTens::Zero();  // quadrupole distortion (ADP)
-  void clear_accumulators() {
-    calc_force = Vec3::Zero();
-    rho = 0.0;
-    gradF = 0.0;
-    mu = Vec3::Zero();
-    lambda = SymTens::Zero();
-  }
+  // EAM/ADP scratch fields — zeroed before each force evaluation, not
+  // serialized.
+  double rho = 0.0;                 // accumulated electron density
+  double gradF = 0.0;               // dF/dρ (embedding energy gradient)
+  Vec3 mu = Vec3::Zero();           // dipole distortion (ADP)
+  SymTens lambda = SymTens::Zero(); // quadrupole distortion (ADP)
 };
 
 struct Configuration : Serializable<Configuration> {
@@ -49,10 +43,6 @@ struct Configuration : Serializable<Configuration> {
   double calc_energy = 0.0;
   SymTens calc_stress = SymTens::Zero();
 };
-
-// Serializer specializations
-// Order matters: NeighborEntry
-// before Atom (Atom serializes a vector of them).
 
 template <> struct Serializer<NeighborEntry> {
   template <class Archive>

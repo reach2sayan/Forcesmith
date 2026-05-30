@@ -25,6 +25,6 @@ struct AngularForceCalculator : ForceCalculatorBase<AngularForceCalculator> {
   void eval_forces(Configuration &cfg) const;
 };
 
-static_assert(ForceCalculator<AngularForceCalculator>);
+static_assert(ForceCalculatorModel<AngularForceCalculator>);
 
 } // namespace potfit

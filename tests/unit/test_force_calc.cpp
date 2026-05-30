@@ -1,5 +1,6 @@
 #include "potfit/core/neighbor_list.hpp"
 #include "potfit/force/force_calculator.hpp"
+#include "potfit/force/pair_force.hpp"
 
 #include <gtest/gtest.h>
 #include <cmath>
@@ -43,8 +44,9 @@ static Configuration make_dimer_geometry(double r) {
     return cfg;
 }
 
-static std::vector<Potential> lj_pots(double eps = 1.0, double sigma = 1.0) {
-    std::vector<Potential> pots;
+static PotentialPair lj_pots(double eps = 1.0, double sigma = 1.0) {
+    PotentialPair pots;
+    pots.reserve(1);  // 1 type → 1 pair (0,0)
     pots.emplace_back(LJPotential{eps, sigma});
     return pots;
 }

@@ -1,4 +1,5 @@
 #include "potfit/force/angular_force.hpp"
+#include "potfit/events/signals.hpp"
 
 #include <cmath>
 #include <numeric>
@@ -16,8 +17,9 @@ void AngularForceCalculator::eval_forces(Configuration &cfg) const {
   for (auto &ai : cfg.atoms) {
     for (const auto &nb : ai.neighbors) {
       const double r = nb.dist.norm();
-      if (r < 1e-14)
+      if (r < 1e-14) {
         continue;
+      }
       const double phi = pair[ai.type, nb.neighbor->type].eval(r);
       const double dphi = pair[ai.type, nb.neighbor->type].deriv(r);
       const Vec3 fvec = (dphi / r) * nb.dist;
@@ -67,8 +69,9 @@ void AngularForceCalculator::eval_forces(Configuration &cfg) const {
         const auto &nb_k = nbs[kk];
         const Vec3 &d2 = nb_k.dist;
         const double r2 = d2.norm();
-        if (r2 < 1e-14)
+        if (r2 < 1e-14) {
           continue;
+        }
         const double inv_r2 = 1.0 / r2;
 
         const double f2 = radial[ai.type, nb_k.neighbor->type].eval(r2);

@@ -37,6 +37,6 @@ struct TersoffForceCalculator : ForceCalculatorBase<TersoffForceCalculator> {
   void eval_forces(Configuration &cfg) const;
 };
 
-static_assert(ForceCalculator<TersoffForceCalculator>);
+static_assert(ForceCalculatorModel<TersoffForceCalculator>);
 
 } // namespace potfit

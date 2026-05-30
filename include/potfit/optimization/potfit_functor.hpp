@@ -29,8 +29,8 @@ struct PotfitFunctor {
   // Evaluate Jacobian fjac via central finite differences.
   int df(const Eigen::VectorXd &x, Eigen::MatrixXd &fjac) const;
 
-  int inputs() const; // number of free parameters
-  int values() const; // number of residuals
+  constexpr int inputs() const { return inputs_; }
+  constexpr int values() const { return values_; }
 
   std::span<const Potential> potentials() const { return potentials_; }
   std::span<Potential> potentials() { return potentials_; }

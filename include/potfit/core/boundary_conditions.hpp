@@ -6,6 +6,14 @@
 namespace potfit {
 
 class PeriodicBC {
+private:
+  template <class RoundOp>
+  [[nodiscard]] Vec3 map_fractional(const Vec3 &v,
+                                    RoundOp &&round) const noexcept {
+    Vec3 frac = inv_box_ * v;
+    frac = frac.array() - round(frac.array());
+    return box_ * frac;
+  }
 public:
   explicit PeriodicBC(const Mat3 &box) { set_box(box); }
   void set_box(const Mat3 &box) {
@@ -20,19 +28,14 @@ public:
   }
   [[nodiscard]] constexpr double volume() const noexcept { return volume_; }
 
-  // Wrap a Cartesian position into the unit cell [0,1)³ (fractional coords).
+  // Wrap a Cartesian position into the unit cell [0,1)³ (frac coords).
   [[nodiscard]] Vec3 wrap(const Vec3 &r) const noexcept {
-    Vec3 frac = inv_box_ * r;
-    frac = frac.array() - frac.array().floor();
-    return box_ * frac;
+    return map_fractional(r, [](const auto &x) { return x.floor(); });
   }
 
-  // Minimum-image displacement: maps delta into [-0.5, 0.5)³ in fractional
-  // coords.
+  // Mini-imag displacement: maps delta into [-0.5, 0.5)³ in frac coords.
   [[nodiscard]] Vec3 min_image(const Vec3 &d) const noexcept {
-    Vec3 frac = inv_box_ * d;
-    frac = frac.array() - frac.array().round();
-    return box_ * frac;
+    return map_fractional(d, [](const auto &x) { return x.round(); });
   }
 
 private:
@@ -56,17 +59,9 @@ private:
 };
 
 using BoundaryConditions = std::variant<PeriodicBC, InfiniteBC>;
-[[nodiscard]] inline Vec3 bc_wrap(const BoundaryConditions &bc, const Vec3 &r) {
-  return std::visit([&](const auto &b) { return b.wrap(r); }, bc);
-}
 
-[[nodiscard]] inline Vec3 bc_min_image(const BoundaryConditions &bc,
-                                       const Vec3 &d) {
-  return std::visit([&](const auto &b) { return b.min_image(d); }, bc);
-}
-
-[[nodiscard]] inline double bc_volume(const BoundaryConditions &bc) {
-  return std::visit([](const auto &b) { return b.volume(); }, bc);
-}
+[[nodiscard]] Vec3 bc_wrap(const BoundaryConditions &bc, const Vec3 &r);
+[[nodiscard]] Vec3 bc_min_image(const BoundaryConditions &bc, const Vec3 &d);
+[[nodiscard]] double bc_volume(const BoundaryConditions &bc);
 
 } // namespace potfit

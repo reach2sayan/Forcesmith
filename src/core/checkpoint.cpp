@@ -47,9 +47,6 @@ leaf::result<void> CheckpointWriter::write() const {
   return {};
 }
 
-// ── CheckpointReader::read
-// ────────────────────────────────────────────────────
-
 leaf::result<void>
 CheckpointReader::read(std::vector<Configuration> &configs,
                        std::vector<Potential> &potentials) const {

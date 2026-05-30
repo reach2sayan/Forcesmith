@@ -2,6 +2,8 @@
 
 #include <unsupported/Eigen/NonLinearOptimization>
 
+#include <ranges>
+
 namespace potfit {
 
 namespace {
@@ -18,7 +20,7 @@ struct FunctorAdapter {
   int n_values;
 
   int operator()(const Eigen::VectorXd &x, Eigen::VectorXd &fvec) const {
-    fvec = fn(x);
+    fvec = std::invoke(fn, x);
     return 0;
   }
 
@@ -26,7 +28,7 @@ struct FunctorAdapter {
   int df(const Eigen::VectorXd &x, Eigen::MatrixXd &fjac) const {
     constexpr double delta = 1e-5;
     Eigen::VectorXd fp, fm, xp = x;
-    for (int j = 0; j < n_inputs; ++j) {
+    for (int j : std::views::iota(0, n_inputs)) {
       xp[j] += delta;
       fp = fn(xp);
       xp[j] -= 2.0 * delta;
@@ -37,8 +39,8 @@ struct FunctorAdapter {
     return 0;
   }
 
-  int inputs() const { return n_inputs; }
-  int values() const { return n_values; }
+  constexpr int inputs() const { return n_inputs; }
+  constexpr int values() const { return n_values; }
 };
 
 } // namespace
@@ -53,6 +55,10 @@ int EigenLMSolver::minimize(
   lm.parameters.xtol = xtol;
   lm.parameters.ftol = ftol;
   return static_cast<int>(lm.minimize(x));
+}
+
+Solver make_default_solver(int max_iter, double xtol, double ftol) {
+  return Solver(EigenLMSolver{max_iter, xtol, ftol});
 }
 
 } // namespace potfit

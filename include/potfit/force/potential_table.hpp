@@ -2,9 +2,31 @@
 
 #include "potfit/core/potential_base.hpp"
 
+#include <boost/stl_interfaces/iterator_interface.hpp>
+
+#include <cstddef>
 #include <vector>
 
 namespace potfit {
+
+// Random-access iterator over the contiguous storage of TypeArray<T>.
+// boost::stl_interfaces::iterator_interface derives all iterator operations
+// from the three primitives: operator*, operator+=, and operator- via
+// base_reference().
+template <typename T>
+struct TypeArrayIterator
+    : boost::stl_interfaces::iterator_interface<TypeArrayIterator<T>,
+                                                std::random_access_iterator_tag,
+                                                std::remove_const_t<T>, T &> {
+  TypeArrayIterator() = default;
+  explicit TypeArrayIterator(T *p) noexcept : ptr_(p) {}
+
+private:
+  constexpr T *&base_reference() noexcept { return ptr_; }
+  constexpr T *const &base_reference() const noexcept { return ptr_; }
+  friend boost::stl_interfaces::access;
+  T *ptr_ = nullptr;
+};
 
 // Symmetric ntypes×ntypes upper-triangular matrix of T.
 // Stores only the ntypes*(ntypes+1)/2 unique entries.
@@ -33,6 +55,8 @@ public:
     return data_[slot(ti, tj)];
   }
   constexpr T &operator[](int ti, int tj) { return data_[slot(ti, tj)]; }
+  constexpr int         ntypes() const noexcept { return ntypes_; }
+  constexpr std::size_t size()   const noexcept { return data_.size(); }
   template <typename A, typename B>
     requires requires(A a, B b) {
       a.type;
@@ -56,10 +80,16 @@ template <typename T> class TypeArray {
   std::vector<T> data_;
 
 public:
+  using iterator = TypeArrayIterator<T>;
+  using const_iterator = TypeArrayIterator<const T>;
+  using value_type = T;
+  using size_type = std::size_t;
+
   constexpr void reserve(int ntypes) { data_.reserve(ntypes); }
   template <typename U> constexpr void emplace_back(U &&u) {
     data_.emplace_back(std::forward<U>(u));
   }
+
   constexpr const T &operator[](int ti) const { return data_[ti]; }
   constexpr T &operator[](int ti) { return data_[ti]; }
   template <typename A>
@@ -72,6 +102,17 @@ public:
   constexpr T &operator[](const A &a) {
     return data_[a.type];
   }
+
+  iterator begin() noexcept { return iterator(data_.data()); }
+  iterator end() noexcept { return iterator(data_.data() + data_.size()); }
+  const_iterator begin() const noexcept { return const_iterator(data_.data()); }
+  const_iterator end() const noexcept {
+    return const_iterator(data_.data() + data_.size());
+  }
+  const_iterator cbegin() const noexcept { return begin(); }
+  const_iterator cend() const noexcept { return end(); }
+  std::size_t size() const noexcept { return data_.size(); }
+  bool empty() const noexcept { return data_.empty(); }
 };
 
 // Convenience aliases for the common Potential case.

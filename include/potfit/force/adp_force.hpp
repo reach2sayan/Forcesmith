@@ -36,6 +36,6 @@ struct ADPForceCalculator : ForceCalculatorBase<ADPForceCalculator> {
   void eval_forces(Configuration &cfg) const;
 };
 
-static_assert(ForceCalculator<ADPForceCalculator>);
+static_assert(ForceCalculatorModel<ADPForceCalculator>);
 
 } // namespace potfit

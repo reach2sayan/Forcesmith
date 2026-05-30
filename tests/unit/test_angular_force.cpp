@@ -3,6 +3,7 @@
 
 #include <gtest/gtest.h>
 #include <cmath>
+#include <ranges>
 
 using namespace potfit;
 
@@ -134,9 +135,8 @@ TEST(AngularForce, ZeroFModZerosThreeBody) {
     // Build reference with pair-only PairForceCalculator via zero-f AngularForceCalculator
     make_pair_only_calc().eval_forces(cfg_pair);
 
-    for (int i = 0; i < 3; ++i)
-        EXPECT_NEAR((cfg_ang.atoms[i].calc_force - cfg_pair.atoms[i].calc_force).norm(),
-                    0.0, 1e-12);
+    for (const auto& [ang, pair] : std::views::zip(cfg_ang.atoms, cfg_pair.atoms))
+        EXPECT_NEAR((ang.calc_force - pair.calc_force).norm(), 0.0, 1e-12);
     EXPECT_NEAR(cfg_ang.calc_energy, cfg_pair.calc_energy, 1e-12);
 }
 

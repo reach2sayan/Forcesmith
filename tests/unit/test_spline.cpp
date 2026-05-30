@@ -3,6 +3,7 @@
 
 #include <gtest/gtest.h>
 #include <cmath>
+#include <ranges>
 
 using namespace potfit;
 
@@ -75,7 +76,7 @@ TEST(SplinePotential, TwoKnotLinearCase) {
 TEST(SplinePotential, EvalMonotonicOnMonotonicData) {
     // Monotone input; spline should not wildly oscillate between knots.
     SplinePotential sp({0.0, 1.0, 2.0, 3.0}, {0.0, 1.0, 2.0, 3.0});
-    for (int k = 1; k <= 9; ++k) {
+    for (int k : std::views::iota(1, 10)) {
         const double r = k * 0.3;
         EXPECT_GT(sp.eval(r + 0.05), sp.eval(r - 0.05))
             << "non-monotone at r=" << r;

@@ -9,8 +9,6 @@
 #include <vector>
 
 namespace potfit::io {
-
-// LEAF error types — loaded onto the error object, not returned by value.
 struct ParseError {
   std::string message;
   std::size_t line = 0;

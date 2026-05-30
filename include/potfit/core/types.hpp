@@ -15,8 +15,6 @@ namespace potfit {
 
 using Vec3 = Eigen::Vector3d;
 using Mat3 = Eigen::Matrix3d;
-// Symmetric stress tensor stored as full 3×3; upper-triangle convention matches
-// original sym_tens fields xx/yy/zz/xy/yz/zx.
 using SymTens = Eigen::Matrix3d;
 
 enum class PotentialFormat {

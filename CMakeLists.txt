@@ -13,7 +13,9 @@ list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 find_package(Eigen3 3.4 REQUIRED NO_MODULE)
 
 # CMP0167 NEW: use Boost's own CMake config files (FindBoost module removed).
-cmake_policy(SET CMP0167 NEW)
+if(POLICY CMP0167)
+    cmake_policy(SET CMP0167 NEW)
+endif()
 find_package(Boost 1.83 CONFIG REQUIRED COMPONENTS serialization program_options)
 
 # boost::parser is header-only and not yet in Ubuntu Boost packages;
@@ -29,7 +31,9 @@ FetchContent_Declare(boost_parser
 FetchContent_GetProperties(boost_parser)
 if(NOT boost_parser_POPULATED)
     # CMP0169 OLD: allow the explicit FetchContent_Populate call used here.
-    cmake_policy(SET CMP0169 OLD)
+    if(POLICY CMP0169)
+        cmake_policy(SET CMP0169 OLD)
+    endif()
     FetchContent_Populate(boost_parser)
 endif()
 add_library(boost_parser INTERFACE)
@@ -57,10 +61,28 @@ target_link_options(potfit_warnings INTERFACE
 
 # ── Implementation library (linked by both executable and tests) ──────────────
 
-file(GLOB_RECURSE POTFIT_LIB_SOURCES "src/core/*.cpp" "src/io/*.cpp"
-                                      "src/potentials/*.cpp"
-                                      "src/force/*.cpp"
-                                      "src/optimization/*.cpp")
+set(POTFIT_LIB_SOURCES
+    src/core/boundary_conditions.cpp
+    src/core/checkpoint.cpp
+    src/core/elements.cpp
+    src/core/neighbor_list.cpp
+    src/core/rescale.cpp
+    src/force/adp_force.cpp
+    src/force/pair_force.cpp
+    src/force/angular_force.cpp
+    src/force/eam_force.cpp
+    src/force/stiweb_force.cpp
+    src/force/tersoff_force.cpp
+    src/io/config_reader.cpp
+    src/io/force_model_reader.cpp
+    src/io/output_writer.cpp
+    src/io/potential_reader.cpp
+    src/optimization/optimizer.cpp
+    src/optimization/potfit_functor.cpp
+    src/optimization/solver.cpp
+    src/potentials/analytic_potential.cpp
+    src/potentials/spline.cpp
+)
 
 add_library(potfit_lib STATIC ${POTFIT_LIB_SOURCES})
 
@@ -104,7 +126,25 @@ FetchContent_Declare(googletest
 set(INSTALL_GTEST OFF CACHE BOOL "" FORCE)
 FetchContent_MakeAvailable(googletest)
 
-file(GLOB UNIT_TEST_SOURCES "tests/unit/*.cpp")
+set(UNIT_TEST_SOURCES
+    tests/unit/test_adp_force.cpp
+    tests/unit/test_analytic_functions.cpp
+    tests/unit/test_angular_force.cpp
+    tests/unit/test_boundary_conditions.cpp
+    tests/unit/test_checkpoint.cpp
+    tests/unit/test_config_reader.cpp
+    tests/unit/test_eam_force.cpp
+    tests/unit/test_force_calc.cpp
+    tests/unit/test_force_model_reader.cpp
+    tests/unit/test_neighbor_list.cpp
+    tests/unit/test_optimizer.cpp
+    tests/unit/test_potential_reader.cpp
+    tests/unit/test_rescale.cpp
+    tests/unit/test_spline.cpp
+    tests/unit/test_stiweb_force.cpp
+    tests/unit/test_tersoff_force.cpp
+    tests/unit/test_types.cpp
+)
 
 add_executable(potfit_tests ${UNIT_TEST_SOURCES})
 

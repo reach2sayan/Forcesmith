@@ -20,6 +20,6 @@ struct EAMForceCalculator : ForceCalculatorBase<EAMForceCalculator> {
   void eval_forces(Configuration &cfg) const;
 };
 
-static_assert(ForceCalculator<EAMForceCalculator>);
+static_assert(ForceCalculatorModel<EAMForceCalculator>);
 
 } // namespace potfit

@@ -7,6 +7,7 @@
 #include <nlohmann/json.hpp>
 
 #include <functional>
+#include <ranges>
 #include <span>
 #include <string>
 #include <unordered_map>
@@ -113,9 +114,9 @@ leaf::result<std::vector<Potential>> parse_potential(std::string_view input) {
 
     if (fmt == "tabulated") {
       for (const auto &p : pots_arr) {
-        const double rmin = p["rmin"].get<double>();
-        const double rmax = p["rmax"].get<double>();
-        const auto &knots_arr = p["knots"];
+        const double rmin = p.at("rmin").get<double>();
+        const double rmax = p.at("rmax").get<double>();
+        const auto &knots_arr = p.at("knots");
         if (!knots_arr.is_array() || knots_arr.size() < 2)
           return fail("tabulated potential: 'knots' must be an array of >= 2 values");
 
@@ -123,9 +124,9 @@ leaf::result<std::vector<Potential>> parse_potential(std::string_view input) {
         const double h = (rmax - rmin) / (n - 1);
         std::vector<double> x(static_cast<std::size_t>(n));
         std::vector<double> y(static_cast<std::size_t>(n));
-        for (int k = 0; k < n; ++k) {
-          x[static_cast<std::size_t>(k)] = rmin + k * h;
-          y[static_cast<std::size_t>(k)] = knots_arr[k].get<double>();
+        for (auto [k, knot] : std::views::enumerate(knots_arr)) {
+          x[k] = rmin + static_cast<double>(k) * h;
+          y[k] = knot.get<double>();
         }
         potentials.emplace_back(SplinePotential(std::move(x), std::move(y)));
       }
@@ -144,8 +145,8 @@ leaf::result<std::vector<Potential>> parse_potential(std::string_view input) {
           return fail("unknown analytic function: " + type_name);
         const auto &[nparams, param_names, make] = it->second;
 
-        const double rmin = p["rmin"].get<double>();
-        const double rmax = p["rmax"].get<double>();
+        const double rmin = p.at("rmin").get<double>();
+        const double rmax = p.at("rmax").get<double>();
 
         std::vector<double> params;
         params.reserve(static_cast<std::size_t>(nparams));

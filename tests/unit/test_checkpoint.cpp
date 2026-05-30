@@ -8,6 +8,7 @@
 #include <chrono>
 #include <cmath>
 #include <filesystem>
+#include <ranges>
 
 namespace leaf = boost::leaf;
 using namespace potfit;
@@ -141,7 +142,7 @@ TEST(Checkpoint, BoxMatrixPreserved) {
 TEST(Checkpoint, MultipleConfigurations) {
     TmpDir tmp;
     std::vector<Configuration> configs_in;
-    for (int i = 0; i < 3; ++i) {
+    for (int i : std::views::iota(0, 3)) {
         auto cfg = make_test_config();
         cfg.energy = static_cast<double>(i) * -0.5;
         cfg.weight = static_cast<double>(i + 1);
@@ -155,8 +156,8 @@ TEST(Checkpoint, MultipleConfigurations) {
     ASSERT_TRUE(round_trip(tmp.prefix("multi"), configs_in, pots_in, cfgs2, pots2));
 
     ASSERT_EQ(cfgs2.size(), 3u);
-    for (int i = 0; i < 3; ++i) {
-        EXPECT_NEAR(cfgs2[i].energy, static_cast<double>(i) * -0.5, 1e-12);
-        EXPECT_NEAR(cfgs2[i].weight, static_cast<double>(i + 1),    1e-12);
+    for (auto [i, cfg] : std::views::enumerate(cfgs2)) {
+        EXPECT_NEAR(cfg.energy, static_cast<double>(i) * -0.5, 1e-12);
+        EXPECT_NEAR(cfg.weight, static_cast<double>(i + 1),    1e-12);
     }
 }

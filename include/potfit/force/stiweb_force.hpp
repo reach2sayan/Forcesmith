@@ -44,6 +44,6 @@ struct StiwebForceCalculator : ForceCalculatorBase<StiwebForceCalculator> {
   void eval_forces(Configuration &cfg) const;
 };
 
-static_assert(ForceCalculator<StiwebForceCalculator>);
+static_assert(ForceCalculatorModel<StiwebForceCalculator>);
 
 } // namespace potfit

@@ -1,19 +1,4 @@
 #pragma once
-
-// Serialization infrastructure:
-//
-//   struct Foo : Serializable<Foo> { int x; double y; };
-//
-//   template<> struct Serializer<Foo> {
-//       template<class Archive>
-//       static void apply(Archive& ar, Foo& f, unsigned int) {
-//           ar & f.x & f.y;
-//       }
-//   };
-//
-// Serializer<T> must be specialized before any archive reads/writes Foo.
-// All fields accessed by the specialization must be public.
-
 #include <boost/serialization/access.hpp>
 
 namespace potfit {
