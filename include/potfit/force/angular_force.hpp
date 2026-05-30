@@ -22,7 +22,6 @@ struct AngularForceCalculator : ForceCalculatorBase<AngularForceCalculator> {
   PotentialPair pair;
   PotentialPair radial;
   PotentialPair angular;
-
   void eval_forces(Configuration &cfg) const;
 };
 

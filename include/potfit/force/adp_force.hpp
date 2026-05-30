@@ -33,7 +33,6 @@ struct ADPForceCalculator : ForceCalculatorBase<ADPForceCalculator> {
   PotentialArray embedding;
   PotentialPair dipole;
   PotentialPair quadrupole;
-
   void eval_forces(Configuration &cfg) const;
 };
 

@@ -1,16 +1,17 @@
 #include "potfit/optimization/optimizer.hpp"
 #include "potfit/optimization/potfit_functor.hpp"
 
-#include <unsupported/Eigen/NonLinearOptimization>
 
 namespace potfit {
 
-int run_optimizer(std::span<Configuration> configs,
-                  std::vector<Potential> &potentials,
-                  const OptimizerOptions &opts) {
+namespace {
+
+int run_with_solver(std::span<Configuration> configs,
+                    std::vector<Potential> &potentials,
+                    const OptimizerOptions &opts, const Solver &solver) {
   PotfitFunctor functor(configs, potentials, opts.energy_weight);
 
-  // Gather current parameter values into the initial x vector.
+  // Gather current parameter values into x.
   Eigen::VectorXd x(functor.inputs());
   {
     int off = 0;
@@ -20,14 +21,17 @@ int run_optimizer(std::span<Configuration> configs,
     }
   }
 
-  Eigen::LevenbergMarquardt<PotfitFunctor> lm(functor);
-  lm.parameters.maxfev = opts.max_iter;
-  lm.parameters.xtol = opts.xtol;
-  lm.parameters.ftol = opts.ftol;
+  // Build a residual closure over the functor.
+  auto residual_fn = [&functor](const Eigen::VectorXd &params) {
+    Eigen::VectorXd fvec(functor.values());
+    functor(params, fvec);
+    return fvec;
+  };
 
-  auto status = lm.minimize(x);
+  const int status = solver.minimize(x, std::move(residual_fn), functor.values());
 
-  // Scatter optimized parameters back into potentials.
+  // Scatter the final x back into potentials (functor already scatters on each
+  // call, but we do it explicitly here too so callers see a consistent state).
   {
     int off = 0;
     for (auto &p : potentials) {
@@ -36,7 +40,22 @@ int run_optimizer(std::span<Configuration> configs,
     }
   }
 
-  return static_cast<int>(status);
+  return status;
+}
+
+} // namespace
+
+int run_optimizer(std::span<Configuration> configs,
+                  std::vector<Potential> &potentials,
+                  const OptimizerOptions &opts) {
+  return run_with_solver(configs, potentials, opts,
+                         make_default_solver(opts.max_iter, opts.xtol, opts.ftol));
+}
+
+int run_optimizer(std::span<Configuration> configs,
+                  std::vector<Potential> &potentials,
+                  const OptimizerOptions &opts, const Solver &solver) {
+  return run_with_solver(configs, potentials, opts, solver);
 }
 
 } // namespace potfit

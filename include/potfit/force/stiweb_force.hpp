@@ -27,22 +27,21 @@
 namespace potfit {
 
 struct SWParams {
-    double A      = 1.0;   // 2-body amplitude (eV)
-    double B      = 1.0;   // 2-body inner shape (dimensionless)
-    double p      = 4.0;   // repulsive exponent
-    double q      = 0.0;   // attractive exponent
-    double a      = 1.8;   // cutoff (in units of σ)
-    double sigma  = 1.0;   // length scale (Å)
-    double lambda = 1.0;   // 3-body strength (eV)
-    double gamma  = 1.0;   // 3-body radial damping
+  double A = 1.0;      // 2-body amplitude (eV)
+  double B = 1.0;      // 2-body inner shape (dimensionless)
+  double p = 4.0;      // repulsive exponent
+  double q = 0.0;      // attractive exponent
+  double a = 1.8;      // cutoff (in units of σ)
+  double sigma = 1.0;  // length scale (Å)
+  double lambda = 1.0; // 3-body strength (eV)
+  double gamma = 1.0;  // 3-body radial damping
 };
 
 // params — one SWParams per unique pair type (paircol = ntypes*(ntypes+1)/2).
 // Access via params(ti, tj).
 struct StiwebForceCalculator : ForceCalculatorBase<StiwebForceCalculator> {
-    SymmetricMatrix<SWParams> params;
-
-    void eval_forces(Configuration& cfg) const;
+  SymmetricMatrix<SWParams> params;
+  void eval_forces(Configuration &cfg) const;
 };
 
 static_assert(ForceCalculator<StiwebForceCalculator>);
