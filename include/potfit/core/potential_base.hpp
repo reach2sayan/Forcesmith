@@ -29,7 +29,9 @@ class Potential {
     constexpr explicit Model(T t) : impl_(std::move(t)) {}
     constexpr double eval(double r) const override { return impl_.eval(r); }
     constexpr double deriv(double r) const override { return impl_.deriv(r); }
-    constexpr std::pair<double, double> span() const override { return impl_.span(); }
+    constexpr std::pair<double, double> span() const override {
+      return impl_.span();
+    }
     constexpr int param_count() const override { return impl_.param_count(); }
     constexpr void gather_params(Eigen::VectorXd &x, int off) const override {
       impl_.gather_params(x, off);

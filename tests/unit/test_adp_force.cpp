@@ -85,11 +85,11 @@ static Configuration make_dimer(double r) {
 static ADPForceCalculator make_adp_calc() {
     ADPForceCalculator calc;
     calc.ntypes = 1;
-    calc.pair_pots.emplace_back(RepulsivePair{});
-    calc.rho_pots.emplace_back(ExpDensity{});
-    calc.F_pots.emplace_back(SqrtEmbedding{});
-    calc.u_pots.emplace_back(ExpDipole{});
-    calc.w_pots.emplace_back(ExpQuadrupole{});
+    calc.pair.emplace_back(RepulsivePair{});
+    calc.density.emplace_back(ExpDensity{});
+    calc.embedding.emplace_back(SqrtEmbedding{});
+    calc.dipole.emplace_back(ExpDipole{});
+    calc.quadrupole.emplace_back(ExpQuadrupole{});
     return calc;
 }
 
@@ -117,18 +117,18 @@ TEST(ADPForce, ZeroUWReducesToEAM) {
 
     ADPForceCalculator adp_calc;
     adp_calc.ntypes = 1;
-    adp_calc.pair_pots.emplace_back(RepulsivePair{});
-    adp_calc.rho_pots.emplace_back(ExpDensity{});
-    adp_calc.F_pots.emplace_back(SqrtEmbedding{});
-    adp_calc.u_pots.emplace_back(ZeroPot{});
-    adp_calc.w_pots.emplace_back(ZeroPot{});
+    adp_calc.pair.emplace_back(RepulsivePair{});
+    adp_calc.density.emplace_back(ExpDensity{});
+    adp_calc.embedding.emplace_back(SqrtEmbedding{});
+    adp_calc.dipole.emplace_back(ZeroPot{});
+    adp_calc.quadrupole.emplace_back(ZeroPot{});
     adp_calc.eval_forces(cfg_adp);
 
     EAMForceCalculator eam_calc;
     eam_calc.ntypes = 1;
-    eam_calc.pair_pots.emplace_back(RepulsivePair{});
-    eam_calc.rho_pots.emplace_back(ExpDensity{});
-    eam_calc.F_pots.emplace_back(SqrtEmbedding{});
+    eam_calc.pair.emplace_back(RepulsivePair{});
+    eam_calc.density.emplace_back(ExpDensity{});
+    eam_calc.embedding.emplace_back(SqrtEmbedding{});
     eam_calc.eval_forces(cfg_eam);
 
     EXPECT_NEAR(cfg_adp.calc_energy, cfg_eam.calc_energy, 1e-12);

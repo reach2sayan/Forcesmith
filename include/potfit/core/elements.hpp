@@ -1,5 +1,6 @@
 #pragma once
 
+#include "potfit/core/types.hpp"
 #include <boost/leaf/error.hpp>
 #include <boost/leaf/result.hpp>
 #include <boost/multi_index/hashed_index.hpp>
@@ -11,9 +12,9 @@
 namespace potfit::elements {
 
 struct Element {
-  std::string_view symbol;
-  int Z;
-  double mass_amu;
+  const std::string_view symbol;
+  const int Z;
+  const double mass_amu;
 };
 
 namespace detail {
@@ -22,17 +23,18 @@ struct BySymbol {};
 struct ByZ {};
 
 using ElementTable = boost::multi_index_container<
-    Element, boost::multi_index::indexed_by<
-                 boost::multi_index::hashed_unique<
-                     boost::multi_index::tag<BySymbol>,
-                     boost::multi_index::member<Element, std::string_view,
-                                                &Element::symbol>>,
-                 boost::multi_index::hashed_unique<
-                     boost::multi_index::tag<ByZ>,
-                     boost::multi_index::member<Element, int, &Element::Z>>>>;
+    Element,
+    boost::multi_index::indexed_by<
+        boost::multi_index::hashed_unique<
+            boost::multi_index::tag<BySymbol>,
+            boost::multi_index::member<Element, const std::string_view,
+                                       &Element::symbol>>,
+        boost::multi_index::hashed_unique<
+            boost::multi_index::tag<ByZ>,
+            boost::multi_index::member<Element, const int, &Element::Z>>>>;
 
 // Initialised once at first call; all lookups are O(1) hash.
-inline const ElementTable &table() {
+FORCE_INLINE const ElementTable &table() {
   static const ElementTable t{{
       {"Ac", 89, 227.028},  {"Ag", 47, 107.868},  {"Al", 13, 26.982},
       {"Am", 95, 243.061},  {"Ar", 18, 39.948},   {"As", 33, 74.922},
@@ -81,38 +83,44 @@ inline const ElementTable &table() {
 } // namespace detail
 
 // O(1) lookup by symbol — optional ref, no copy, no nullptr.
-[[nodiscard]] inline boost::optional<const Element &>
+[[nodiscard]] FORCE_INLINE boost::optional<const Element &>
 find_by_symbol(std::string_view symbol) noexcept {
   const auto &idx = detail::table().get<detail::BySymbol>();
-  const auto  it  = idx.find(symbol);
-  if (it == idx.end()) return boost::none;
+  const auto it = idx.find(symbol);
+  if (it == idx.end()) {
+    return boost::none;
+  }
   return *it;
 }
 
 // O(1) lookup by atomic number — optional ref, no copy, no nullptr.
-[[nodiscard]] inline boost::optional<const Element &>
+[[nodiscard]] FORCE_INLINE boost::optional<const Element &>
 find_by_Z(int Z) noexcept {
   const auto &idx = detail::table().get<detail::ByZ>();
-  const auto  it  = idx.find(Z);
-  if (it == idx.end()) return boost::none;
+  const auto it = idx.find(Z);
+  if (it == idx.end()) {
+    return boost::none;
+  }
   return *it;
 }
 
 // Returns a copy of the element (boost::leaf error on unknown symbol).
-[[nodiscard]] inline boost::leaf::result<Element>
+[[nodiscard]] FORCE_INLINE boost::leaf::result<Element>
 lookup(std::string_view symbol) {
-  if (const auto e = find_by_symbol(symbol)) return *e;
+  if (const auto e = find_by_symbol(symbol)) {
+    return *e;
+  }
   return boost::leaf::new_error(std::string("unknown element symbol: ") +
                                 std::string(symbol));
 }
 
-[[nodiscard]] inline boost::leaf::result<int>
+[[nodiscard]] FORCE_INLINE boost::leaf::result<int>
 atomic_number(std::string_view symbol) {
   BOOST_LEAF_AUTO(e, lookup(symbol));
   return e.Z;
 }
 
-[[nodiscard]] inline boost::leaf::result<double>
+[[nodiscard]] FORCE_INLINE boost::leaf::result<double>
 atomic_mass(std::string_view symbol) {
   BOOST_LEAF_AUTO(e, lookup(symbol));
   return e.mass_amu;

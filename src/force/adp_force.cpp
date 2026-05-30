@@ -34,17 +34,16 @@ void ADPForceCalculator::eval_forces(Configuration& cfg) const {
             const double r  = nb.dist.norm();
             if (r < 1e-14) continue;
 
-            const int slot = pair_slot(ai.type, aj.type, ntypes);
-            ai.rho    += rho_pots[aj.type].eval(r);
-            ai.mu     += u_pots[slot].eval(r) * nb.dist;
-            ai.lambda += w_pots[slot].eval(r) * (nb.dist * nb.dist.transpose());
+            ai.rho    += density(aj.type).eval(r);
+            ai.mu     += dipole(ai.type, aj.type).eval(r) * nb.dist;
+            ai.lambda += quadrupole(ai.type, aj.type).eval(r) * (nb.dist * nb.dist.transpose());
         }
     }
 
     // ── After pass 1: embedding + ADP self-energies ──────────────────────────
     for (auto& ai : cfg.atoms) {
-        cfg.calc_energy += F_pots[ai.type].eval(ai.rho);
-        ai.gradF = F_pots[ai.type].deriv(ai.rho);
+        cfg.calc_energy += embedding(ai.type).eval(ai.rho);
+        ai.gradF = embedding(ai.type).deriv(ai.rho);
 
         cfg.calc_energy += 0.5 * ai.mu.squaredNorm();
 
@@ -74,25 +73,23 @@ void ADPForceCalculator::eval_forces(Configuration& cfg) const {
             if (r < 1e-14) continue;
             const double inv_r = 1.0 / r;
 
-            const int slot = pair_slot(ai.type, aj.type, ntypes);
-
             // EAM pair + embedding terms
-            const double phi    = pair_pots[slot].eval(r);
-            const double dphi   = pair_pots[slot].deriv(r);
-            const double drho_j = rho_pots[aj.type].deriv(r);
-            const double drho_i = rho_pots[ai.type].deriv(r);
+            const double phi    = pair(ai.type, aj.type).eval(r);
+            const double dphi   = pair(ai.type, aj.type).deriv(r);
+            const double drho_j = density(aj.type).deriv(r);
+            const double drho_i = density(ai.type).deriv(r);
             Vec3 fvec = (dphi + ai.gradF * drho_j + aj.gradF * drho_i) * inv_r * d;
 
             // Dipole force terms
-            const double u  = u_pots[slot].eval(r);
-            const double du = u_pots[slot].deriv(r);
+            const double u  = dipole(ai.type, aj.type).eval(r);
+            const double du = dipole(ai.type, aj.type).deriv(r);
             const double dot_i = ai.mu.dot(d);
             const double dot_j = aj.mu.dot(d);
             fvec += (du * inv_r * (dot_i - dot_j)) * d + u * (ai.mu - aj.mu);
 
             // Quadrupole force terms
-            const double w  = w_pots[slot].eval(r);
-            const double dw = w_pots[slot].deriv(r);
+            const double w  = quadrupole(ai.type, aj.type).eval(r);
+            const double dw = quadrupole(ai.type, aj.type).deriv(r);
             const double nu = quad_nu(ai.lambda, d) + quad_nu(aj.lambda, d);
             const Vec3   xi = quad_xi(ai.lambda, d) + quad_xi(aj.lambda, d);
             fvec += (dw * inv_r * nu) * d + 2.0 * w * xi;

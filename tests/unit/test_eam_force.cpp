@@ -57,9 +57,9 @@ static Configuration make_dimer(double r) {
 static EAMForceCalculator make_eam_calc(double A = 1.0, double beta = 1.0, double c = 1.0) {
     EAMForceCalculator calc;
     calc.ntypes = 1;
-    calc.pair_pots.emplace_back(RepulsivePair{A});
-    calc.rho_pots.emplace_back(ExpDensity{beta});
-    calc.F_pots.emplace_back(SqrtEmbedding{c});
+    calc.pair.emplace_back(RepulsivePair{A});
+    calc.density.emplace_back(ExpDensity{beta});
+    calc.embedding.emplace_back(SqrtEmbedding{c});
     return calc;
 }
 

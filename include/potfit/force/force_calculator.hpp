@@ -1,7 +1,5 @@
 #pragma once
 
-// Step 8: ForceCalculator concept + PairForceCalculator implementation.
-
 #include "potfit/core/atom.hpp"
 #include "potfit/core/potential_base.hpp"
 #include "potfit/events/signals.hpp"
@@ -17,6 +15,14 @@ namespace potfit {
 template <typename T>
 concept ForceCalculator = requires(T calc, Configuration &cfg) {
   { calc.eval_forces(cfg) } -> std::same_as<void>;
+};
+
+// CRTP base for multi-body force calculators that hold typed potential tables.
+// Provides the shared fields ntypes and conf_index.
+template <typename Derived>
+struct ForceCalculatorBase {
+  int ntypes = 1;
+  std::uint64_t conf_index = 0;
 };
 
 // Two-body (pair) force calculator.
