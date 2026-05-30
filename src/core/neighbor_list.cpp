@@ -1,47 +1,50 @@
 #include "potfit/core/neighbor_list.hpp"
 #include "potfit/core/potential_base.hpp"
 
-#include <algorithm>
+#include <ranges>
 #include <span>
 
 namespace potfit {
 
-// Upper-triangle column index for pair (a, b): maps to the same slot for (b, a).
-static int pair_slot(int a, int b, int ntypes) noexcept {
-    if (a > b) std::swap(a, b);
-    return a * ntypes - a * (a - 1) / 2 + (b - a);
+static constexpr int pair_slot(int a, int b, int ntypes) noexcept {
+  if (a > b)
+    std::swap(a, b);
+  return a * ntypes - a * (a - 1) / 2 + (b - a);
 }
 
-void build_neighbor_list(Configuration& cfg, double rcut,
+void build_neighbor_list(Configuration &cfg, double rcut,
                          std::span<const Potential> pots) {
-    const int n = static_cast<int>(cfg.atoms.size());
+  const int ntypes = cfg.atoms.empty()
+                         ? 1
+                         : std::ranges::max(cfg.atoms | std::views::transform(
+                                                            [](const auto &a) {
+                                                              return a.type + 1;
+                                                            }));
 
-    int ntypes = 0;
-    for (const auto& atom : cfg.atoms)
-        ntypes = std::max(ntypes, atom.type + 1);
-    if (ntypes == 0) ntypes = 1;
+  std::ranges::for_each(cfg.atoms, [](auto &a) { a.neighbors.clear(); });
+  const double rcut2 = rcut * rcut;
+  auto unique_atom_view = std::views::cartesian_product(cfg.atoms, cfg.atoms) |
+                             std::views::filter([](auto &&pair) {
+                               return &(std::get<0>(pair)) !=
+                                      &(std::get<1>(pair));
+                             });
 
-    for (auto& atom : cfg.atoms)
-        atom.neighbors.clear();
+  std::ranges::for_each(unique_atom_view, [&](auto &&pair) {
+    auto &&[ai, aj] = pair;
 
-    const double rcut2 = rcut * rcut;
+    const Vec3 d = bc_min_image(cfg.bc, aj.pos - ai.pos);
+    const double r2 = d.squaredNorm();
+    if (r2 >= rcut2)
+      return;
 
-    for (int i = 0; i < n; ++i) {
-        for (int j = 0; j < n; ++j) {
-            if (i == j) continue;
+    const int s = pair_slot(ai.type, aj.type, ntypes);
 
-            const Vec3   d  = bc_min_image(cfg.bc, cfg.atoms[j].pos - cfg.atoms[i].pos);
-            const double r2 = d.squaredNorm();
-            if (r2 >= rcut2) continue;
-
-            const int s = pair_slot(cfg.atoms[i].type, cfg.atoms[j].type, ntypes);
-            cfg.atoms[i].neighbors.push_back(NeighborEntry{
-                .neighbor = &cfg.atoms[j],
-                .pot      = (s < static_cast<int>(pots.size())) ? &pots[s] : nullptr,
-                .dist     = d,
-            });
-        }
-    }
+    ai.neighbors.push_back(NeighborEntry{
+        .neighbor = &aj,
+        .pot = (s < static_cast<int>(pots.size())) ? &pots[s] : nullptr,
+        .dist = d,
+    });
+  });
 }
 
 } // namespace potfit

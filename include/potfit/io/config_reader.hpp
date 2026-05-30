@@ -1,0 +1,22 @@
+#pragma once
+
+// Step 4: boost::parser grammar for potfit *.conf files.
+
+#include "potfit/core/atom.hpp"
+
+#include <boost/leaf/result.hpp>
+#include <string_view>
+#include <vector>
+
+namespace potfit::io {
+
+// LEAF error types — loaded onto the error object, not returned by value.
+struct ParseError {
+  std::string message;
+  std::size_t line = 0;
+};
+
+boost::leaf::result<std::vector<Configuration>>
+parse_config(std::string_view input);
+
+} // namespace potfit::io

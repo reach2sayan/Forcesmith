@@ -1,13 +1,17 @@
 #include "potfit/io/output_writer.hpp"
 
-#include <Eigen/Core>
 #include <fstream>
 #include <stdexcept>
 
 namespace potfit::io {
 
+// Sample each potential on a uniform grid and write format-3 (tabulated equal-spaced).
+// Works correctly for both SplinePotential and analytic types (LJ, Morse, etc.).
+static constexpr int kDefaultKnots = 500;
+
 void write_native(const std::filesystem::path& path,
-                  const std::vector<Potential>& potentials)
+                  const std::vector<Potential>& potentials,
+                  int nknots)
 {
     std::ofstream f(path);
     if (!f) throw std::runtime_error("cannot open " + path.string());
@@ -16,19 +20,23 @@ void write_native(const std::filesystem::path& path,
     f << "#F 3 " << n << "\n";
     f << "#E\n";
 
-    // Distance-block: rmin rmax nknots per potential.
     for (const auto& p : potentials) {
         auto [lo, hi] = p.span();
-        f << lo << " " << hi << " " << p.param_count() << "\n";
+        f << lo << " " << hi << " " << nknots << "\n";
     }
 
-    // Value-block: one y-value per line, per potential.
     for (const auto& p : potentials) {
-        Eigen::VectorXd y(p.param_count());
-        p.gather_params(y, 0);
-        for (int k = 0; k < p.param_count(); ++k)
-            f << y[k] << "\n";
+        auto [lo, hi] = p.span();
+        const double step = (hi - lo) / (nknots - 1);
+        for (int k = 0; k < nknots; ++k)
+            f << p.eval(lo + k * step) << "\n";
     }
+}
+
+void write_native(const std::filesystem::path& path,
+                  const std::vector<Potential>& potentials)
+{
+    write_native(path, potentials, kDefaultKnots);
 }
 
 void write_lammps(const std::filesystem::path& path,
@@ -37,18 +45,16 @@ void write_lammps(const std::filesystem::path& path,
     std::ofstream f(path);
     if (!f) throw std::runtime_error("cannot open " + path.string());
 
-    constexpr int N = 1000;
-
     for (std::size_t idx = 0; idx < potentials.size(); ++idx) {
         const auto& p = potentials[idx];
         auto [lo, hi] = p.span();
-        const double step = (hi - lo) / (N - 1);
+        const double step = (hi - lo) / (kDefaultKnots - 1);
 
         f << "# pair potential " << idx << "\n";
         f << "POT_" << idx << "\n";
-        f << "N " << N << " R " << lo << " " << hi << "\n\n";
+        f << "N " << kDefaultKnots << " R " << lo << " " << hi << "\n\n";
 
-        for (int k = 0; k < N; ++k) {
+        for (int k = 0; k < kDefaultKnots; ++k) {
             const double r = lo + k * step;
             f << (k + 1) << " " << r << " " << p.eval(r) << " " << p.deriv(r) << "\n";
         }
@@ -69,14 +75,14 @@ void write_imd(const std::filesystem::path& path,
 
     for (const auto& p : potentials) {
         auto [lo, hi] = p.span();
-        f << lo << " " << hi << " " << p.param_count() << "\n";
+        f << lo << " " << hi << " " << kDefaultKnots << "\n";
     }
 
     for (const auto& p : potentials) {
-        Eigen::VectorXd y(p.param_count());
-        p.gather_params(y, 0);
-        for (int k = 0; k < p.param_count(); ++k)
-            f << y[k] << "\n";
+        auto [lo, hi] = p.span();
+        const double step = (hi - lo) / (kDefaultKnots - 1);
+        for (int k = 0; k < kDefaultKnots; ++k)
+            f << p.eval(lo + k * step) << "\n";
     }
 }
 
