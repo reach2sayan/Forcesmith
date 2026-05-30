@@ -1,0 +1,60 @@
+# ── Build directories ─────────────────────────────────────────────────────────
+build/
+cmake-build-*/
+out/
+install/
+
+# ── CMake generated ───────────────────────────────────────────────────────────
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+CTestTestfile.cmake
+CPackConfig.cmake
+CPackSourceConfig.cmake
+compile_commands.json
+_deps/
+
+# ── Compiled objects & libraries ─────────────────────────────────────────────
+*.o
+*.obj
+*.a
+*.lib
+*.so
+*.so.*
+*.dylib
+*.dll
+*.pdb
+*.ilk
+*.exp
+
+# ── Executables ───────────────────────────────────────────────────────────────
+potfit
+potfit_tests
+*.exe
+*.out
+
+# ── clangd / LSP ─────────────────────────────────────────────────────────────
+.cache/
+
+# ── CLion / JetBrains ─────────────────────────────────────────────────────────
+# Keep: .idea/.gitignore, .idea/modules.xml, .idea/misc.xml, .idea/vcs.xml,
+#        .idea/inspectionProfiles/
+.idea/workspace.xml
+.idea/tasks.xml
+.idea/usage.statistics.xml
+.idea/dictionaries/
+.idea/shelf/
+.idea/httpRequests/
+.idea/dataSources/
+.idea/dataSources.local.xml
+
+# ── VS Code ───────────────────────────────────────────────────────────────────
+.vscode/
+
+# ── Editor temporaries ────────────────────────────────────────────────────────
+*.swp
+*.swo
+*~
+\#*\#
+.DS_Store
+Thumbs.db

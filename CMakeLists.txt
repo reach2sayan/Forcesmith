@@ -1,0 +1,111 @@
+cmake_minimum_required(VERSION 3.28)
+project(Potfit CXX)
+
+set(CMAKE_CXX_STANDARD 23)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
+
+# ── Dependencies ──────────────────────────────────────────────────────────────
+
+find_package(Eigen3 3.4 REQUIRED NO_MODULE)
+
+find_package(Boost 1.83 REQUIRED
+    COMPONENTS serialization program_options
+)
+
+
+# boost::parser is header-only but not yet in Ubuntu Boost packages;
+# fetch from the official Boost Git mirror and expose include dir directly.
+include(FetchContent)
+FetchContent_Declare(boost_parser
+    GIT_REPOSITORY https://github.com/boostorg/parser.git
+    GIT_TAG        boost-1.87.0
+    GIT_SHALLOW    TRUE
+)
+FetchContent_GetProperties(boost_parser)
+if(NOT boost_parser_POPULATED)
+    FetchContent_Populate(boost_parser)
+endif()
+add_library(boost_parser INTERFACE)
+target_include_directories(boost_parser INTERFACE "${boost_parser_SOURCE_DIR}/include")
+target_link_libraries(boost_parser INTERFACE Boost::boost)
+
+# ── Compiler options ──────────────────────────────────────────────────────────
+
+add_library(potfit_warnings INTERFACE)
+target_compile_options(potfit_warnings INTERFACE
+    -Wall -Wextra -Wpedantic -Wshadow -Wnon-virtual-dtor
+    $<$<CONFIG:Debug>:-g -fsanitize=address,undefined>
+    $<$<CONFIG:Release>:-O3 -march=native -DNDEBUG>
+)
+target_link_options(potfit_warnings INTERFACE
+    $<$<CONFIG:Debug>:-fsanitize=address,undefined>
+)
+
+# ── Implementation library (linked by both executable and tests) ──────────────
+
+file(GLOB_RECURSE POTFIT_LIB_SOURCES "src/core/*.cpp" "src/io/*.cpp"
+                                      "src/potentials/*.cpp"
+                                      "src/force/*.cpp"
+                                      "src/optimization/*.cpp")
+
+add_library(potfit_lib STATIC ${POTFIT_LIB_SOURCES})
+
+target_include_directories(potfit_lib PUBLIC
+    "${CMAKE_CURRENT_SOURCE_DIR}/include"
+)
+target_link_libraries(potfit_lib PUBLIC
+    Eigen3::Eigen
+    Boost::serialization
+    Boost::boost
+    boost_parser
+)
+target_link_libraries(potfit_lib PRIVATE
+    potfit_warnings
+)
+
+# ── Main executable ───────────────────────────────────────────────────────────
+
+add_executable(potfit src/main.cpp)
+
+target_include_directories(potfit PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/include"
+)
+
+target_link_libraries(potfit PRIVATE
+    potfit_warnings
+    potfit_lib
+    Boost::program_options
+)
+
+# ── Tests ─────────────────────────────────────────────────────────────────────
+
+enable_testing()
+
+FetchContent_Declare(googletest
+    GIT_REPOSITORY https://github.com/google/googletest.git
+    GIT_TAG        v1.14.0
+    GIT_SHALLOW    TRUE
+)
+set(INSTALL_GTEST OFF CACHE BOOL "" FORCE)
+FetchContent_MakeAvailable(googletest)
+
+file(GLOB UNIT_TEST_SOURCES "tests/unit/*.cpp")
+
+add_executable(potfit_tests ${UNIT_TEST_SOURCES})
+
+target_include_directories(potfit_tests PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/include"
+)
+
+target_link_libraries(potfit_tests PRIVATE
+    potfit_warnings
+    potfit_lib
+    GTest::gtest_main
+)
+
+include(GoogleTest)
+gtest_discover_tests(potfit_tests)

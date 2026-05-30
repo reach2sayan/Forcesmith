@@ -1,0 +1,91 @@
+#include "potfit/potentials/spline.hpp"
+#include "potfit/potentials/pair_potential.hpp"
+
+#include <gtest/gtest.h>
+#include <cmath>
+
+using namespace potfit;
+
+// Natural cubic spline: d2y[0] = d2y[n-1] = 0.
+// It is exact for linear functions because their second derivatives are zero.
+
+TEST(SplinePotential, EvalAtKnotsEqualsValues) {
+    // arbitrary non-uniform knots
+    SplinePotential sp({0.0, 1.5, 3.0, 5.0, 6.0},
+                       {2.0, 0.5, 3.0, 1.0, 4.0});
+    const std::vector<double> xs = {0.0, 1.5, 3.0, 5.0, 6.0};
+    const std::vector<double> ys = {2.0, 0.5, 3.0, 1.0, 4.0};
+    for (std::size_t i = 0; i < xs.size(); ++i)
+        EXPECT_NEAR(sp.eval(xs[i]), ys[i], 1e-10) << "at knot " << i;
+}
+
+// Natural cubic spline is exact for linear functions (y'' = 0 satisfies natural BCs).
+TEST(SplinePotential, LinearFunctionExact) {
+    const double a = 3.0, b = -1.5;
+    SplinePotential sp({0.0, 1.0, 2.5, 4.0},
+                       {b, a + b, 2.5*a + b, 4.0*a + b});
+    EXPECT_NEAR(sp.eval(0.5),  0.5*a + b, 1e-10);
+    EXPECT_NEAR(sp.eval(1.75), 1.75*a + b, 1e-10);
+    EXPECT_NEAR(sp.eval(3.0),  3.0*a + b, 1e-10);
+}
+
+TEST(SplinePotential, LinearDerivExact) {
+    const double slope = 2.5;
+    SplinePotential sp({0.0, 1.0, 3.0, 5.0},
+                       {0.0, slope, 3.0*slope, 5.0*slope});
+    EXPECT_NEAR(sp.deriv(0.5),  slope, 1e-10);
+    EXPECT_NEAR(sp.deriv(2.0),  slope, 1e-10);
+    EXPECT_NEAR(sp.deriv(4.0),  slope, 1e-10);
+}
+
+// Derivative is consistent with numerical central difference of eval.
+TEST(SplinePotential, DerivConsistentWithEval) {
+    SplinePotential sp({0.0, 1.0, 2.0, 3.0, 4.0},
+                       {0.0, 1.0, 4.0, 9.0, 16.0});
+    const double eps = 1e-5;
+    for (double r : {0.5, 1.5, 2.5, 3.5}) {
+        const double fd = (sp.eval(r + eps) - sp.eval(r - eps)) / (2.0 * eps);
+        EXPECT_NEAR(sp.deriv(r), fd, 1e-5) << "at r=" << r;
+    }
+}
+
+TEST(SplinePotential, BoundaryClampBelow) {
+    SplinePotential sp({1.0, 2.0, 3.0}, {5.0, 3.0, 1.0});
+    EXPECT_NEAR(sp.eval(0.0), 5.0, 1e-15);  // clamped to y[0]
+}
+
+TEST(SplinePotential, BoundaryClampAbove) {
+    SplinePotential sp({1.0, 2.0, 3.0}, {5.0, 3.0, 1.0});
+    EXPECT_NEAR(sp.eval(4.0), 1.0, 1e-15);  // clamped to y[n-1]
+}
+
+TEST(SplinePotential, SpanReturnsKnotExtents) {
+    SplinePotential sp({0.5, 2.5, 4.5}, {1.0, 2.0, 3.0});
+    auto [lo, hi] = sp.span();
+    EXPECT_DOUBLE_EQ(lo, 0.5);
+    EXPECT_DOUBLE_EQ(hi, 4.5);
+}
+
+TEST(SplinePotential, TwoKnotLinearCase) {
+    SplinePotential sp({0.0, 1.0}, {0.0, 1.0});
+    EXPECT_NEAR(sp.eval(0.5),  0.5, 1e-15);
+    EXPECT_NEAR(sp.deriv(0.5), 1.0, 1e-15);
+}
+
+TEST(SplinePotential, EvalMonotonicOnMonotonicData) {
+    // Monotone input; spline should not wildly oscillate between knots.
+    SplinePotential sp({0.0, 1.0, 2.0, 3.0}, {0.0, 1.0, 2.0, 3.0});
+    for (int k = 1; k <= 9; ++k) {
+        const double r = k * 0.3;
+        EXPECT_GT(sp.eval(r + 0.05), sp.eval(r - 0.05))
+            << "non-monotone at r=" << r;
+    }
+}
+
+TEST(PairPotential, InheritsSplineInterface) {
+    PairPotential pp({1.0, 2.0, 3.0}, {2.0, 0.0, 2.0});
+    auto [lo, hi] = pp.span();
+    EXPECT_DOUBLE_EQ(lo, 1.0);
+    EXPECT_DOUBLE_EQ(hi, 3.0);
+    EXPECT_NEAR(pp.eval(2.0), 0.0, 1e-10);
+}
