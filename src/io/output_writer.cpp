@@ -1,11 +1,15 @@
 #include "potfit/io/output_writer.hpp"
 
+#include <nlohmann/json.hpp>
+
 #include <fstream>
 #include <stdexcept>
 
 namespace potfit::io {
 
-// Sample each potential on a uniform grid and write format-3 (tabulated equal-spaced).
+using json = nlohmann::json;
+
+// Sample each potential on a uniform grid and write JSON tabulated format.
 // Works correctly for both SplinePotential and analytic types (LJ, Morse, etc.).
 static constexpr int kDefaultKnots = 500;
 
@@ -16,21 +20,23 @@ void write_native(const std::filesystem::path& path,
     std::ofstream f(path);
     if (!f) throw std::runtime_error("cannot open " + path.string());
 
-    const int n = static_cast<int>(potentials.size());
-    f << "#F 3 " << n << "\n";
-    f << "#E\n";
-
-    for (const auto& p : potentials) {
-        auto [lo, hi] = p.span();
-        f << lo << " " << hi << " " << nknots << "\n";
-    }
+    json j;
+    j["format"] = "tabulated";
+    j["potentials"] = json::array();
 
     for (const auto& p : potentials) {
         auto [lo, hi] = p.span();
         const double step = (hi - lo) / (nknots - 1);
+        json pot;
+        pot["rmin"] = lo;
+        pot["rmax"] = hi;
+        pot["knots"] = json::array();
         for (int k = 0; k < nknots; ++k)
-            f << p.eval(lo + k * step) << "\n";
+            pot["knots"].push_back(p.eval(lo + k * step));
+        j["potentials"].push_back(std::move(pot));
     }
+
+    f << j.dump(2) << "\n";
 }
 
 void write_native(const std::filesystem::path& path,

@@ -1,184 +1,118 @@
 #include "potfit/io/config_reader.hpp"
 
 #include <boost/leaf/error.hpp>
-#include <boost/parser/parser.hpp>
+#include <nlohmann/json.hpp>
 
-#include <ranges>
 #include <string>
-
-namespace bp = boost::parser;
-namespace leaf = boost::leaf;
 
 namespace potfit::io {
 
-namespace {
-
-// ── Aggregate structs: field count must match non-void parser attributes
-// ────── boost::parser uses Boost.PFR to fill these directly from sequence
-// attributes.
-
-struct NLine {
-  int natoms;
-  int useforce;
-}; // 2 non-void attrs
-struct Vec3Line {
-  double x, y, z;
-}; // 3 non-void attrs
-struct SLine {
-  double xx, yy, zz, xy, yz, zx;
-}; // 6 non-void attrs
-struct AtomFull {
-  int type;
-  double px, py, pz, fx, fy, fz;
-}; // 7
-struct AtomPos {
-  int type;
-  double px, py, pz;
-}; // 4
-
-// ── Parsers
-// ───────────────────────────────────────────────────────────────────
-
-inline auto const n_p = bp::lit("#N") >> bp::int_ >> bp::int_;
-inline auto const x_p =
-    bp::lit("#X") >> bp::double_ >> bp::double_ >> bp::double_;
-inline auto const y_p =
-    bp::lit("#Y") >> bp::double_ >> bp::double_ >> bp::double_;
-inline auto const z_p =
-    bp::lit("#Z") >> bp::double_ >> bp::double_ >> bp::double_;
-inline auto const e_p = bp::lit("#E") >> bp::double_;
-inline auto const w_p = bp::lit("#W") >> bp::double_;
-inline auto const s_p = bp::lit("#S") >> bp::double_ >> bp::double_ >>
-                        bp::double_ >> bp::double_ >> bp::double_ >>
-                        bp::double_;
-inline auto const atom_full_p = bp::int_ >> bp::double_ >> bp::double_ >>
-                                bp::double_ >> bp::double_ >> bp::double_ >>
-                                bp::double_;
-inline auto const atom_pos_p =
-    bp::int_ >> bp::double_ >> bp::double_ >> bp::double_;
-
-// ── Incremental builder
-// ───────────────────────────────────────────────────────
-
-struct Builder {
-  Configuration cfg;
-  Mat3 pending_box = Mat3::Zero(); // accumulated from #X/#Y/#Z
-  int expected_atoms = 0;
-  bool use_force = false;
-  bool active = false;
-};
-
-void finalize(Builder &b, std::vector<Configuration> &out) {
-  b.cfg.bc = PeriodicBC(b.pending_box);
-  out.push_back(std::move(b.cfg));
-  b = Builder{};
-}
-
-} // namespace
+using json = nlohmann::json;
+namespace leaf = boost::leaf;
 
 leaf::result<std::vector<Configuration>> parse_config(std::string_view input) {
-  std::vector<Configuration> configs;
-  Builder b;
-  std::size_t line_num = 0;
-
-  auto fail = [&](std::string msg) -> leaf::result<std::vector<Configuration>> {
-    return leaf::new_error(ParseError{std::move(msg), line_num});
+  auto fail = [](std::string msg) -> leaf::result<std::vector<Configuration>> {
+    return leaf::new_error(ParseError{std::move(msg), 0});
   };
 
-  for (auto const lr : input | std::views::split('\n')) {
-    ++line_num;
-    std::string_view line{lr.begin(), lr.end()};
-    if (!line.empty() && line.back() == '\r')
-      line.remove_suffix(1);
-    if (line.find_first_not_of(" \t") == std::string_view::npos)
-      continue;
-
-    if (line.starts_with("#N")) {
-      if (b.active) {
-        if (static_cast<int>(b.cfg.atoms.size()) != b.expected_atoms)
-          return fail("incomplete configuration before next #N");
-        finalize(b, configs);
-      }
-      NLine nd{};
-      if (!bp::parse(line, n_p, bp::ws, nd))
-        return fail("malformed #N directive");
-      b.expected_atoms = nd.natoms;
-      b.use_force = nd.useforce != 0;
-      b.active = true;
-
-    } else if (line.starts_with("#X")) {
-      Vec3Line v{};
-      if (!bp::parse(line, x_p, bp::ws, v))
-        return fail("malformed #X directive");
-      b.pending_box.col(0) = Vec3{v.x, v.y, v.z};
-
-    } else if (line.starts_with("#Y")) {
-      Vec3Line v{};
-      if (!bp::parse(line, y_p, bp::ws, v))
-        return fail("malformed #Y directive");
-      b.pending_box.col(1) = Vec3{v.x, v.y, v.z};
-
-    } else if (line.starts_with("#Z")) {
-      Vec3Line v{};
-      if (!bp::parse(line, z_p, bp::ws, v))
-        return fail("malformed #Z directive");
-      b.pending_box.col(2) = Vec3{v.x, v.y, v.z};
-
-    } else if (line.starts_with("#E")) {
-      double e{};
-      if (!bp::parse(line, e_p, bp::ws, e))
-        return fail("malformed #E directive");
-      b.cfg.energy = e;
-
-    } else if (line.starts_with("#W")) {
-      double w{};
-      if (!bp::parse(line, w_p, bp::ws, w))
-        return fail("malformed #W directive");
-      b.cfg.weight = w;
-
-    } else if (line.starts_with("#S")) {
-      SLine s{};
-      if (!bp::parse(line, s_p, bp::ws, s))
-        return fail("malformed #S directive");
-      b.cfg.stress(0, 0) = s.xx;
-      b.cfg.stress(1, 1) = s.yy;
-      b.cfg.stress(2, 2) = s.zz;
-      b.cfg.stress(0, 1) = b.cfg.stress(1, 0) = s.xy;
-      b.cfg.stress(1, 2) = b.cfg.stress(2, 1) = s.yz;
-      b.cfg.stress(0, 2) = b.cfg.stress(2, 0) = s.zx;
-
-    } else if (line[0] == '#') {
-      continue; // #C element names, #F/#G markers, any unknown directive
-
-    } else {
-      if (!b.active)
-        return fail("atom line before any #N directive");
-      if (static_cast<int>(b.cfg.atoms.size()) >= b.expected_atoms)
-        return fail("more atom lines than declared in #N");
-
-      Atom a;
-      if (b.use_force) {
-        AtomFull af{};
-        if (!bp::parse(line, atom_full_p, bp::ws, af))
-          return fail("malformed atom line (expected: type x y z fx fy fz)");
-        a.type = af.type;
-        a.pos = Vec3{af.px, af.py, af.pz};
-        a.force = Vec3{af.fx, af.fy, af.fz};
-      } else {
-        AtomPos ap{};
-        if (!bp::parse(line, atom_pos_p, bp::ws, ap))
-          return fail("malformed atom line (expected: type x y z)");
-        a.type = ap.type;
-        a.pos = Vec3{ap.px, ap.py, ap.pz};
-      }
-      b.cfg.atoms.push_back(std::move(a));
-    }
+  json j;
+  try {
+    j = json::parse(input);
+  } catch (const json::parse_error &e) {
+    return leaf::new_error(ParseError{e.what(), 0});
   }
 
-  if (b.active) {
-    if (static_cast<int>(b.cfg.atoms.size()) != b.expected_atoms)
-      return fail("file ended with incomplete configuration");
-    finalize(b, configs);
+  if (!j.is_array())
+    return fail("top-level JSON must be an array of configurations");
+
+  // element symbol → Atom.type index; built dynamically, first seen = 0
+  std::vector<std::string> element_map;
+  auto element_index = [&](const std::string &sym) -> int {
+    for (int i = 0; i < static_cast<int>(element_map.size()); ++i)
+      if (element_map[i] == sym) return i;
+    element_map.push_back(sym);
+    return static_cast<int>(element_map.size()) - 1;
+  };
+
+  std::vector<Configuration> configs;
+  configs.reserve(j.size());
+
+  try {
+    for (const auto &obj : j) {
+      if (!obj.is_object())
+        return fail("each configuration must be a JSON object");
+
+      Configuration cfg;
+
+      // Box vectors
+      for (const char *key : {"X", "Y", "Z"}) {
+        if (!obj.contains(key))
+          return fail(std::string("configuration missing box vector '") + key + "'");
+        if (!obj[key].is_array() || obj[key].size() != 3)
+          return fail(std::string("box vector '") + key + "' must be array of 3 doubles");
+      }
+      Mat3 box;
+      box.col(0) = Vec3{obj["X"][0].get<double>(), obj["X"][1].get<double>(), obj["X"][2].get<double>()};
+      box.col(1) = Vec3{obj["Y"][0].get<double>(), obj["Y"][1].get<double>(), obj["Y"][2].get<double>()};
+      box.col(2) = Vec3{obj["Z"][0].get<double>(), obj["Z"][1].get<double>(), obj["Z"][2].get<double>()};
+      cfg.bc = PeriodicBC(box);
+
+      // Energy (required)
+      if (!obj.contains("E"))
+        return fail("configuration missing energy key 'E'");
+      cfg.energy = obj["E"].get<double>();
+
+      // Weight (optional, default 1.0)
+      cfg.weight = obj.value("W", 1.0);
+
+      // Stress (optional)
+      if (obj.contains("S")) {
+        const auto &s = obj["S"];
+        if (!s.is_array() || s.size() != 6)
+          return fail("'S' must be an array of 6 doubles [xx, yy, zz, xy, yz, zx]");
+        cfg.stress(0, 0) = s[0].get<double>();
+        cfg.stress(1, 1) = s[1].get<double>();
+        cfg.stress(2, 2) = s[2].get<double>();
+        cfg.stress(0, 1) = cfg.stress(1, 0) = s[3].get<double>();
+        cfg.stress(1, 2) = cfg.stress(2, 1) = s[4].get<double>();
+        cfg.stress(0, 2) = cfg.stress(2, 0) = s[5].get<double>();
+      }
+
+      // Atoms
+      if (!obj.contains("atoms"))
+        return fail("configuration missing 'atoms' array");
+      const auto &atoms_arr = obj["atoms"];
+      if (!atoms_arr.is_array())
+        return fail("'atoms' must be an array");
+
+      for (const auto &a_obj : atoms_arr) {
+        if (!a_obj.contains("element"))
+          return fail("atom missing 'element' key");
+        if (!a_obj.contains("position"))
+          return fail("atom missing 'position' key");
+
+        const auto &pos_arr = a_obj["position"];
+        if (!pos_arr.is_array() || pos_arr.size() != 3)
+          return fail("atom 'position' must be an array of 3 doubles");
+
+        Atom a;
+        a.type = element_index(a_obj["element"].get<std::string>());
+        a.pos  = Vec3{pos_arr[0].get<double>(), pos_arr[1].get<double>(), pos_arr[2].get<double>()};
+
+        if (a_obj.contains("force")) {
+          const auto &f = a_obj["force"];
+          if (!f.is_array() || f.size() != 3)
+            return fail("atom 'force' must be an array of 3 doubles");
+          a.force = Vec3{f[0].get<double>(), f[1].get<double>(), f[2].get<double>()};
+        }
+
+        cfg.atoms.push_back(std::move(a));
+      }
+
+      configs.push_back(std::move(cfg));
+    }
+  } catch (const json::exception &e) {
+    return leaf::new_error(ParseError{e.what(), 0});
   }
 
   return configs;

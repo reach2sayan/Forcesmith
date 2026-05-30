@@ -9,11 +9,7 @@ void EAMForceCalculator::eval_forces(Configuration &cfg) const {
   // ── Zero all scratch and output fields ──────────────────────────────────
   cfg.calc_energy = 0.0;
   cfg.calc_stress = SymTens::Zero();
-  for (auto &atom : cfg.atoms) {
-    atom.calc_force = Vec3::Zero();
-    atom.rho = 0.0;
-    atom.gradF = 0.0;
-  }
+  std::ranges::for_each(cfg.atoms, &Atom::clear_accumulators);
 
   // ── Pass 1: accumulate electron density ρ_i ─────────────────────────────
   // ρ_i = Σ_{j∈neighbors(i)} g_{t(j)}(r_ij)

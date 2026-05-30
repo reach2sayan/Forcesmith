@@ -31,22 +31,16 @@ static PotResult run(std::string_view input) {
     return out;
 }
 
-// ── Format 3 happy-path ───────────────────────────────────────────────────────
+// ── Tabulated happy-path ──────────────────────────────────────────────────────
 
-TEST(PotentialReader, Format3_TwoFunctions) {
-    auto r = run(
-        "#F 3 2\n"
-        "#T PAIR\n"
-        "#C Cu Cu\n"
-        "#E\n"
-        // distance block: rmin rmax nknots
-        "1.0 3.0 3\n"
-        "2.0 4.0 3\n"
-        // values for function 0
-        "0.5\n" "0.0\n" "0.5\n"
-        // values for function 1
-        "1.0\n" "0.0\n" "1.0\n"
-    );
+TEST(PotentialReader, Tabulated_TwoFunctions) {
+    auto r = run(R"({
+      "format": "tabulated",
+      "potentials": [
+        {"rmin": 1.0, "rmax": 3.0, "knots": [0.5, 0.0, 0.5]},
+        {"rmin": 2.0, "rmax": 4.0, "knots": [1.0, 0.0, 1.0]}
+      ]
+    })");
     ASSERT_TRUE(r.ok) << r.error.message;
     ASSERT_EQ(r.pots.size(), 2u);
 
@@ -59,13 +53,13 @@ TEST(PotentialReader, Format3_TwoFunctions) {
     EXPECT_DOUBLE_EQ(hi1, 4.0);
 }
 
-TEST(PotentialReader, Format3_KnotValuesRoundTrip) {
-    auto r = run(
-        "#F 3 1\n"
-        "#E\n"
-        "0.0 4.0 5\n"   // knots at 0, 1, 2, 3, 4
-        "2.0\n" "1.0\n" "0.0\n" "1.0\n" "2.0\n"
-    );
+TEST(PotentialReader, Tabulated_KnotValuesRoundTrip) {
+    auto r = run(R"({
+      "format": "tabulated",
+      "potentials": [
+        {"rmin": 0.0, "rmax": 4.0, "knots": [2.0, 1.0, 0.0, 1.0, 2.0]}
+      ]
+    })");
     ASSERT_TRUE(r.ok) << r.error.message;
     ASSERT_EQ(r.pots.size(), 1u);
     const auto& p = r.pots[0];
@@ -76,19 +70,21 @@ TEST(PotentialReader, Format3_KnotValuesRoundTrip) {
     EXPECT_NEAR(p.eval(4.0), 2.0, 1e-10);
 }
 
-// ── Format 0 happy-path ───────────────────────────────────────────────────────
+// ── Analytic happy-path ───────────────────────────────────────────────────────
 
-TEST(PotentialReader, Format0_PairLJ) {
-    // pair_lj: V(r) = 4eps[(sig/r)^12 - (sig/r)^6]
-    // minimum at r = 2^(1/6)*sig = -eps
-    auto r = run(
-        "#F 0 1\n"
-        "#E\n"
-        "type pair_lj\n"
-        "2.0 6.0\n"
-        "param epsilon 1.0 0.5 2.0\n"
-        "param sigma   2.5 2.0 3.0\n"
-    );
+TEST(PotentialReader, Analytic_PairLJ) {
+    // V(r) = 4ε[(σ/r)^12 − (σ/r)^6]; minimum at r = 2^(1/6)σ equals −ε
+    auto r = run(R"({
+      "format": "analytic",
+      "potentials": [
+        {
+          "type": "pair_lj",
+          "rmin": 2.0, "rmax": 6.0,
+          "epsilon": 1.0,
+          "sigma": 2.5
+        }
+      ]
+    })");
     ASSERT_TRUE(r.ok) << r.error.message;
     ASSERT_EQ(r.pots.size(), 1u);
 
@@ -102,18 +98,20 @@ TEST(PotentialReader, Format0_PairLJ) {
     EXPECT_NEAR(r.pots[0].deriv(r_eq), 0.0, 1e-10);
 }
 
-TEST(PotentialReader, Format0_Morse) {
-    // V(r) = De*(1 - exp(-a*(r-re)))^2 - De
-    // minimum at r=re is -De
-    auto r = run(
-        "#F 0 1\n"
-        "#E\n"
-        "type morse\n"
-        "1.5 5.0\n"
-        "param De 2.0 0.5 4.0\n"
-        "param a  1.5 0.5 3.0\n"
-        "param re 2.5 2.0 3.0\n"
-    );
+TEST(PotentialReader, Analytic_Morse) {
+    // V(r) = De*(1 − exp(−a*(r−re)))^2 − De; minimum at r=re equals −De
+    auto r = run(R"({
+      "format": "analytic",
+      "potentials": [
+        {
+          "type": "morse",
+          "rmin": 1.5, "rmax": 5.0,
+          "De": 2.0,
+          "a": 1.5,
+          "re": 2.5
+        }
+      ]
+    })");
     ASSERT_TRUE(r.ok) << r.error.message;
     ASSERT_EQ(r.pots.size(), 1u);
 
@@ -124,34 +122,36 @@ TEST(PotentialReader, Format0_Morse) {
 
 // ── Error paths ───────────────────────────────────────────────────────────────
 
-TEST(PotentialReader, Error_MissingFHeader) {
-    auto r = run("#E\n");
+TEST(PotentialReader, Error_MissingFormatKey) {
+    auto r = run(R"({"potentials": []})");
     EXPECT_FALSE(r.ok);
     EXPECT_FALSE(r.error.message.empty());
 }
 
 TEST(PotentialReader, Error_UnknownFormat) {
-    auto r = run("#F 5 1\n#E\n");
+    auto r = run(R"({"format": "xyz", "potentials": []})");
     EXPECT_FALSE(r.ok);
     EXPECT_NE(r.error.message.find("unsupported"), std::string::npos);
 }
 
 TEST(PotentialReader, Error_UnknownAnalyticFunction) {
-    auto r = run(
-        "#F 0 1\n#E\n"
-        "type born_mayer\n"
-        "1.0 6.0\n"
-    );
+    auto r = run(R"({
+      "format": "analytic",
+      "potentials": [
+        {"type": "born_mayer", "rmin": 1.0, "rmax": 6.0}
+      ]
+    })");
     EXPECT_FALSE(r.ok);
     EXPECT_NE(r.error.message.find("unknown analytic function"), std::string::npos);
 }
 
-TEST(PotentialReader, Error_KnotCountMismatch) {
-    auto r = run(
-        "#F 3 1\n#E\n"
-        "0.0 4.0 5\n"   // declares 5 knots
-        "1.0\n" "2.0\n" "3.0\n"  // but only 3 values then EOF
-    );
+TEST(PotentialReader, Error_KnotNotANumber) {
+    auto r = run(R"({
+      "format": "tabulated",
+      "potentials": [
+        {"rmin": 0.0, "rmax": 4.0, "knots": [1.0, "bad", 3.0]}
+      ]
+    })");
     EXPECT_FALSE(r.ok);
     EXPECT_FALSE(r.error.message.empty());
 }

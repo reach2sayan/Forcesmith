@@ -36,6 +36,13 @@ add_library(boost_parser INTERFACE)
 target_include_directories(boost_parser SYSTEM INTERFACE "${boost_parser_SOURCE_DIR}/include")
 target_link_libraries(boost_parser INTERFACE Boost::boost)
 
+FetchContent_Declare(nlohmann_json
+    GIT_REPOSITORY https://github.com/nlohmann/json.git
+    GIT_TAG        v3.11.3
+    GIT_SHALLOW    TRUE
+)
+FetchContent_MakeAvailable(nlohmann_json)
+
 # ── Compiler options ──────────────────────────────────────────────────────────
 
 add_library(potfit_warnings INTERFACE)
@@ -65,6 +72,7 @@ target_link_libraries(potfit_lib PUBLIC
     Boost::serialization
     Boost::boost
     boost_parser
+    nlohmann_json::nlohmann_json
 )
 target_link_libraries(potfit_lib PRIVATE
     potfit_warnings

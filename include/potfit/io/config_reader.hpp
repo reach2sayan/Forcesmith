@@ -1,6 +1,6 @@
 #pragma once
 
-// Step 4: boost::parser grammar for potfit *.conf files.
+// JSON-based config reader: top-level array of configuration objects.
 
 #include "potfit/core/atom.hpp"
 
