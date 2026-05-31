@@ -1,5 +1,7 @@
 #pragma once
 
+#include "potfit/core/types.hpp"
+
 #include <Eigen/Core>
 #include <boost/math/interpolators/makima.hpp>
 #include <optional>
@@ -46,11 +48,12 @@ private:
 // Curvature customization-point overloads (found by ADL from the erased
 // Potential); these make a tabulated potential participate in the Tikhonov
 // smoothness regularization. See potfit/potentials/curvature.hpp.
-inline std::size_t curvature_count(const SplinePotential &p) {
+FORCE_INLINE std::size_t curvature_count(const SplinePotential &p) {
   return p.curvature_count();
 }
-inline void write_curvature(const SplinePotential &p, Eigen::VectorXd &dst,
-                            std::size_t off, double weight) {
+FORCE_INLINE void write_curvature(const SplinePotential &p,
+                                  Eigen::VectorXd &dst, std::size_t off,
+                                  double weight) {
   p.write_curvature(dst, off, weight);
 }
 

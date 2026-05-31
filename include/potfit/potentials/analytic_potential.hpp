@@ -18,10 +18,10 @@ template <typename Derived, std::size_t N> struct AnalyticBase {
   std::array<Param, N> params;
   double rmin, rmax;
 
-  double eval(double r) const {
+  constexpr double eval(double r) const {
     return static_cast<const Derived &>(*this).eval_impl(r);
   }
-  double deriv(double r) const {
+  constexpr double deriv(double r) const {
     return static_cast<const Derived &>(*this).deriv_impl(r);
   }
   constexpr std::pair<double, double> span() const { return {rmin, rmax}; }

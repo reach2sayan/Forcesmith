@@ -3,6 +3,7 @@
 #include "potfit/events/signals.hpp"
 
 #include <cmath>
+#include <functional>
 #include <numbers>
 #include <optional>
 #include <utility>
@@ -94,31 +95,31 @@ std::optional<Bond> TersoffForceCalculator::make_bond(const TersoffParams &p,
   return Bond{&p, d1, r1, fc, dfc, VR, VA, -p.lambda * VR, -p.mu * VA};
 }
 
-auto TersoffForceCalculator::add_zeta(const Atom &ai, std::size_t jj) const {
-  return [this, &ai, jj](Bond &&bond) -> std::optional<Bond> {
-    const std::size_t nn = ai.neighbors.size();
-    double zeta = 0.0;
-    for (std::size_t kk = 0; kk < nn; ++kk) {
-      if (kk == jj) {
-        continue;
-      }
-      const NeighborEntry &nb_k = ai.neighbors[kk];
-      const Vec3 &d2 = nb_k.dist;
-      const double r2 = d2.norm();
-      if (r2 < 1e-14) {
-        continue;
-      }
-      const TersoffParams &p_ik = params[ai.type, nb_k.neighbor->type];
-      const double fc_ik = fc_val(r2, p_ik.R, p_ik.S);
-      if (fc_ik == 0.0) {
-        continue;
-      }
-      const double cos_theta = bond.d1.dot(d2) / (bond.r1 * r2);
-      zeta += p_ik.omega * fc_ik * g_val(cos_theta, *bond.p);
+std::optional<Bond> TersoffForceCalculator::add_zeta(const Atom &ai,
+                                                     std::size_t jj,
+                                                     Bond &&bond) const {
+  const std::size_t nn = ai.neighbors.size();
+  double zeta = 0.0;
+  for (std::size_t kk = 0; kk < nn; ++kk) {
+    if (kk == jj) {
+      continue;
     }
-    bond.zeta = zeta;
-    return std::move(bond);
-  };
+    const NeighborEntry &nb_k = ai.neighbors[kk];
+    const Vec3 &d2 = nb_k.dist;
+    const double r2 = d2.norm();
+    if (r2 < 1e-14) {
+      continue;
+    }
+    const TersoffParams &p_ik = params[ai.type, nb_k.neighbor->type];
+    const double fc_ik = fc_val(r2, p_ik.R, p_ik.S);
+    if (fc_ik == 0.0) {
+      continue;
+    }
+    const double cos_theta = bond.d1.dot(d2) / (bond.r1 * r2);
+    zeta += p_ik.omega * fc_ik * g_val(cos_theta, *bond.p);
+  }
+  bond.zeta = zeta;
+  return std::move(bond);
 }
 
 Bond TersoffForceCalculator::add_bond_order(Bond &&bond) {
@@ -126,99 +127,94 @@ Bond TersoffForceCalculator::add_bond_order(Bond &&bond) {
   return std::move(bond);
 }
 
-auto TersoffForceCalculator::accumulate_pair(Atom &ai, std::size_t jj,
-                                             Configuration &cfg) {
-  return [&ai, jj, &cfg](Bond &&bond) -> Bond {
-    Atom &aj = const_cast<Atom &>(*ai.neighbors[jj].neighbor);
+Bond TersoffForceCalculator::accumulate_pair(Atom &ai, std::size_t jj,
+                                             Configuration &cfg, Bond &&bond) {
+  Atom &aj = const_cast<Atom &>(*ai.neighbors[jj].neighbor);
 
-    // Energy: (1/2) f_c [VR − b VA].
-    cfg.calc_energy += 0.5 * bond.fc * (bond.VR - bond.b * bond.VA);
+  // Energy: (1/2) f_c [VR − b VA].
+  cfg.calc_energy += 0.5 * bond.fc * (bond.VR - bond.b * bond.VA);
 
-    // F_i += (1/2)[f_c'(VR − b VA) + f_c(VR' − b VA')] d1 / r1.
-    const double pair_coeff = 0.5 *
-                              (bond.dfc * (bond.VR - bond.b * bond.VA) +
-                               bond.fc * (bond.VRp - bond.b * bond.VAp)) /
-                              bond.r1;
-    const Vec3 F_pair = pair_coeff * bond.d1;
+  // F_i += (1/2)[f_c'(VR − b VA) + f_c(VR' − b VA')] d1 / r1.
+  const double pair_coeff = 0.5 *
+                            (bond.dfc * (bond.VR - bond.b * bond.VA) +
+                             bond.fc * (bond.VRp - bond.b * bond.VAp)) /
+                            bond.r1;
+  const Vec3 F_pair = pair_coeff * bond.d1;
 
-    ai.calc_force += F_pair;
-    aj.calc_force -= F_pair;
-    cfg.calc_stress += 0.5 * bond.d1 * (-F_pair).transpose();
-    return std::move(bond);
-  };
+  ai.calc_force += F_pair;
+  aj.calc_force -= F_pair;
+  cfg.calc_stress += 0.5 * bond.d1 * (-F_pair).transpose();
+  return std::move(bond);
 }
 
 // Three-body force from ∂b_ij/∂ζ × ∂ζ/∂r_n. Empty when ζ = 0.
 //   E = (1/2) f_c [VR − b VA] ⇒ ∂E/∂b = −(1/2) f_c VA, so
 //   F_n = −∂E/∂b × db/dζ × ∂ζ/∂r_n = (1/2) f_c VA (db/dζ) ∂ζ/∂r_n ≡ P ∂ζ/∂r_n.
-auto TersoffForceCalculator::accumulate_three_body(Atom &ai, std::size_t jj,
-                                                   Configuration &cfg) const {
-  return [this, &ai, jj, &cfg](Bond &&bond) -> std::optional<Bond> {
-    if (bond.zeta == 0.0) {
-      return std::nullopt;
+std::optional<Bond> TersoffForceCalculator::accumulate_three_body(
+    Atom &ai, std::size_t jj, Configuration &cfg, Bond &&bond) const {
+  if (bond.zeta == 0.0) {
+    return std::nullopt;
+  }
+  Atom &aj = const_cast<Atom &>(*ai.neighbors[jj].neighbor);
+  const double P = 0.5 * bond.fc * bond.VA * dbond_dzeta(bond.zeta, *bond.p);
+
+  const Vec3 &d1 = bond.d1;
+  const double inv_r1 = 1.0 / bond.r1;
+  const std::size_t nn = ai.neighbors.size();
+  for (std::size_t kk = 0; kk < nn; ++kk) {
+    if (kk == jj) {
+      continue;
     }
-    Atom &aj = const_cast<Atom &>(*ai.neighbors[jj].neighbor);
-    const double P = 0.5 * bond.fc * bond.VA * dbond_dzeta(bond.zeta, *bond.p);
-
-    const Vec3 &d1 = bond.d1;
-    const double inv_r1 = 1.0 / bond.r1;
-    const std::size_t nn = ai.neighbors.size();
-    for (std::size_t kk = 0; kk < nn; ++kk) {
-      if (kk == jj) {
-        continue;
-      }
-      const NeighborEntry &nb_k = ai.neighbors[kk];
-      Atom &ak = const_cast<Atom &>(*nb_k.neighbor);
-      const Vec3 &d2 = nb_k.dist;
-      const double r2 = d2.norm();
-      if (r2 < 1e-14) {
-        continue;
-      }
-      const TersoffParams &p_ik = params[ai.type, nb_k.neighbor->type];
-      const double fc_ik = fc_val(r2, p_ik.R, p_ik.S);
-      const double dfc_ik = dfc_val(r2, p_ik.R, p_ik.S);
-      if (fc_ik == 0.0 && dfc_ik == 0.0) {
-        continue;
-      }
-
-      const double inv_r2 = 1.0 / r2;
-      const double cos_theta = d1.dot(d2) * inv_r1 * inv_r2;
-      const double gv = g_val(cos_theta, *bond.p);
-      const double dgv = dg_val(cos_theta, *bond.p);
-
-      // Gradient of cos θ w.r.t. each atom position:
-      //   ∂c/∂r_i = Ac d1 + Bc d2   ∂c/∂r_j = d2/(r1 r2) − c d1/r1²
-      //   ∂c/∂r_k = d1/(r1 r2) − c d2/r2²
-      const double Ac = cos_theta * inv_r1 * inv_r1 - inv_r1 * inv_r2;
-      const double Bc = cos_theta * inv_r2 * inv_r2 - inv_r1 * inv_r2;
-
-      // Mixing weight ω for the i–k pair carries through every ζ-gradient term.
-      const double w_ik = p_ik.omega;
-
-      const Vec3 dz_dri = w_ik * (-dfc_ik * inv_r2 * gv * d2 +
-                                  fc_ik * dgv * (Ac * d1 + Bc * d2));
-      const Vec3 dz_drj =
-          w_ik * fc_ik * dgv *
-          (inv_r1 * inv_r2 * d2 - cos_theta * inv_r1 * inv_r1 * d1);
-      const Vec3 dz_drk =
-          w_ik *
-          (dfc_ik * inv_r2 * gv * d2 +
-           fc_ik * dgv *
-               (inv_r1 * inv_r2 * d1 - cos_theta * inv_r2 * inv_r2 * d2));
-
-      const Vec3 Fi_3b = P * dz_dri;
-      const Vec3 Fj_3b = P * dz_drj;
-      const Vec3 Fk_3b = P * dz_drk;
-
-      ai.calc_force += Fi_3b;
-      aj.calc_force += Fj_3b;
-      ak.calc_force += Fk_3b;
-
-      // Virial: bond ⊗ force-on-partner (the 0.5 already lives in P).
-      cfg.calc_stress += d1 * Fj_3b.transpose() + d2 * Fk_3b.transpose();
+    const NeighborEntry &nb_k = ai.neighbors[kk];
+    Atom &ak = const_cast<Atom &>(*nb_k.neighbor);
+    const Vec3 &d2 = nb_k.dist;
+    const double r2 = d2.norm();
+    if (r2 < 1e-14) {
+      continue;
     }
-    return std::move(bond);
-  };
+    const TersoffParams &p_ik = params[ai.type, nb_k.neighbor->type];
+    const double fc_ik = fc_val(r2, p_ik.R, p_ik.S);
+    const double dfc_ik = dfc_val(r2, p_ik.R, p_ik.S);
+    if (fc_ik == 0.0 && dfc_ik == 0.0) {
+      continue;
+    }
+
+    const double inv_r2 = 1.0 / r2;
+    const double cos_theta = d1.dot(d2) * inv_r1 * inv_r2;
+    const double gv = g_val(cos_theta, *bond.p);
+    const double dgv = dg_val(cos_theta, *bond.p);
+
+    // Gradient of cos θ w.r.t. each atom position:
+    //   ∂c/∂r_i = Ac d1 + Bc d2   ∂c/∂r_j = d2/(r1 r2) − c d1/r1²
+    //   ∂c/∂r_k = d1/(r1 r2) − c d2/r2²
+    const double Ac = cos_theta * inv_r1 * inv_r1 - inv_r1 * inv_r2;
+    const double Bc = cos_theta * inv_r2 * inv_r2 - inv_r1 * inv_r2;
+
+    // Mixing weight ω for the i–k pair carries through every ζ-gradient term.
+    const double w_ik = p_ik.omega;
+
+    const Vec3 dz_dri =
+        w_ik * (-dfc_ik * inv_r2 * gv * d2 + fc_ik * dgv * (Ac * d1 + Bc * d2));
+    const Vec3 dz_drj =
+        w_ik * fc_ik * dgv *
+        (inv_r1 * inv_r2 * d2 - cos_theta * inv_r1 * inv_r1 * d1);
+    const Vec3 dz_drk =
+        w_ik * (dfc_ik * inv_r2 * gv * d2 +
+                fc_ik * dgv *
+                    (inv_r1 * inv_r2 * d1 - cos_theta * inv_r2 * inv_r2 * d2));
+
+    const Vec3 Fi_3b = P * dz_dri;
+    const Vec3 Fj_3b = P * dz_drj;
+    const Vec3 Fk_3b = P * dz_drk;
+
+    ai.calc_force += Fi_3b;
+    aj.calc_force += Fj_3b;
+    ak.calc_force += Fk_3b;
+
+    // Virial: bond ⊗ force-on-partner (the 0.5 already lives in P).
+    cfg.calc_stress += d1 * Fj_3b.transpose() + d2 * Fk_3b.transpose();
+  }
+  return std::move(bond);
 }
 
 std::size_t TersoffForceCalculator::param_count() const {
@@ -282,10 +278,14 @@ void TersoffForceCalculator::eval_forces(Configuration &cfg) const {
       const TersoffParams &p = params[ti, nb_j.neighbor->type];
 
       make_bond(p, d1, d1.norm())
-          .and_then(add_zeta(ai, jj))
+          .and_then(std::bind_front(&TersoffForceCalculator::add_zeta, this,
+                                    std::cref(ai), jj))
           .transform(add_bond_order)
-          .transform(accumulate_pair(ai, jj, cfg))
-          .and_then(accumulate_three_body(ai, jj, cfg));
+          .transform(std::bind_front(&TersoffForceCalculator::accumulate_pair,
+                                     std::ref(ai), jj, std::ref(cfg)))
+          .and_then(
+              std::bind_front(&TersoffForceCalculator::accumulate_three_body,
+                              this, std::ref(ai), jj, std::ref(cfg)));
     }
   });
 

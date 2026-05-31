@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <functional>
 #include <iterator>
 #include <numeric>
 #include <optional>
@@ -33,14 +34,13 @@ PairBond PairForceCalculator::add_pair_force(PairBond &&pb) {
   return std::move(pb);
 }
 
-auto PairForceCalculator::accumulate_pair(Configuration &cfg) {
-  return [&cfg](PairBond &&pb) -> PairBond {
-    pb.ai->calc_force += pb.force;
-    cfg.calc_energy += 0.5 * pb.phi;
-    // Virial: bond ⊗ force-on-partner = dist ⊗ (−force); 0.5 for the full list.
-    cfg.calc_stress -= 0.5 * pb.d * pb.force.transpose();
-    return std::move(pb);
-  };
+PairBond PairForceCalculator::accumulate_pair(Configuration &cfg,
+                                              PairBond &&pb) {
+  pb.ai->calc_force += pb.force;
+  cfg.calc_energy += 0.5 * pb.phi;
+  // Virial: bond ⊗ force-on-partner = dist ⊗ (−force); 0.5 for the full list.
+  cfg.calc_stress -= 0.5 * pb.d * pb.force.transpose();
+  return std::move(pb);
 }
 
 std::size_t PairForceCalculator::param_count() const {
@@ -79,7 +79,8 @@ void PairForceCalculator::eval_forces(Configuration &cfg) const {
     for (const auto &nb : atom.neighbors) {
       make_pair_bond(atom, nb, pair[atom, *nb.neighbor])
           .transform(add_pair_force)
-          .transform(accumulate_pair(cfg));
+          .transform(std::bind_front(&PairForceCalculator::accumulate_pair,
+                                     std::ref(cfg)));
     }
   }
 

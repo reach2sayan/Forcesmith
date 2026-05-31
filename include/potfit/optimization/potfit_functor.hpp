@@ -20,10 +20,8 @@ struct PotfitFunctor {
   using ValueType = Eigen::VectorXd;
   using JacobianType = Eigen::MatrixXd;
 
-  PotfitFunctor(std::span<Configuration> configs,
-                ForceCalculator model,
-                double energy_weight = 1.0,
-                double stress_weight = 0.0,
+  PotfitFunctor(std::span<Configuration> configs, ForceCalculator model,
+                double energy_weight = 1.0, double stress_weight = 0.0,
                 double smooth_weight = 0.0);
 
   // Evaluate residual vector fvec given parameter vector x.
@@ -36,16 +34,17 @@ struct PotfitFunctor {
   constexpr int values() const { return values_; }
 
   // Access the underlying force calculator (e.g. to gather final params).
-  const ForceCalculator& model() const { return model_; }
-        ForceCalculator& model()       { return model_; }
+  const ForceCalculator &model() const { return model_; }
+  ForceCalculator &model() { return model_; }
 
 private:
-  std::span<Configuration>  configs_;
-  mutable ForceCalculator   model_; // mutable: scatter_params updates params during eval
+  std::span<Configuration> configs_;
+  mutable ForceCalculator
+      model_; // mutable: scatter_params updates params during eval
   double energy_weight_;
   double stress_weight_;
   double smooth_weight_;
-  int smooth_count_ = 0;   // # curvature residuals (0 when smooth_weight_ == 0)
+  int smooth_count_ = 0; // # curvature residuals (0 when smooth_weight_ == 0)
   int inputs_ = 0;
   int values_ = 0;
   mutable std::uint64_t iter_ = 0;

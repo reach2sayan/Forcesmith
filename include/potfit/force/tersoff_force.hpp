@@ -87,13 +87,17 @@ private:
   static std::optional<Bond> make_bond(const TersoffParams &p, const Vec3 &d1,
                                        double r1);
   // Stage 2 — angular sum ζ_ij = Σ_{k≠j} ω_ik f_c(r_ik) g(cos θ_ijk).
-  auto add_zeta(const Atom &ai, std::size_t jj) const;
+  std::optional<Bond> add_zeta(const Atom &ai, std::size_t jj,
+                               Bond &&bond) const;
   // Stage 3 — bond order b_ij from ζ_ij.
   static Bond add_bond_order(Bond &&bond);
   // Stage 4 — accumulate energy and the (b fixed) pair force / virial.
-  static auto accumulate_pair(Atom &ai, std::size_t jj, Configuration &cfg);
+  static Bond accumulate_pair(Atom &ai, std::size_t jj, Configuration &cfg,
+                              Bond &&bond);
   // Stage 5 — three-body force from ∂b_ij/∂ζ × ∂ζ/∂r_n. Empty when ζ = 0.
-  auto accumulate_three_body(Atom &ai, std::size_t jj, Configuration &cfg) const;
+  std::optional<Bond> accumulate_three_body(Atom &ai, std::size_t jj,
+                                            Configuration &cfg,
+                                            Bond &&bond) const;
 };
 
 static_assert(ForceCalculatorModel<TersoffForceCalculator>);

@@ -15,18 +15,10 @@ namespace potfit {
 
 namespace leaf = boost::leaf;
 
-// BOOST_LEAF_CHECK/AUTO expand to a GNU statement expression ({ ... }), which
-// Clang flags under -Wgnu-statement-expression-from-macro-expansion. It is a
-// deliberate Boost.LEAF idiom, not our code — suppress it for this TU rather
-// than weakening the warning project-wide. The push is placed after the first
-// declaration (the namespace alias above) so it lands in clangd's main-file body
-// rather than the preamble; otherwise the push/pop pair is split across the
-// preamble boundary and clangd reports a spurious "no matching push" at the pop.
-// clang-format off keeps the `ignored` pragma on one physical line.
-// clang-format off
 #if defined(__clang__)
 #pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wgnu-statement-expression-from-macro-expansion"
+#pragma clang diagnostic ignored                                               \
+    "-Wgnu-statement-expression-from-macro-expansion"
 #endif
 // clang-format on
 

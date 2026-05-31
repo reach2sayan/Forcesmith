@@ -43,7 +43,7 @@ private:
   // Stage 2 — radial force φ′(r).
   static PairBond add_pair_force(PairBond &&pb);
   // Stage 3 — commit energy / force / virial (0.5 for the full neighbor list).
-  static auto accumulate_pair(Configuration &cfg);
+  static PairBond accumulate_pair(Configuration &cfg, PairBond &&pb);
 };
 
 static_assert(ForceCalculatorModel<PairForceCalculator>);

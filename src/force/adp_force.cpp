@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <functional>
 #include <numeric>
 #include <optional>
 #include <utility>
@@ -29,60 +30,52 @@ ADPForceCalculator::make_pair_force(const Atom &ai, const NeighborEntry &nb) {
   return PairForce{&ai, nb.neighbor, d, r, 1.0 / r};
 }
 
-auto ADPForceCalculator::add_eam_force() const {
-  return [this](PairForce &&pf) -> PairForce {
-    const Atom &ai = *pf.ai;
-    const Atom &aj = *pf.aj;
-    // Gate each radial table on its own cutoff (see in_range).
-    const auto &phi_pot = pair[ai, aj];
-    const auto &g_j = density[aj];
-    const auto &g_i = density[ai];
-    pf.phi = in_range(phi_pot, pf.r) ? phi_pot.eval(pf.r) : 0.0;
-    const double dphi = in_range(phi_pot, pf.r) ? phi_pot.deriv(pf.r) : 0.0;
-    const double drho_j = in_range(g_j, pf.r) ? g_j.deriv(pf.r) : 0.0;
-    const double drho_i = in_range(g_i, pf.r) ? g_i.deriv(pf.r) : 0.0;
-    pf.force +=
-        (dphi + ai.gradF * drho_j + aj.gradF * drho_i) * pf.inv_r * pf.d;
-    return std::move(pf);
-  };
+PairForce ADPForceCalculator::add_eam_force(PairForce &&pf) const {
+  const Atom &ai = *pf.ai;
+  const Atom &aj = *pf.aj;
+  // Gate each radial table on its own cutoff (see in_range).
+  const auto &phi_pot = pair[ai, aj];
+  const auto &g_j = density[aj];
+  const auto &g_i = density[ai];
+  pf.phi = in_range(phi_pot, pf.r) ? phi_pot.eval(pf.r) : 0.0;
+  const double dphi = in_range(phi_pot, pf.r) ? phi_pot.deriv(pf.r) : 0.0;
+  const double drho_j = in_range(g_j, pf.r) ? g_j.deriv(pf.r) : 0.0;
+  const double drho_i = in_range(g_i, pf.r) ? g_i.deriv(pf.r) : 0.0;
+  pf.force += (dphi + ai.gradF * drho_j + aj.gradF * drho_i) * pf.inv_r * pf.d;
+  return std::move(pf);
 }
 
-auto ADPForceCalculator::add_dipole_force() const {
-  return [this](PairForce &&pf) -> PairForce {
-    const Atom &ai = *pf.ai;
-    const Atom &aj = *pf.aj;
-    const auto &dip = dipole[ai, aj];
-    const double u = in_range(dip, pf.r) ? dip.eval(pf.r) : 0.0;
-    const double du = in_range(dip, pf.r) ? dip.deriv(pf.r) : 0.0;
-    const double dot_i = ai.mu.dot(pf.d);
-    const double dot_j = aj.mu.dot(pf.d);
-    pf.force += (du * pf.inv_r * (dot_i - dot_j)) * pf.d + u * (ai.mu - aj.mu);
-    return std::move(pf);
-  };
+PairForce ADPForceCalculator::add_dipole_force(PairForce &&pf) const {
+  const Atom &ai = *pf.ai;
+  const Atom &aj = *pf.aj;
+  const auto &dip = dipole[ai, aj];
+  const double u = in_range(dip, pf.r) ? dip.eval(pf.r) : 0.0;
+  const double du = in_range(dip, pf.r) ? dip.deriv(pf.r) : 0.0;
+  const double dot_i = ai.mu.dot(pf.d);
+  const double dot_j = aj.mu.dot(pf.d);
+  pf.force += (du * pf.inv_r * (dot_i - dot_j)) * pf.d + u * (ai.mu - aj.mu);
+  return std::move(pf);
 }
 
-auto ADPForceCalculator::add_quadrupole_force() const {
-  return [this](PairForce &&pf) -> PairForce {
-    const Atom &ai = *pf.ai;
-    const Atom &aj = *pf.aj;
-    const auto &quad = quadrupole[ai, aj];
-    const double w = in_range(quad, pf.r) ? quad.eval(pf.r) : 0.0;
-    const double dw = in_range(quad, pf.r) ? quad.deriv(pf.r) : 0.0;
-    const double nu = quad_nu(ai.lambda, pf.d) + quad_nu(aj.lambda, pf.d);
-    const Vec3 xi = quad_xi(ai.lambda, pf.d) + quad_xi(aj.lambda, pf.d);
-    pf.force += (dw * pf.inv_r * nu) * pf.d + 2.0 * w * xi;
-    return std::move(pf);
-  };
+PairForce ADPForceCalculator::add_quadrupole_force(PairForce &&pf) const {
+  const Atom &ai = *pf.ai;
+  const Atom &aj = *pf.aj;
+  const auto &quad = quadrupole[ai, aj];
+  const double w = in_range(quad, pf.r) ? quad.eval(pf.r) : 0.0;
+  const double dw = in_range(quad, pf.r) ? quad.deriv(pf.r) : 0.0;
+  const double nu = quad_nu(ai.lambda, pf.d) + quad_nu(aj.lambda, pf.d);
+  const Vec3 xi = quad_xi(ai.lambda, pf.d) + quad_xi(aj.lambda, pf.d);
+  pf.force += (dw * pf.inv_r * nu) * pf.d + 2.0 * w * xi;
+  return std::move(pf);
 }
 
-auto ADPForceCalculator::accumulate(Atom &ai, Configuration &cfg) {
-  return [&ai, &cfg](PairForce &&pf) -> PairForce {
-    ai.calc_force += pf.force;
-    cfg.calc_energy += 0.5 * pf.phi;
-    // Virial: bond ⊗ force-on-partner = d ⊗ (−fvec); 0.5 for the full list.
-    cfg.calc_stress -= 0.5 * pf.d * pf.force.transpose();
-    return std::move(pf);
-  };
+PairForce ADPForceCalculator::accumulate(Atom &ai, Configuration &cfg,
+                                         PairForce &&pf) {
+  ai.calc_force += pf.force;
+  cfg.calc_energy += 0.5 * pf.phi;
+  // Virial: bond ⊗ force-on-partner = d ⊗ (−fvec); 0.5 for the full list.
+  cfg.calc_stress -= 0.5 * pf.d * pf.force.transpose();
+  return std::move(pf);
 }
 
 std::size_t ADPForceCalculator::param_count() const {
@@ -215,10 +208,13 @@ void ADPForceCalculator::eval_forces(Configuration &cfg) const {
   for (Atom &ai : cfg.atoms) {
     for (const NeighborEntry &nb : ai.neighbors) {
       make_pair_force(ai, nb)
-          .transform(add_eam_force())
-          .transform(add_dipole_force())
-          .transform(add_quadrupole_force())
-          .transform(accumulate(ai, cfg));
+          .transform(std::bind_front(&ADPForceCalculator::add_eam_force, this))
+          .transform(
+              std::bind_front(&ADPForceCalculator::add_dipole_force, this))
+          .transform(
+              std::bind_front(&ADPForceCalculator::add_quadrupole_force, this))
+          .transform(std::bind_front(&ADPForceCalculator::accumulate,
+                                     std::ref(ai), std::ref(cfg)));
     }
   }
 

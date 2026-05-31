@@ -71,16 +71,16 @@ private:
                                                   const NeighborEntry &nb);
   // Stage 2 — EAM pair + embedding-gradient force (same as EAMForceCalculator):
   //   F_eam = [dφ/dr + gradF_i×dg_{t(j)}/dr + gradF_j×dg_{t(i)}/dr] × r̂
-  auto add_eam_force() const;
+  PairForce add_eam_force(PairForce &&pf) const;
   // Stage 3 — dipole force (Mishin 2005, derived via ∂E_dip/∂r_i):
   //   F_dip = du/r × (μ_i·d − μ_j·d) × d + u × (μ_i − μ_j)
-  auto add_dipole_force() const;
+  PairForce add_dipole_force(PairForce &&pf) const;
   // Stage 4 — quadrupole force (Mishin 2005, derived via ∂E_quad/∂r_i):
   //   F_quad = dw/r × [ν(λ_i,d) + ν(λ_j,d)] × d + 2w × [ξ(λ_i,d) + ξ(λ_j,d)]
   //   where ν(M,d)=d^T M d − r²/3 tr(M),  ξ(M,d)=Md − tr(M)/3 d
-  auto add_quadrupole_force() const;
+  PairForce add_quadrupole_force(PairForce &&pf) const;
   // Stage 5 — commit the pair's energy, force and virial to the configuration.
-  static auto accumulate(Atom &ai, Configuration &cfg);
+  static PairForce accumulate(Atom &ai, Configuration &cfg, PairForce &&pf);
 };
 
 static_assert(ForceCalculatorModel<ADPForceCalculator>);
