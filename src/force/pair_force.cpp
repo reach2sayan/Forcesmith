@@ -44,19 +44,45 @@ PairBond PairForceCalculator::accumulate_pair(Configuration &cfg,
 }
 
 std::size_t PairForceCalculator::param_count() const {
-  return std::transform_reduce(pair.begin(), pair.end(), std::size_t{0},
-                               std::plus<>{},
-                               [](const auto &p) { return p.param_count(); });
+  const std::size_t per_pot =
+      std::transform_reduce(pair.begin(), pair.end(), std::size_t{0},
+                            std::plus<>{},
+                            [](const auto &p) { return p.param_count(); });
+  const std::size_t free_g = std::ranges::count_if(
+      globals, [](const auto &g) { return !g.value.fixed; });
+  return per_pot + free_g;
 }
 
 void PairForceCalculator::gather_params(Eigen::VectorXd &dst,
                                         std::size_t off) const {
   gather_range(pair, dst, off);
+  for (const auto &g : globals)
+    if (!g.value.fixed)
+      dst[off++] = g.value.value;
 }
 
 void PairForceCalculator::scatter_params(const Eigen::VectorXd &src,
                                          std::size_t off) {
   scatter_range(pair, src, off);
+  for (auto &g : globals)
+    if (!g.value.fixed)
+      g.value.value = src[off++];
+  broadcast_globals();
+}
+
+void PairForceCalculator::broadcast_globals() {
+  for (const auto &g : globals)
+    for (const auto &lk : g.links) // pair calculator: region is always 0 (pair)
+      (*std::next(pair.begin(), static_cast<std::ptrdiff_t>(lk.index)))
+          .set_param(lk.param, g.value.value);
+}
+
+void PairForceCalculator::finalize_globals() {
+  for (const auto &g : globals)
+    for (const auto &lk : g.links)
+      (*std::next(pair.begin(), static_cast<std::ptrdiff_t>(lk.index)))
+          .set_fixed(lk.param, true);
+  broadcast_globals();
 }
 
 double PairForceCalculator::max_cutoff() const {
@@ -85,7 +111,7 @@ void PairForceCalculator::eval_forces(Configuration &cfg) const {
   }
 
   cfg.calc_stress /= bc_volume(cfg.bc); // virial → stress (per unit volume)
-  events::on_force_eval(events::ForceEvalStats{conf_index, force_rms(cfg)});
+  events::on_force_eval(events::ForceEvalStats{conf_index, force_rms(cfg), cfg});
 }
 
 PairForceCalculator

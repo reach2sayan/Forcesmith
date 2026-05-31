@@ -1,11 +1,29 @@
 #pragma once
 
 #include "potfit/core/atom.hpp"
+#include "potfit/core/param.hpp"
 #include <Eigen/Core>
 #include <concepts>
 #include <cstdint>
+#include <vector>
 
 namespace potfit {
+
+// A single optimizer parameter shared across several potentials (potfit's
+// global parameters, e.g. a smooth-cutoff h declared once via makeapot -g).
+// `value` is the one slot exposed to the optimizer; each Link names a potential
+// slot it is broadcast into before every force evaluation. The linked slots are
+// held fixed so the per-potential gather/scatter skip them — only `value`
+// participates in the optimizer vector.
+struct GlobalParam {
+  Param value;
+  struct Link {
+    int region;          // calculator sub-table: 0=pair, 1=density, 2=embedding
+    std::size_t index;   // flat position within that table (gather/scatter order)
+    std::size_t param;   // parameter slot inside that potential
+  };
+  std::vector<Link> links;
+};
 
 // NOTE: GCC 13's -Wdangling-reference is a false positive in these loops. The
 // ranges are always lvalue member containers and their iterators' operator*

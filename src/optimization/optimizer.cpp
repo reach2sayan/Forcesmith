@@ -19,8 +19,15 @@ int run_with_solver(std::span<Configuration> configs, ForceCalculator &model,
     return fvec;
   };
 
-  const int status =
-      solver.minimize(x, std::move(residual_fn), functor.values());
+  // Analytic-interface Jacobian: the typed, config-parallel central FD on the
+  // functor itself. Solvers that need a Jacobian (LM) use it; the rest ignore it.
+  auto jacobian_fn = [&functor](const Eigen::VectorXd &params,
+                                Eigen::MatrixXd &fjac) {
+    functor.df(params, fjac);
+  };
+
+  const int status = solver.minimize(x, std::move(residual_fn),
+                                     std::move(jacobian_fn), functor.values());
 
   // Scatter final params back so caller sees consistent state.
   std::visit([&](auto &m) { m.scatter_params(x, std::size_t{0}); }, model);

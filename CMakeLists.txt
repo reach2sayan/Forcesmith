@@ -18,6 +18,11 @@ if(POLICY CMP0167)
 endif()
 find_package(Boost 1.83 CONFIG REQUIRED COMPONENTS serialization program_options)
 
+# Intel oneTBB: drives the std::execution::par parallel algorithms (libstdc++
+# dispatches the parallel STL to TBB) and provides the task_arena / global_control
+# / enumerable_thread_specific used to bound and compose the nested parallelism.
+find_package(TBB CONFIG REQUIRED)
+
 # boost::parser is header-only and not yet in Ubuntu Boost packages;
 # fetch from the official Boost Git mirror.
 include(FetchContent)
@@ -113,6 +118,7 @@ target_link_libraries(potfit_lib PUBLIC
     boost_parser
     boost_math
     nlohmann_json::nlohmann_json
+    TBB::tbb
 )
 target_link_libraries(potfit_lib PRIVATE
     potfit_warnings

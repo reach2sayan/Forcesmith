@@ -25,6 +25,7 @@ struct PairForceCalculator {
   std::size_t ntypes = 1;
   std::uint64_t conf_index = 0;
   PotentialPair pair; // owned pair potentials; eval_forces uses these directly
+  std::vector<GlobalParam> globals; // shared params (e.g. smooth-cutoff h)
 
   void eval_forces(Configuration &cfg) const;
 
@@ -32,6 +33,8 @@ struct PairForceCalculator {
   void        gather_params(Eigen::VectorXd &dst, std::size_t off) const;
   void        scatter_params(const Eigen::VectorXd &src, std::size_t off);
   double      max_cutoff() const;
+  void        broadcast_globals();  // see EAMForceCalculator::broadcast_globals
+  void        finalize_globals();   // see EAMForceCalculator::finalize_globals
 
 private:
   // ── per-bond pipeline stages (see eval_forces) ────────────────────────────

@@ -2,10 +2,18 @@
 #include "potfit/core/neighbor_list.hpp"
 #include "potfit/events/signals.hpp"
 
+#include <algorithm>
 #include <cmath>
+#include <iterator>
 #include <numeric>
 
 namespace potfit {
+
+// Count the free globals (each is exactly one optimizer slot when not fixed).
+static std::size_t free_globals(const std::vector<GlobalParam> &globals) {
+  return std::ranges::count_if(globals,
+                               [](const auto &g) { return !g.value.fixed; });
+}
 
 std::size_t EAMForceCalculator::param_count() const {
   auto count_params = [](const auto &xs) {
@@ -13,7 +21,8 @@ std::size_t EAMForceCalculator::param_count() const {
                                  std::plus<>{},
                                  [](const auto &p) { return p.param_count(); });
   };
-  return count_params(pair) + count_params(density) + count_params(embedding);
+  return count_params(pair) + count_params(density) + count_params(embedding) +
+         free_globals(globals);
 }
 
 void EAMForceCalculator::gather_params(Eigen::VectorXd &dst,
@@ -21,6 +30,11 @@ void EAMForceCalculator::gather_params(Eigen::VectorXd &dst,
   gather_range(pair, dst, off);
   gather_range(density, dst, off);
   gather_range(embedding, dst, off);
+  // Globals follow the per-potential params; their linked slots are fixed and
+  // therefore already excluded above.
+  for (const auto &g : globals)
+    if (!g.value.fixed)
+      dst[off++] = g.value.value;
 }
 
 void EAMForceCalculator::scatter_params(const Eigen::VectorXd &src,
@@ -28,6 +42,46 @@ void EAMForceCalculator::scatter_params(const Eigen::VectorXd &src,
   scatter_range(pair, src, off);
   scatter_range(density, src, off);
   scatter_range(embedding, src, off);
+  for (auto &g : globals)
+    if (!g.value.fixed)
+      g.value.value = src[off++];
+  broadcast_globals();
+}
+
+void EAMForceCalculator::broadcast_globals() {
+  // pair (SymmetricMatrix) and density/embedding (TypeArray) are distinct types,
+  // so select the table with a templated lambda rather than a ternary.
+  auto write = [](auto &tbl, std::size_t idx, std::size_t param, double v) {
+    (*std::next(tbl.begin(), static_cast<std::ptrdiff_t>(idx)))
+        .set_param(param, v);
+  };
+  for (const auto &g : globals)
+    for (const auto &lk : g.links) {
+      const double v = g.value.value;
+      if (lk.region == 0)
+        write(pair, lk.index, lk.param, v);
+      else if (lk.region == 1)
+        write(density, lk.index, lk.param, v);
+      else
+        write(embedding, lk.index, lk.param, v);
+    }
+}
+
+void EAMForceCalculator::finalize_globals() {
+  auto fix = [](auto &tbl, std::size_t idx, std::size_t param) {
+    (*std::next(tbl.begin(), static_cast<std::ptrdiff_t>(idx)))
+        .set_fixed(param, true);
+  };
+  for (const auto &g : globals)
+    for (const auto &lk : g.links) {
+      if (lk.region == 0)
+        fix(pair, lk.index, lk.param);
+      else if (lk.region == 1)
+        fix(density, lk.index, lk.param);
+      else
+        fix(embedding, lk.index, lk.param);
+    }
+  broadcast_globals();
 }
 
 double EAMForceCalculator::max_cutoff() const {
@@ -125,7 +179,7 @@ void EAMForceCalculator::eval_forces(Configuration &cfg) const {
   }
 
   cfg.calc_stress /= bc_volume(cfg.bc); // virial → stress (per unit volume)
-  events::on_force_eval(events::ForceEvalStats{conf_index, force_rms(cfg)});
+  events::on_force_eval(events::ForceEvalStats{conf_index, force_rms(cfg), cfg});
 }
 
 } // namespace potfit

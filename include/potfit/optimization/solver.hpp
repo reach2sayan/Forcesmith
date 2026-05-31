@@ -10,19 +10,24 @@
 
 namespace potfit {
 
+// Residual map x ↦ F(x) and the (optional) Jacobian map (x, J) ↦ ∂F/∂x. An empty
+// JacobianFn means "no analytic/parallel Jacobian supplied" — solvers that need
+// a Jacobian fall back to their own finite differences.
+using ResidualFn = std::function<Eigen::VectorXd(const Eigen::VectorXd &)>;
+using JacobianFn =
+    std::function<void(const Eigen::VectorXd &, Eigen::MatrixXd &)>;
+
 template <typename T>
 concept SolverImpl =
-    requires(const T &s, Eigen::VectorXd &x,
-             std::function<Eigen::VectorXd(const Eigen::VectorXd &)> f,
+    requires(const T &s, Eigen::VectorXd &x, ResidualFn f, JacobianFn jac,
              int n_vals) {
-      { s.minimize(x, f, n_vals) } -> std::convertible_to<int>;
+      { s.minimize(x, f, jac, n_vals) } -> std::convertible_to<int>;
     };
 
 namespace detail {
 struct SolverConcept {
   virtual ~SolverConcept() = default;
-  virtual int minimize(Eigen::VectorXd &,
-                       std::function<Eigen::VectorXd(const Eigen::VectorXd &)>,
+  virtual int minimize(Eigen::VectorXd &, ResidualFn, JacobianFn,
                        int) const = 0;
 };
 } // namespace detail
@@ -31,10 +36,9 @@ class Solver : private detail::ErasedMoveOnly<detail::SolverConcept> {
   template <typename T> struct Model final : detail::SolverConcept {
     T impl_;
     explicit Model(T t) : impl_(std::move(t)) {}
-    int minimize(Eigen::VectorXd &x,
-                 std::function<Eigen::VectorXd(const Eigen::VectorXd &)> f,
+    int minimize(Eigen::VectorXd &x, ResidualFn f, JacobianFn jac,
                  int n_vals) const override {
-      return impl_.minimize(x, std::move(f), n_vals);
+      return impl_.minimize(x, std::move(f), std::move(jac), n_vals);
     }
   };
 
@@ -50,10 +54,9 @@ public:
   Solver(const Solver &) = delete;
   Solver &operator=(const Solver &) = delete;
 
-  int minimize(Eigen::VectorXd &x,
-               std::function<Eigen::VectorXd(const Eigen::VectorXd &)> f,
+  int minimize(Eigen::VectorXd &x, ResidualFn f, JacobianFn jac,
                int n_vals) const {
-    return self_->minimize(x, std::move(f), n_vals);
+    return self_->minimize(x, std::move(f), std::move(jac), n_vals);
   }
 };
 
@@ -61,8 +64,7 @@ struct EigenLMSolver {
   int max_iter = 500;
   double xtol = 1e-7;
   double ftol = 1e-7;
-  int minimize(Eigen::VectorXd &x,
-               std::function<Eigen::VectorXd(const Eigen::VectorXd &)> f,
+  int minimize(Eigen::VectorXd &x, ResidualFn f, JacobianFn jac,
                int n_vals) const;
 };
 
@@ -73,8 +75,7 @@ static_assert(SolverImpl<EigenLMSolver>);
 struct EigenHybridSolver {
   int max_iter = 500;
   double xtol = 1e-7;
-  int minimize(Eigen::VectorXd &x,
-               std::function<Eigen::VectorXd(const Eigen::VectorXd &)> f,
+  int minimize(Eigen::VectorXd &x, ResidualFn f, JacobianFn jac,
                int n_vals) const;
 };
 
@@ -91,8 +92,7 @@ struct BoostDESolver {
   std::size_t max_generations = 1000;
   unsigned threads = 0; // 0 → hardware_concurrency
   unsigned seed = 0;    // 0 → std::random_device
-  int minimize(Eigen::VectorXd &x,
-               std::function<Eigen::VectorXd(const Eigen::VectorXd &)> f,
+  int minimize(Eigen::VectorXd &x, ResidualFn f, JacobianFn jac,
                int n_vals) const;
 };
 
@@ -105,8 +105,7 @@ static_assert(SolverImpl<BoostDESolver>);
 struct LineSearchSolver {
   int max_iter = 200;
   double xtol = 1e-7;
-  int minimize(Eigen::VectorXd &x,
-               std::function<Eigen::VectorXd(const Eigen::VectorXd &)> f,
+  int minimize(Eigen::VectorXd &x, ResidualFn f, JacobianFn jac,
                int n_vals) const;
 };
 

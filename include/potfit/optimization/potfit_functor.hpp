@@ -11,6 +11,7 @@
 
 #include <Eigen/Core>
 #include <span>
+#include <vector>
 
 namespace potfit {
 
@@ -47,6 +48,12 @@ private:
   int smooth_count_ = 0; // # curvature residuals (0 when smooth_weight_ == 0)
   int inputs_ = 0;
   int values_ = 0;
+  // Prefix sum (size configs+1) of per-config residual counts: config c writes
+  // its residuals to fvec[row_offset_[c] .. row_offset_[c+1]).
+  // row_offset_.back() is where the (serial) smoothness block begins.
+  // Precomputed so the parallel config loop writes disjoint slices without a
+  // running counter.
+  std::vector<int> row_offset_;
   mutable std::uint64_t iter_ = 0;
 };
 

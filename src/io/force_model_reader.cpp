@@ -5,6 +5,9 @@
 #include <nlohmann/json.hpp>
 
 #include <string>
+#include <unordered_map>
+#include <utility>
+#include <vector>
 
 namespace potfit::io {
 
@@ -99,6 +102,69 @@ leaf::result<void> require_keys(const json &obj,
   return {};
 }
 
+// Resolve shared global parameters. Reads the optional top-level
+// `"globals": { name: {"value":, "min":, "max":, "fixed":} }`, then scans each
+// region's `potentials` for a parameter expressed as `{"global": name}`. For
+// every such reference it records a Link (region, flat index, param slot) and
+// REPLACES the reference in `root` with the global's seed value, so the normal
+// number-based potential parser sees a plain number. The caller assigns the
+// returned vector to calc.globals and calls finalize_globals().
+//
+// `regions` pairs each sub-object that owns a `"potentials"` array with its
+// region id (0=pair, 1=density, 2=embedding). Mutates `root` in place.
+leaf::result<std::vector<GlobalParam>>
+build_globals(json &root,
+              std::initializer_list<std::pair<json *, int>> regions) {
+  auto fail = [](std::string msg) -> leaf::result<std::vector<GlobalParam>> {
+    return leaf::new_error(ParseError{"globals: " + std::move(msg), 0});
+  };
+
+  std::vector<GlobalParam> globals;
+  std::unordered_map<std::string, std::size_t> by_name;
+  if (root.contains("globals")) {
+    for (const auto &item : root["globals"].items()) {
+      const json &spec = item.value();
+      if (!spec.contains("value"))
+        return fail("global '" + item.key() + "' missing 'value'");
+      GlobalParam g;
+      g.value = Param{spec.at("value").get<double>(), spec.value("fixed", false)};
+      by_name.emplace(item.key(), globals.size());
+      globals.push_back(std::move(g));
+    }
+  }
+
+  for (auto [sub, region] : regions) {
+    if (!sub->contains("potentials") || !(*sub)["potentials"].is_array())
+      continue;
+    json &arr = (*sub)["potentials"];
+    for (std::size_t i = 0; i < arr.size(); ++i) {
+      json &pot = arr[i];
+      if (!pot.is_object() || !pot.contains("type"))
+        continue;
+      const std::string type = pot["type"].get<std::string>();
+      // Collect global-ref parameter keys first, then mutate (don't modify the
+      // object mid-iteration).
+      std::vector<std::string> ref_keys;
+      for (const auto &el : pot.items())
+        if (el.value().is_object() && el.value().contains("global"))
+          ref_keys.push_back(el.key());
+      for (const auto &key : ref_keys) {
+        const std::string gname = pot[key]["global"].get<std::string>();
+        auto git = by_name.find(gname);
+        if (git == by_name.end())
+          return fail("reference to undefined global '" + gname + "'");
+        auto slot = analytic_param_index(type, key);
+        if (!slot)
+          return fail("global ref on parameter '" + key +
+                      "' not valid for analytic type '" + type + "'");
+        globals[git->second].links.push_back({region, i, *slot});
+        pot[key] = globals[git->second].value.value; // replace ref → seed number
+      }
+    }
+  }
+  return globals;
+}
+
 } // anonymous namespace
 
 leaf::result<ForceCalculator> parse_force_model(std::string_view input) {
@@ -121,7 +187,12 @@ leaf::result<ForceCalculator> parse_force_model(std::string_view input) {
 
     // ── pair ─────────────────────────────────────────────────────────────
     if (model == "pair") {
-      auto r = parse_potential(input);
+      // Resolve globals in place (pair potentials live at top-level j), then
+      // parse the mutated j (not the raw input string).
+      auto rg = build_globals(j, {{&j, 0}});
+      if (!rg)
+        return rg.error();
+      auto r = parse_potential(j.dump());
       if (!r)
         return r.error();
       auto &pots = *r;
@@ -135,6 +206,8 @@ leaf::result<ForceCalculator> parse_force_model(std::string_view input) {
       calc.pair.reserve(ntypes);
       for (auto &p : pots)
         calc.pair.emplace_back(std::move(p));
+      calc.globals = std::move(*rg);
+      calc.finalize_globals();
       return ForceCalculator{std::move(calc)};
     }
 
@@ -143,6 +216,13 @@ leaf::result<ForceCalculator> parse_force_model(std::string_view input) {
       auto rk = require_keys(j, {"pair", "density", "embedding"}, "eam");
       if (!rk)
         return rk.error();
+
+      // Resolve shared globals BEFORE filling so the potential parser sees plain
+      // numbers; mutates j["pair"/"density"/"embedding"] in place.
+      auto rg = build_globals(
+          j, {{&j["pair"], 0}, {&j["density"], 1}, {&j["embedding"], 2}});
+      if (!rg)
+        return rg.error();
 
       EAMForceCalculator calc;
       calc.ntypes = ntypes;
@@ -157,6 +237,9 @@ leaf::result<ForceCalculator> parse_force_model(std::string_view input) {
           fill_arr(calc.embedding, j["embedding"], ntypes, "eam.embedding");
       if (!re)
         return re.error();
+
+      calc.globals = std::move(*rg);
+      calc.finalize_globals();
 
       return ForceCalculator{std::move(calc)};
     }

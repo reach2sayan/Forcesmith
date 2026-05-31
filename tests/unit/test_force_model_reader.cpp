@@ -294,3 +294,69 @@ TEST(ForceModelReader, Error_InvalidJson) {
     EXPECT_FALSE(r.ok);
     EXPECT_FALSE(r.error.message.empty());
 }
+
+// ── global parameters (shared smooth-cutoff h) ──────────────────────────────
+
+// A 1-type EAM where the smooth-cutoff h is one shared global used by both the
+// morse_sc pair and the exp_decay_sc density. Guards the parameter bookkeeping
+// (the single highest-risk part of the global-parameter machinery).
+static constexpr const char *kEamGlobalH = R"({
+  "model": "eam", "ntypes": 1,
+  "globals": { "h": {"value": 1.0, "min": 0.5, "max": 2.0} },
+  "pair":      {"format":"analytic","potentials":[
+    {"type":"morse_sc","rmin":0.0,"rmax":6.0,"De":0.4,"a":1.2,"re":2.86,"h":{"global":"h"}}]},
+  "density":   {"format":"analytic","potentials":[
+    {"type":"exp_decay_sc","rmin":0.0,"rmax":6.0,"A":1.0,"B":1.0,"h":{"global":"h"}}]},
+  "embedding": {"format":"analytic","potentials":[
+    {"type":"sqrt","rmin":0.0,"rmax":5.0,"A":-1.0,"B":1.0}]}
+})";
+
+TEST(ForceModelReader, EAM_GlobalH_ParsedAndCounted) {
+    auto r = run(kEamGlobalH);
+    ASSERT_TRUE(r.ok) << r.error.message;
+    ASSERT_TRUE(std::holds_alternative<EAMForceCalculator>(r.model));
+    const auto& calc = std::get<EAMForceCalculator>(r.model);
+
+    ASSERT_EQ(calc.globals.size(), 1u);
+    EXPECT_EQ(calc.globals[0].links.size(), 2u); // morse_sc.h + exp_decay_sc.h
+
+    // free params: morse_sc 3 (h fixed) + exp_decay_sc 2 (h fixed) + sqrt 2
+    //              + 1 shared global = 8
+    EXPECT_EQ(calc.param_count(), 8u);
+}
+
+TEST(ForceModelReader, EAM_GlobalH_GatherScatterRoundTrip) {
+    auto r = run(kEamGlobalH);
+    ASSERT_TRUE(r.ok) << r.error.message;
+    auto& calc = std::get<EAMForceCalculator>(r.model);
+
+    Eigen::VectorXd x(static_cast<int>(calc.param_count()));
+    calc.gather_params(x, 0);
+    const Eigen::VectorXd x0 = x;
+    calc.scatter_params(x, 0);
+    Eigen::VectorXd x2(static_cast<int>(calc.param_count()));
+    calc.gather_params(x2, 0);
+    EXPECT_TRUE(x0.isApprox(x2)) << "gather→scatter→gather must be identity";
+}
+
+TEST(ForceModelReader, EAM_GlobalH_BroadcastReachesAllLinks) {
+    auto r = run(kEamGlobalH);
+    ASSERT_TRUE(r.ok) << r.error.message;
+    auto& calc = std::get<EAMForceCalculator>(r.model);
+
+    const auto& phi = calc.pair[0, 0];   // morse_sc, linked to global h
+    const auto& rho = calc.density[0];   // exp_decay_sc, linked to global h
+    const double rt = 5.5;               // near cutoff 6.0 → apot_cutoff(h) active
+    const double phi0 = phi.eval(rt);
+    const double rho0 = rho.eval(rt);
+
+    // The global h is the last gathered slot; perturb it and scatter back.
+    Eigen::VectorXd x(static_cast<int>(calc.param_count()));
+    calc.gather_params(x, 0);
+    x(x.size() - 1) = 1.7;               // new shared h
+    calc.scatter_params(x, 0);
+
+    // Both linked potentials must see the new h (their cutoff factor changed).
+    EXPECT_NE(phi.eval(rt), phi0);
+    EXPECT_NE(rho.eval(rt), rho0);
+}

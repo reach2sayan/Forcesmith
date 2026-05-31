@@ -23,6 +23,8 @@ struct PotentialConcept {
     virtual std::size_t param_count() const = 0;
     virtual void gather_params(Eigen::VectorXd &x, std::size_t off) const = 0;
     virtual void scatter_params(const Eigen::VectorXd &x, std::size_t off) = 0;
+    virtual void set_param(std::size_t i, double v) = 0;
+    virtual void set_fixed(std::size_t i, bool f) = 0;
     virtual std::size_t smoothness_count() const = 0;
     virtual void write_smoothness(Eigen::VectorXd &x, std::size_t off,
                                   double weight) const = 0;
@@ -44,10 +46,22 @@ class Potential : private detail::ErasedValue<detail::PotentialConcept> {
         constexpr void scatter_params(const Eigen::VectorXd &x, std::size_t off) override {
             impl_.scatter_params(x, off);
         }
+        // Conditionally forward: most potential models (and ad-hoc test types)
+        // don't expose set_param/set_fixed — only those that can host a shared
+        // global parameter (analytic functions, splines) do. A global only ever
+        // binds to such a type, so the no-op fallback is never exercised.
+        constexpr void set_param(std::size_t i, double v) override {
+            if constexpr (requires(T &t, std::size_t j, double w) { t.set_param(j, w); })
+                impl_.set_param(i, v);
+        }
+        constexpr void set_fixed(std::size_t i, bool f) override {
+            if constexpr (requires(T &t, std::size_t j, bool g) { t.set_fixed(j, g); })
+                impl_.set_fixed(i, f);
+        }
         // Dispatch to the curvature customization point via ADL (unqualified so
         // tabulated potentials' overloads are found; analytic ones use the
         // default that reports zero curvature residuals).
-        std::size_t smoothness_count() const override {
+        constexpr std::size_t smoothness_count() const override {
             return curvature_count(impl_);
         }
         void write_smoothness(Eigen::VectorXd &x, std::size_t off,
@@ -82,8 +96,10 @@ public:
     constexpr void scatter_params(const Eigen::VectorXd &x, std::size_t off) {
         self_->scatter_params(x, off);
     }
-    std::size_t smoothness_count() const { return self_->smoothness_count(); }
-    void write_smoothness(Eigen::VectorXd &x, std::size_t off, double weight) const {
+    constexpr void set_param(std::size_t i, double v) { self_->set_param(i, v); }
+    constexpr void set_fixed(std::size_t i, bool f) { self_->set_fixed(i, f); }
+    constexpr std::size_t smoothness_count() const { return self_->smoothness_count(); }
+    constexpr void write_smoothness(Eigen::VectorXd &x, std::size_t off, double weight) const {
         self_->write_smoothness(x, off, weight);
     }
 };

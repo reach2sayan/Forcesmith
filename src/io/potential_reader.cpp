@@ -79,6 +79,13 @@ const Registry &registry() {
     add(m,  2, {"A","n"},                                                                    [](auto p, auto lo, auto hi) { return Potential(Softshell(p[0], p[1],                                         lo, hi)); }, "softshell",   "soft"        );
     add(m,  3, {"A","B","C"},                                                                [](auto p, auto lo, auto hi) { return Potential(ExpPlus(p[0], p[1], p[2],                                    lo, hi)); }, "exp_plus",    "expplus"     );
     add(m,  5, {"A","B","C","D","E"},                                                        [](auto p, auto lo, auto hi) { return Potential(Strmm(p[0], p[1], p[2], p[3], p[4],                          lo, hi)); }, "strmm"                      );
+
+    // Smooth-cutoff (`_sc`) variants: base function × apot_cutoff(r,rmax,h);
+    // `h` (switching width) is the last parameter. Match potfit's *_sc names.
+    add(m,  3, {"epsilon","sigma","h"},                                                      [](auto p, auto lo, auto hi) { return Potential(LjSC(p[0], p[1], p[2],                                       lo, hi)); }, "lj_sc",       "pair_lj_sc"  );
+    add(m,  4, {"De","a","re","h"},                                                          [](auto p, auto lo, auto hi) { return Potential(MorseSC(p[0], p[1], p[2], p[3],                             lo, hi)); }, "morse_sc"                   );
+    add(m,  3, {"A","B","h"},                                                                [](auto p, auto lo, auto hi) { return Potential(ExpDecaySC(p[0], p[1], p[2],                                 lo, hi)); }, "exp_decay_sc","exp_sc"       );
+    add(m,  7, {"A","n","B","m","k","phi","h"},                                              [](auto p, auto lo, auto hi) { return Potential(EoppSC(p[0], p[1], p[2], p[3], p[4], p[5], p[6],           lo, hi)); }, "eopp_sc"                    );
     // clang-format on
 
     return m;
@@ -174,6 +181,19 @@ leaf::result<std::vector<Potential>> parse_potential(std::string_view input) {
   } catch (const json::exception &e) {
     return leaf::new_error(ParseError{e.what(), 0});
   }
+}
+
+std::optional<std::size_t> analytic_param_index(std::string_view type,
+                                                std::string_view param) {
+  const Registry &reg = registry();
+  auto it = reg.find(type);
+  if (it == reg.end())
+    return std::nullopt;
+  const auto &names = it->second.param_names;
+  for (std::size_t i = 0; i < names.size(); ++i)
+    if (std::string_view{names[i]} == param)
+      return i;
+  return std::nullopt;
 }
 
 } // namespace potfit::io

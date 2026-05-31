@@ -22,17 +22,23 @@ struct FunctorAdapter {
   using ValueType = Eigen::VectorXd;
   using JacobianType = Eigen::MatrixXd;
 
-  std::function<Eigen::VectorXd(const Eigen::VectorXd &)> fn;
+  ResidualFn fn;
   int n_inputs;
   int n_values;
+  JacobianFn jac; // optional; when set, df delegates to it (PotfitFunctor::df)
 
   int operator()(const Eigen::VectorXd &x, Eigen::VectorXd &fvec) const {
     fvec = std::invoke(fn, x);
     return 0;
   }
 
-  // Central finite-difference Jacobian (Δ = 1e-5).
+  // Prefer the supplied (typed, parallel) Jacobian; otherwise fall back to a
+  // local central finite-difference Jacobian (Δ = 1e-5).
   int df(const Eigen::VectorXd &x, Eigen::MatrixXd &fjac) const {
+    if (jac) {
+      std::invoke(jac, x, fjac);
+      return 0;
+    }
     constexpr double delta = 1e-5;
     Eigen::VectorXd fp, fm, xp = x;
     for (int j : std::views::iota(0, n_inputs)) {
@@ -52,11 +58,10 @@ struct FunctorAdapter {
 
 } // namespace
 
-int EigenLMSolver::minimize(
-    Eigen::VectorXd &x,
-    std::function<Eigen::VectorXd(const Eigen::VectorXd &)> f,
-    int n_vals) const {
-  FunctorAdapter adapter{std::move(f), static_cast<int>(x.size()), n_vals};
+int EigenLMSolver::minimize(Eigen::VectorXd &x, ResidualFn f, JacobianFn jac,
+                            int n_vals) const {
+  FunctorAdapter adapter{std::move(f), static_cast<int>(x.size()), n_vals,
+                         std::move(jac)};
   Eigen::LevenbergMarquardt<FunctorAdapter> lm(adapter);
   lm.parameters.maxfev = max_iter;
   lm.parameters.xtol = xtol;
@@ -64,10 +69,8 @@ int EigenLMSolver::minimize(
   return static_cast<int>(lm.minimize(x));
 }
 
-int EigenHybridSolver::minimize(
-    Eigen::VectorXd &x,
-    std::function<Eigen::VectorXd(const Eigen::VectorXd &)> f,
-    int /*n_vals*/) const {
+int EigenHybridSolver::minimize(Eigen::VectorXd &x, ResidualFn f,
+                                JacobianFn /*jac*/, int /*n_vals*/) const {
   const int D = static_cast<int>(x.size());
 
   // Gradient functor: g(x)[j] = Fᵀ ∂F/∂xⱼ  (central FD, δ=1e-5)
@@ -102,10 +105,8 @@ int EigenHybridSolver::minimize(
   return static_cast<int>(solver.solveNumericalDiff(x));
 }
 
-int BoostDESolver::minimize(
-    Eigen::VectorXd &x,
-    std::function<Eigen::VectorXd(const Eigen::VectorXd &)> f,
-    int /*n_vals*/) const {
+int BoostDESolver::minimize(Eigen::VectorXd &x, ResidualFn f,
+                            JacobianFn /*jac*/, int /*n_vals*/) const {
   const int D = static_cast<int>(x.size());
 
   // Build per-parameter bounds; auto-derive from current x if not provided.
@@ -150,10 +151,8 @@ int BoostDESolver::minimize(
   return 0;
 }
 
-int LineSearchSolver::minimize(
-    Eigen::VectorXd &x,
-    std::function<Eigen::VectorXd(const Eigen::VectorXd &)> f,
-    int /*n_vals*/) const {
+int LineSearchSolver::minimize(Eigen::VectorXd &x, ResidualFn f,
+                               JacobianFn /*jac*/, int /*n_vals*/) const {
   const int D = static_cast<int>(x.size());
   if (D == 0)
     return 0;
@@ -193,13 +192,15 @@ void PowellDirectionSet::line_min(Eigen::VectorXd &x,
   const double before = phi(x);
   const Eigen::VectorXd save = x;
   linmin(x, dir, f);
-  if (phi(x) <= before)
+  if (phi(x) <= before) {
     return;
+  }
   x = save; // +dir worsened φ — try the opposite direction
   const Eigen::VectorXd neg = -dir;
   linmin(x, neg, f);
-  if (phi(x) > before)
+  if (phi(x) > before) {
     x = save;
+  }
 }
 
 PowellDirectionSet::SweepResult
@@ -225,14 +226,13 @@ PowellDirectionSet::conjugate_direction(const Eigen::VectorXd &p0,
   const Eigen::VectorXd xi = x - p0;  // net direction moved this sweep
   const Eigen::VectorXd ptt = x + xi; // extrapolated point 2x − p0
   const double fptt = phi(ptt);
-  if (fptt >= fp)
+  if (fptt >= fp) {
     return std::nullopt;
+  }
   const double t =
       2.0 * (fp - 2.0 * fret + fptt) * std::pow(fp - fret - del, 2) -
       del * std::pow(fp - fptt, 2);
-  if (t >= 0.0)
-    return std::nullopt;
-  return xi;
+  return t < 0.0 ? std::optional<Eigen::VectorXd>{std::move(xi)} : std::nullopt;
 }
 
 Solver make_default_solver(int max_iter, double xtol, double ftol) {

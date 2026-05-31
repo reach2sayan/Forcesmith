@@ -30,6 +30,11 @@ template <typename Derived, std::size_t N> struct AnalyticBase {
   constexpr void set_fixed(std::size_t i, bool f) { params[i].fixed = f; }
   constexpr bool is_fixed(std::size_t i) const { return params[i].fixed; }
 
+  // Write parameter i directly, bypassing the fixed flag. Used to broadcast a
+  // shared global parameter (e.g. a smooth-cutoff h) into this potential's slot,
+  // which is held fixed so gather/scatter skip it.
+  constexpr void set_param(std::size_t i, double v) { params[i].value = v; }
+
   constexpr std::size_t param_count() const {
     return std::ranges::count_if(params,
                                  [](const auto &p) { return !p.fixed; });
@@ -78,6 +83,32 @@ FORCE_INLINE double dfc(double r, double R, double S) noexcept {
   }
   const double x = std::numbers::pi * (r - R) / (S - R);
   return -0.5 * std::numbers::pi / (S - R) * std::sin(x);
+}
+
+// potfit's smooth-cutoff switching factor (the `_sc` function variants):
+//   apot_cutoff(r, r0, h) = u⁴/(1+u⁴),  u = (r − r0)/h,  and 0 for r ≥ r0.
+// r0 is the function's cutoff (rmax). Value AND derivative → 0 as r → r0, so a
+// _sc potential is continuous at the cutoff (unlike a hard truncation). This is
+// a DIFFERENT function from the cosine fc above (used by Tersoff/SW); it matches
+// potfit's apot_cutoff exactly (functions.c:322) for apple-to-apple parity.
+FORCE_INLINE double apot_cutoff(double r, double r0, double h) noexcept {
+  if (r >= r0) {
+    return 0.0;
+  }
+  const double u = (r - r0) / h;
+  const double u4 = (u * u) * (u * u);
+  return u4 / (1.0 + u4);
+}
+
+// d/dr of apot_cutoff: with u=(r−r0)/h, c=u⁴/(1+u⁴) ⇒ dc/dr = (4u³/h)/(1+u⁴)².
+FORCE_INLINE double apot_cutoff_deriv(double r, double r0, double h) noexcept {
+  if (r >= r0) {
+    return 0.0;
+  }
+  const double u = (r - r0) / h;
+  const double u3 = u * u * u;
+  const double denom = 1.0 + u3 * u;
+  return (4.0 * u3 / h) / (denom * denom);
 }
 
 } // namespace detail
@@ -247,6 +278,92 @@ struct Eopp : AnalyticBase<Eopp, 6> {
     const double c = std::cos(k * r + phi), s = std::sin(k * r + phi);
     return -A * n / std::pow(r, n + 1.0) - B * m / std::pow(r, m + 1.0) * c -
            B * k / std::pow(r, m) * s;
+  }
+};
+
+// ── Smooth-cutoff (`_sc`) variants ──────────────────────────────────────────
+// Each is its base function multiplied by detail::apot_cutoff(r, rmax, h), which
+// takes value AND derivative to zero at the cutoff (h is the switching width and
+// the last parameter). deriv_impl uses the product rule (raw'·c + raw·c'). The
+// raw body must NOT itself early-cut at rmax — apot_cutoff already zeroes there.
+// These mirror potfit's lj_sc / morse_sc / exp_decay_sc / eopp_sc exactly.
+
+// params: {epsilon, sigma, h}
+struct LjSC : AnalyticBase<LjSC, 3> {
+  LjSC(double epsilon, double sigma, double h, double lo, double hi)
+      : AnalyticBase({epsilon, sigma, h}, lo, hi) {}
+  FORCE_INLINE double eval_impl(double r) const {
+    const auto [ep, sig, h] = params;
+    const double sr6 = std::pow(sig / r, 6);
+    return 4.0 * ep * (sr6 * sr6 - sr6) * detail::apot_cutoff(r, rmax, h);
+  }
+  FORCE_INLINE double deriv_impl(double r) const {
+    const auto [ep, sig, h] = params;
+    const double sr6 = std::pow(sig / r, 6);
+    const double raw = 4.0 * ep * (sr6 * sr6 - sr6);
+    const double draw = 4.0 * ep * (-12.0 * sr6 * sr6 + 6.0 * sr6) / r;
+    return draw * detail::apot_cutoff(r, rmax, h) +
+           raw * detail::apot_cutoff_deriv(r, rmax, h);
+  }
+};
+
+// params: {D_e, a, r_e, h}
+struct MorseSC : AnalyticBase<MorseSC, 4> {
+  MorseSC(double De, double a, double re, double h, double lo, double hi)
+      : AnalyticBase({De, a, re, h}, lo, hi) {}
+  FORCE_INLINE double eval_impl(double r) const {
+    const auto [De, a, re, h] = params;
+    const double e = std::exp(-a * (r - re));
+    return (De * (1.0 - e) * (1.0 - e) - De) * detail::apot_cutoff(r, rmax, h);
+  }
+  FORCE_INLINE double deriv_impl(double r) const {
+    const auto [De, a, re, h] = params;
+    const double e = std::exp(-a * (r - re));
+    const double raw = De * (1.0 - e) * (1.0 - e) - De;
+    const double draw = 2.0 * De * a * e * (1.0 - e);
+    return draw * detail::apot_cutoff(r, rmax, h) +
+           raw * detail::apot_cutoff_deriv(r, rmax, h);
+  }
+};
+
+// params: {A, B, h}
+struct ExpDecaySC : AnalyticBase<ExpDecaySC, 3> {
+  ExpDecaySC(double A, double B, double h, double lo, double hi)
+      : AnalyticBase({A, B, h}, lo, hi) {}
+  FORCE_INLINE double eval_impl(double r) const {
+    const auto [A, B, h] = params;
+    return A * std::exp(-B * r) * detail::apot_cutoff(r, rmax, h);
+  }
+  FORCE_INLINE double deriv_impl(double r) const {
+    const auto [A, B, h] = params;
+    const double raw = A * std::exp(-B * r);
+    const double draw = -A * B * std::exp(-B * r);
+    return draw * detail::apot_cutoff(r, rmax, h) +
+           raw * detail::apot_cutoff_deriv(r, rmax, h);
+  }
+};
+
+// params: {A, n, B, m, k, phi, h}
+struct EoppSC : AnalyticBase<EoppSC, 7> {
+  EoppSC(double A, double n, double B, double m, double k, double phi, double h,
+         double lo, double hi)
+      : AnalyticBase({A, n, B, m, k, phi, h}, lo, hi) {}
+  FORCE_INLINE double eval_impl(double r) const {
+    const auto [A, n, B, m, k, phi, h] = params;
+    const double raw =
+        A / std::pow(r, n) + (B / std::pow(r, m)) * std::cos(k * r + phi);
+    return raw * detail::apot_cutoff(r, rmax, h);
+  }
+  FORCE_INLINE double deriv_impl(double r) const {
+    const auto [A, n, B, m, k, phi, h] = params;
+    const double c = std::cos(k * r + phi), s = std::sin(k * r + phi);
+    const double raw =
+        A / std::pow(r, n) + (B / std::pow(r, m)) * c;
+    const double draw = -A * n / std::pow(r, n + 1.0) -
+                        B * m / std::pow(r, m + 1.0) * c -
+                        B * k / std::pow(r, m) * s;
+    return draw * detail::apot_cutoff(r, rmax, h) +
+           raw * detail::apot_cutoff_deriv(r, rmax, h);
   }
 };
 

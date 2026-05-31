@@ -89,7 +89,7 @@ TEST(LineSearchSolver, ConvergesCoupledQuadratic) {
     x << 0.0, 0.0;
 
     potfit::LineSearchSolver solver{200, 1e-9};
-    solver.minimize(x, F, 2);
+    solver.minimize(x, F, {}, 2);
 
     EXPECT_NEAR(x[0], 2.0, 1e-5);
     EXPECT_NEAR(x[1], 1.0, 1e-5);

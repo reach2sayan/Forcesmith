@@ -20,6 +20,11 @@ public:
   constexpr void set_fixed(std::size_t i, bool f) { fixed_[i] = f; }
   constexpr bool is_fixed(std::size_t i) const { return fixed_[i]; }
 
+  // Direct knot setter (interface parity with AnalyticBase::set_param, required
+  // by the erased Potential). Global parameters only ever bind to analytic _sc
+  // potentials, never to tabulated ones, so this path is unused in practice.
+  void set_param(std::size_t i, double v) { y_[i] = v; }
+
   constexpr std::size_t param_count() const {
     return static_cast<std::size_t>(std::ranges::count(fixed_, false));
   }
