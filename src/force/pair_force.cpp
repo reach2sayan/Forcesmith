@@ -15,17 +15,11 @@ std::size_t PairForceCalculator::param_count() const {
 }
 
 void PairForceCalculator::gather_params(Eigen::VectorXd &dst, std::size_t off) const {
-  for (const auto &p : pair) {
-    p.gather_params(dst, off);
-    off += p.param_count();
-  }
+  gather_range(pair, dst, off);
 }
 
 void PairForceCalculator::scatter_params(const Eigen::VectorXd &src, std::size_t off) {
-  for (auto &p : pair) {
-    p.scatter_params(src, off);
-    off += p.param_count();
-  }
+  scatter_range(pair, src, off);
 }
 
 double PairForceCalculator::max_cutoff() const {

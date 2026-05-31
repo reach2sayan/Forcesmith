@@ -7,30 +7,36 @@
 namespace potfit {
 
 std::size_t AngularForceCalculator::param_count() const {
-  std::size_t count = 0;
-  for (const auto& p : pair)    count += p.param_count();
-  for (const auto& p : radial)  count += p.param_count();
-  for (const auto& p : angular) count += p.param_count();
-  return count;
+  auto count_params = [](const auto &range) {
+    return std::transform_reduce(range.begin(), range.end(), std::size_t{0},
+                                 std::plus<>{},
+                                 [](const auto &p) { return p.param_count(); });
+  };
+
+  return count_params(pair) + count_params(radial) + count_params(angular);
 }
 
-void AngularForceCalculator::gather_params(Eigen::VectorXd& dst, std::size_t off) const {
-  for (const auto& p : pair)    { p.gather_params(dst, off); off += p.param_count(); }
-  for (const auto& p : radial)  { p.gather_params(dst, off); off += p.param_count(); }
-  for (const auto& p : angular) { p.gather_params(dst, off); off += p.param_count(); }
+void AngularForceCalculator::gather_params(Eigen::VectorXd &dst,
+                                           std::size_t off) const {
+  gather_range(pair, dst, off);
+  gather_range(radial, dst, off);
+  gather_range(angular, dst, off);
 }
 
-void AngularForceCalculator::scatter_params(const Eigen::VectorXd& src, std::size_t off) {
-  for (auto& p : pair)    { p.scatter_params(src, off); off += p.param_count(); }
-  for (auto& p : radial)  { p.scatter_params(src, off); off += p.param_count(); }
-  for (auto& p : angular) { p.scatter_params(src, off); off += p.param_count(); }
+void AngularForceCalculator::scatter_params(const Eigen::VectorXd &src,
+                                            std::size_t off) {
+  scatter_range(pair, src, off);
+  scatter_range(radial, src, off);
+  scatter_range(angular, src, off);
 }
 
 double AngularForceCalculator::max_cutoff() const {
-  double rcut = 0.0;
-  for (const auto& p : pair)   rcut = std::max(rcut, p.span().second);
-  for (const auto& p : radial) rcut = std::max(rcut, p.span().second);
-  return rcut;
+  auto max_range = [](const auto &range) {
+    return std::transform_reduce(range.begin(), range.end(), 0.0,
+                                 [](double a, double b) { return std::max(a, b); },
+                                 [](const auto &p) { return p.span().second; });
+  };
+  return std::max(max_range(pair), max_range(radial));
 }
 
 void AngularForceCalculator::eval_forces(Configuration &cfg) const {

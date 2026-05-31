@@ -17,35 +17,20 @@ std::size_t ADPForceCalculator::param_count() const {
 
 void ADPForceCalculator::gather_params(Eigen::VectorXd &dst,
                                        std::size_t off) const {
-  auto gather = [&](const auto &range) {
-    for (const auto &p : range) {
-      p.gather_params(dst, off);
-      off += p.param_count();
-    }
-  };
-
-  gather(pair);
-  gather(density);
-  gather(embedding);
-  gather(dipole);
-  gather(quadrupole);
+  gather_range(pair, dst, off);
+  gather_range(density, dst, off);
+  gather_range(embedding, dst, off);
+  gather_range(dipole, dst, off);
+  gather_range(quadrupole, dst, off);
 }
-
 
 void ADPForceCalculator::scatter_params(const Eigen::VectorXd &src,
                                         std::size_t off) {
-  auto scatter_range = [&](auto &range) {
-    for (auto &p : range) {
-      p.scatter_params(src, off);
-      off += p.param_count();
-    }
-  };
-
-  scatter_range(pair);
-  scatter_range(density);
-  scatter_range(embedding);
-  scatter_range(dipole);
-  scatter_range(quadrupole);
+  scatter_range(pair, src, off);
+  scatter_range(density, src, off);
+  scatter_range(embedding, src, off);
+  scatter_range(dipole, src, off);
+  scatter_range(quadrupole, src, off);
 }
 
 double ADPForceCalculator::max_cutoff() const {

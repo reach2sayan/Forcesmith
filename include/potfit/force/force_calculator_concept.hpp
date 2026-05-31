@@ -2,10 +2,29 @@
 
 #include "potfit/core/atom.hpp"
 #include <Eigen/Core>
+#include <boost/hof/lambda.hpp>
 #include <concepts>
 #include <cstdint>
 
 namespace potfit {
+
+BOOST_HOF_STATIC_LAMBDA_FUNCTION(gather_range) = [](const auto &range,
+                                                     Eigen::VectorXd &dst,
+                                                     std::size_t &off) {
+  for (const auto &p : range) {
+    p.gather_params(dst, off);
+    off += p.param_count();
+  }
+};
+
+BOOST_HOF_STATIC_LAMBDA_FUNCTION(scatter_range) = [](auto &range,
+                                                      const Eigen::VectorXd &src,
+                                                      std::size_t &off) {
+  for (auto &p : range) {
+    p.scatter_params(src, off);
+    off += p.param_count();
+  }
+};
 
 template <typename T>
 concept ForceCalculatorModel =

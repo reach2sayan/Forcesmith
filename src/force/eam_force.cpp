@@ -16,27 +16,15 @@ std::size_t EAMForceCalculator::param_count() const {
 }
 
 void EAMForceCalculator::gather_params(Eigen::VectorXd &dst, std::size_t off) const {
-  auto gather_range = [&](const auto &pots) {
-    for (const auto &p : pots) {
-      p.gather_params(dst, off);
-      off += p.param_count();
-    }
-  };
-  gather_range(pair);
-  gather_range(density);
-  gather_range(embedding);
+  gather_range(pair, dst, off);
+  gather_range(density, dst, off);
+  gather_range(embedding, dst, off);
 }
 
 void EAMForceCalculator::scatter_params(const Eigen::VectorXd &src, std::size_t off) {
-  auto scatter = [&](auto &range) {
-    for (auto &p : range) {
-      p.scatter_params(src, off);
-      off += p.param_count();
-    }
-  };
-  scatter(pair);
-  scatter(density);
-  scatter(embedding);
+  scatter_range(pair, src, off);
+  scatter_range(density, src, off);
+  scatter_range(embedding, src, off);
 }
 
 double EAMForceCalculator::max_cutoff() const {
