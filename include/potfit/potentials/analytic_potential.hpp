@@ -92,7 +92,8 @@ constexpr FORCE_INLINE double dfc(double r, double R, double S) noexcept {
 // a DIFFERENT function from the cosine fc above (used by Tersoff/SW); it
 // matches potfit's apot_cutoff exactly (functions.c:322) for apple-to-apple
 // parity.
-constexpr FORCE_INLINE double apot_cutoff(double r, double r0, double h) noexcept {
+constexpr FORCE_INLINE double apot_cutoff(double r, double r0,
+                                          double h) noexcept {
   if (r >= r0) {
     return 0.0;
   }
@@ -102,7 +103,8 @@ constexpr FORCE_INLINE double apot_cutoff(double r, double r0, double h) noexcep
 }
 
 // d/dr of apot_cutoff: with u=(r−r0)/h, c=u⁴/(1+u⁴) ⇒ dc/dr = (4u³/h)/(1+u⁴)².
-constexpr FORCE_INLINE double apot_cutoff_deriv(double r, double r0, double h) noexcept {
+constexpr FORCE_INLINE double apot_cutoff_deriv(double r, double r0,
+                                                double h) noexcept {
   if (r >= r0) {
     return 0.0;
   }
@@ -170,7 +172,8 @@ struct Buckingham : AnalyticBase<Buckingham, 3> {
 // Matches potfit born_value. params: {A, B, C, D, E}
 //   A: amplitude, B: range, C: offset inside exponent, D: r^6, E: r^8.
 struct Born : AnalyticBase<Born, 5> {
-  constexpr Born(double A, double B, double C, double D, double E, double lo, double hi)
+  constexpr Born(double A, double B, double C, double D, double E, double lo,
+                 double hi)
       : AnalyticBase({A, B, C, D, E}, lo, hi) {}
   constexpr FORCE_INLINE double eval_impl(double r) const {
     const auto [A, B, C, D, E] = params;
@@ -187,13 +190,13 @@ struct Born : AnalyticBase<Born, 5> {
 // ── PowerDecay: V = A/r^n ────────────────────────────────────────────────────
 // params: {A, n}
 struct PowerDecay : AnalyticBase<PowerDecay, 2> {
-  PowerDecay(double A, double n, double lo, double hi)
+  constexpr PowerDecay(double A, double n, double lo, double hi)
       : AnalyticBase({A, n}, lo, hi) {}
-  FORCE_INLINE double eval_impl(double r) const {
+  constexpr FORCE_INLINE double eval_impl(double r) const {
     const auto [A, n] = params;
     return A / std::pow(r, n);
   }
-  FORCE_INLINE double deriv_impl(double r) const {
+  constexpr FORCE_INLINE double deriv_impl(double r) const {
     const auto [A, n] = params;
     return -A * n / std::pow(r, n + 1.0);
   }
@@ -202,13 +205,13 @@ struct PowerDecay : AnalyticBase<PowerDecay, 2> {
 // ── ExpDecay: V = A exp(−Br) ─────────────────────────────────────────────────
 // params: {A, B}
 struct ExpDecay : AnalyticBase<ExpDecay, 2> {
-  ExpDecay(double A, double B, double lo, double hi)
+  constexpr ExpDecay(double A, double B, double lo, double hi)
       : AnalyticBase({A, B}, lo, hi) {}
-  FORCE_INLINE double eval_impl(double r) const {
+  constexpr FORCE_INLINE double eval_impl(double r) const {
     const auto [A, B] = params;
     return A * std::exp(-B * r);
   }
-  FORCE_INLINE double deriv_impl(double r) const {
+  constexpr FORCE_INLINE double deriv_impl(double r) const {
     const auto [A, B] = params;
     return -A * B * std::exp(-B * r);
   }
@@ -217,7 +220,7 @@ struct ExpDecay : AnalyticBase<ExpDecay, 2> {
 // ── MexpDecay, matches potfit mexp_decay_value: V = A·exp(−B·(r − r0)) ───────
 // params order follows potfit p[]: {A, B, r0}
 struct MexpDecay : AnalyticBase<MexpDecay, 3> {
-  MexpDecay(double A, double B, double r0, double lo, double hi)
+  constexpr MexpDecay(double A, double B, double r0, double lo, double hi)
       : AnalyticBase({A, B, r0}, lo, hi) {}
   FORCE_INLINE double eval_impl(double r) const {
     const auto [A, B, r0] = params;
@@ -250,12 +253,12 @@ struct Harmonic : AnalyticBase<Harmonic, 2> {
 struct Universal : AnalyticBase<Universal, 4> {
   Universal(double E0, double a, double b, double c, double lo, double hi)
       : AnalyticBase({E0, a, b, c}, lo, hi) {}
-  FORCE_INLINE double eval_impl(double r) const {
+  constexpr FORCE_INLINE double eval_impl(double r) const {
     const auto [E0, a, b, c] = params;
     return E0 * (b / (b - a) * std::pow(r, a) - a / (b - a) * std::pow(r, b)) +
            c * r;
   }
-  FORCE_INLINE double deriv_impl(double r) const {
+  constexpr FORCE_INLINE double deriv_impl(double r) const {
     const auto [E0, a, b, c] = params;
     return E0 * (a * b / (b - a)) *
                (std::pow(r, a - 1.0) - std::pow(r, b - 1.0)) +
@@ -267,14 +270,14 @@ struct Universal : AnalyticBase<Universal, 4> {
 //   V = A/r^n + (B/r^m)·cos(k·r + φ)
 // params order follows potfit p[]: {A, n, B, m, k, phi}
 struct Eopp : AnalyticBase<Eopp, 6> {
-  Eopp(double A, double n, double B, double m, double k, double phi, double lo,
+  constexpr Eopp(double A, double n, double B, double m, double k, double phi, double lo,
        double hi)
       : AnalyticBase({A, n, B, m, k, phi}, lo, hi) {}
-  FORCE_INLINE double eval_impl(double r) const {
+  constexpr FORCE_INLINE double eval_impl(double r) const {
     const auto [A, n, B, m, k, phi] = params;
     return A / std::pow(r, n) + (B / std::pow(r, m)) * std::cos(k * r + phi);
   }
-  FORCE_INLINE double deriv_impl(double r) const {
+  constexpr FORCE_INLINE double deriv_impl(double r) const {
     const auto [A, n, B, m, k, phi] = params;
     const double c = std::cos(k * r + phi), s = std::sin(k * r + phi);
     return -A * n / std::pow(r, n + 1.0) - B * m / std::pow(r, m + 1.0) * c -
@@ -311,7 +314,8 @@ struct LjSC : AnalyticBase<LjSC, 3> {
 
 // params: {D_e, a, r_e, h}
 struct MorseSC : AnalyticBase<MorseSC, 4> {
-  constexpr MorseSC(double De, double a, double re, double h, double lo, double hi)
+  constexpr MorseSC(double De, double a, double re, double h, double lo,
+                    double hi)
       : AnalyticBase({De, a, re, h}, lo, hi) {}
   constexpr FORCE_INLINE double eval_impl(double r) const {
     const auto [De, a, re, h] = params;
@@ -347,8 +351,8 @@ struct ExpDecaySC : AnalyticBase<ExpDecaySC, 3> {
 
 // params: {A, n, B, m, k, phi, h}
 struct EoppSC : AnalyticBase<EoppSC, 7> {
-  constexpr EoppSC(double A, double n, double B, double m, double k, double phi, double h,
-         double lo, double hi)
+  constexpr EoppSC(double A, double n, double B, double m, double k, double phi,
+                   double h, double lo, double hi)
       : AnalyticBase({A, n, B, m, k, phi, h}, lo, hi) {}
   constexpr FORCE_INLINE double eval_impl(double r) const {
     const auto [A, n, B, m, k, phi, h] = params;
@@ -372,8 +376,8 @@ struct EoppSC : AnalyticBase<EoppSC, 7> {
 //   V = A·exp(−B·r) + (C/r^m)·cos(k·r + φ)
 // params order follows potfit p[]: {A, B, C, m, k, phi}
 struct EoppExp : AnalyticBase<EoppExp, 6> {
-  constexpr EoppExp(double A, double B, double C, double m, double k, double phi,
-          double lo, double hi)
+  constexpr EoppExp(double A, double B, double C, double m, double k,
+                    double phi, double lo, double hi)
       : AnalyticBase({A, B, C, m, k, phi}, lo, hi) {}
   constexpr FORCE_INLINE double eval_impl(double r) const {
     const auto [A, B, C, m, k, phi] = params;
@@ -391,8 +395,8 @@ struct EoppExp : AnalyticBase<EoppExp, 6> {
 //   V = A/(r−r0)^n + (B/r^m)·cos(k·r + φ)
 // params order follows potfit p[]: {A, n, B, m, k, phi, r0}
 struct Meopp : AnalyticBase<Meopp, 7> {
-  constexpr Meopp(double A, double n, double B, double m, double k, double phi, double r0,
-        double lo, double hi)
+  constexpr Meopp(double A, double n, double B, double m, double k, double phi,
+                  double r0, double lo, double hi)
       : AnalyticBase({A, n, B, m, k, phi, r0}, lo, hi) {}
   constexpr FORCE_INLINE double eval_impl(double r) const {
     const auto [A, n, B, m, k, phi, r0] = params;
@@ -411,7 +415,8 @@ struct Meopp : AnalyticBase<Meopp, 7> {
 //   x = r/r0;  V = A/(m−n)·(m·x^{−n} − n·x^{−m}) + B
 // params order follows potfit p[]: {A, n, m, r0, B}
 struct GenLJ : AnalyticBase<GenLJ, 5> {
-  constexpr GenLJ(double A, double n, double m, double r0, double B, double lo, double hi)
+  constexpr GenLJ(double A, double n, double m, double r0, double B, double lo,
+                  double hi)
       : AnalyticBase({A, n, m, r0, B}, lo, hi) {}
   constexpr FORCE_INLINE double eval_impl(double r) const {
     const auto [A, n, m, r0, B] = params;
@@ -430,8 +435,8 @@ struct GenLJ : AnalyticBase<GenLJ, 5> {
 // ── DoubleMorse: sum of two Morse terms + constant offset ────────────────────
 // params: {D1, a1, r1, D2, a2, r2, C}
 struct DoubleMorse : AnalyticBase<DoubleMorse, 7> {
-  constexpr DoubleMorse(double D1, double a1, double r1, double D2, double a2, double r2,
-              double C, double lo, double hi)
+  constexpr DoubleMorse(double D1, double a1, double r1, double D2, double a2,
+                        double r2, double C, double lo, double hi)
       : AnalyticBase({D1, a1, r1, D2, a2, r2, C}, lo, hi) {}
   constexpr FORCE_INLINE double eval_impl(double r) const {
     const auto [D1, a1, r1, D2, a2, r2, C] = params;
@@ -440,7 +445,7 @@ struct DoubleMorse : AnalyticBase<DoubleMorse, 7> {
     return D1 * ((1.0 - e1) * (1.0 - e1) - 1.0) +
            D2 * ((1.0 - e2) * (1.0 - e2) - 1.0) + C;
   }
-  FORCE_INLINE double deriv_impl(double r) const {
+  constexpr FORCE_INLINE double deriv_impl(double r) const {
     const auto [D1, a1, r1, D2, a2, r2, C] = params;
     const double e1 = std::exp(-a1 * (r - r1));
     const double e2 = std::exp(-a2 * (r - r2));
@@ -452,15 +457,15 @@ struct DoubleMorse : AnalyticBase<DoubleMorse, 7> {
 //   V = A·exp(−B·(r − r1)²) + exp(−C·(r − r2))   (2nd term has no prefactor)
 // params order follows potfit p[]: {A, B, r1, C, r2}
 struct DoubleExp : AnalyticBase<DoubleExp, 5> {
-  DoubleExp(double A, double B, double r1, double C, double r2, double lo,
-            double hi)
+  constexpr DoubleExp(double A, double B, double r1, double C, double r2,
+                      double lo, double hi)
       : AnalyticBase({A, B, r1, C, r2}, lo, hi) {}
-  FORCE_INLINE double eval_impl(double r) const {
+  constexpr FORCE_INLINE double eval_impl(double r) const {
     const auto [A, B, r1, C, r2] = params;
     const double dr = r - r1;
     return A * std::exp(-B * dr * dr) + std::exp(-C * (r - r2));
   }
-  FORCE_INLINE double deriv_impl(double r) const {
+  constexpr FORCE_INLINE double deriv_impl(double r) const {
     const auto [A, B, r1, C, r2] = params;
     const double dr = r - r1;
     return -2.0 * A * B * dr * std::exp(-B * dr * dr) -
@@ -472,16 +477,16 @@ struct DoubleExp : AnalyticBase<DoubleExp, 5> {
 //   z = r − r0;  e = exp(−d·z);  V = A·z^n·e·(1 + B·e) + C
 // params order follows potfit p[]: {A, B, C, r0, n, d}
 struct Mishin : AnalyticBase<Mishin, 6> {
-  Mishin(double A, double B, double C, double r0, double n, double d, double lo,
-         double hi)
+  constexpr Mishin(double A, double B, double C, double r0, double n, double d,
+                   double lo, double hi)
       : AnalyticBase({A, B, C, r0, n, d}, lo, hi) {}
-  FORCE_INLINE double eval_impl(double r) const {
+  constexpr FORCE_INLINE double eval_impl(double r) const {
     const auto [A, B, C, r0, n, d] = params;
     const double z = r - r0;
     const double e = std::exp(-d * z);
     return A * std::pow(z, n) * e * (1.0 + B * e) + C;
   }
-  FORCE_INLINE double deriv_impl(double r) const {
+  constexpr FORCE_INLINE double deriv_impl(double r) const {
     const auto [A, B, C, r0, n, d] = params;
     const double z = r - r0;
     const double e = std::exp(-d * z);
@@ -495,13 +500,13 @@ struct Mishin : AnalyticBase<Mishin, 6> {
 // ── SqrtFunc: V = A sqrt(r / B) ──────────────────────────────────────────────
 // Matches potfit sqrt_value. params: {A, B}
 struct SqrtFunc : AnalyticBase<SqrtFunc, 2> {
-  SqrtFunc(double A, double B, double lo, double hi)
+  constexpr SqrtFunc(double A, double B, double lo, double hi)
       : AnalyticBase({A, B}, lo, hi) {}
-  FORCE_INLINE double eval_impl(double r) const {
+  constexpr FORCE_INLINE double eval_impl(double r) const {
     const auto [A, B] = params;
     return A * std::sqrt(r / B);
   }
-  FORCE_INLINE double deriv_impl(double r) const {
+  constexpr FORCE_INLINE double deriv_impl(double r) const {
     const auto [A, B] = params;
     return A / (2.0 * B * std::sqrt(r / B));
   }
@@ -512,8 +517,8 @@ struct SqrtFunc : AnalyticBase<SqrtFunc, 2> {
 struct ConstFunc : AnalyticBase<ConstFunc, 1> {
   constexpr explicit ConstFunc(double C, double lo, double hi)
       : AnalyticBase({C}, lo, hi) {}
-  constexpr double eval_impl(double) const { return params[0]; }
-  constexpr double deriv_impl(double) const { return 0.0; }
+  constexpr FORCE_INLINE double eval_impl(double) const { return params[0]; }
+  constexpr FORCE_INLINE double deriv_impl(double) const { return 0.0; }
 };
 
 // ── Parabola: V = Ar² + Br + C ───────────────────────────────────────────────
@@ -521,11 +526,11 @@ struct ConstFunc : AnalyticBase<ConstFunc, 1> {
 struct Parabola : AnalyticBase<Parabola, 3> {
   constexpr Parabola(double A, double B, double C, double lo, double hi)
       : AnalyticBase({A, B, C}, lo, hi) {}
-  constexpr double eval_impl(double r) const {
+  constexpr FORCE_INLINE double eval_impl(double r) const {
     const auto [A, B, C] = params;
     return A * r * r + B * r + C;
   }
-  constexpr double deriv_impl(double r) const {
+  constexpr FORCE_INLINE double deriv_impl(double r) const {
     const auto [A, B, C] = params;
     return 2.0 * A * r + B;
   }
@@ -538,12 +543,12 @@ struct Poly5 : AnalyticBase<Poly5, 5> {
   constexpr Poly5(double a0, double a1, double a2, double a3, double a4,
                   double lo, double hi)
       : AnalyticBase({a0, a1, a2, a3, a4}, lo, hi) {}
-  constexpr double eval_impl(double r) const {
+  constexpr FORCE_INLINE double eval_impl(double r) const {
     const auto [a0, a1, a2, a3, a4] = params;
     const double s = r - 1.0, s2 = s * s;
     return a0 + 0.5 * a1 * s2 + a2 * s * s2 + a3 * s2 * s2 + a4 * s2 * s2 * s;
   }
-  constexpr double deriv_impl(double r) const {
+  constexpr FORCE_INLINE double deriv_impl(double r) const {
     const auto [a0, a1, a2, a3, a4] = params;
     const double s = r - 1.0, s2 = s * s;
     return a1 * s + 3.0 * a2 * s2 + 4.0 * a3 * s2 * s + 5.0 * a4 * s2 * s2;
@@ -554,17 +559,17 @@ struct Poly5 : AnalyticBase<Poly5, 5> {
 //   V = (A·r^{−p} − B·r^{−q})·exp(δ/(r − rc))
 // params order follows potfit p[]: {A, B, p, q, delta, rc}
 struct StiwWeb2 : AnalyticBase<StiwWeb2, 6> {
-  StiwWeb2(double A, double B, double p, double q, double delta, double rc,
-           double lo, double hi)
+  constexpr StiwWeb2(double A, double B, double p, double q, double delta,
+                     double rc, double lo, double hi)
       : AnalyticBase({A, B, p, q, delta, rc}, lo, hi) {}
-  FORCE_INLINE double eval_impl(double r) const {
+  constexpr FORCE_INLINE double eval_impl(double r) const {
     const auto [A, B, p, q, delta, rc] = params;
     if (r >= rc)
       return 0.0; // exp pole at r = rc; SW pair vanishes beyond
     const double poly = A * std::pow(r, -p) - B * std::pow(r, -q);
     return poly * std::exp(delta / (r - rc));
   }
-  FORCE_INLINE double deriv_impl(double r) const {
+  constexpr FORCE_INLINE double deriv_impl(double r) const {
     const auto [A, B, p, q, delta, rc] = params;
     if (r >= rc)
       return 0.0;
@@ -580,15 +585,15 @@ struct StiwWeb2 : AnalyticBase<StiwWeb2, 6> {
 // ── StiwWeb3: h(r) = exp(γ/(r−a)),  r < a  [SW 3-body radial function] ───────
 // params: {gamma, a}   (γ = γ_SW × σ and a = a_SW × σ, pre-multiplied)
 struct StiwWeb3 : AnalyticBase<StiwWeb3, 2> {
-  StiwWeb3(double gamma, double a, double lo, double hi)
+  constexpr StiwWeb3(double gamma, double a, double lo, double hi)
       : AnalyticBase({gamma, a}, lo, hi) {}
-  FORCE_INLINE double eval_impl(double r) const {
+  constexpr FORCE_INLINE double eval_impl(double r) const {
     const auto [gamma, a] = params;
     if (r >= a)
       return 0.0;
     return std::exp(gamma / (r - a));
   }
-  FORCE_INLINE double deriv_impl(double r) const {
+  constexpr FORCE_INLINE double deriv_impl(double r) const {
     const auto [gamma, a] = params;
     if (r >= a)
       return 0.0;
@@ -604,17 +609,17 @@ struct StiwWeb3 : AnalyticBase<StiwWeb3, 2> {
 // Bond-order params β, n, c, d, h are stored but not used in pure pair eval.
 // params: {A, B, lambda, mu, beta, n, c, d, h, R, S}
 struct TersoffPot : AnalyticBase<TersoffPot, 11> {
-  TersoffPot(double A, double B, double lam, double mu, double beta, double n,
-             double c, double d, double h, double R, double S, double lo,
-             double hi)
+  constexpr TersoffPot(double A, double B, double lam, double mu, double beta,
+                       double n, double c, double d, double h, double R,
+                       double S, double lo, double hi)
       : AnalyticBase({A, B, lam, mu, beta, n, c, d, h, R, S}, lo, hi) {}
-  FORCE_INLINE double eval_impl(double r) const {
+  constexpr FORCE_INLINE double eval_impl(double r) const {
     const double A = params[0], B = params[1], lam = params[2], mu = params[3];
     const double R = params[9], S = params[10];
     return detail::fc(r, R, S) *
            (A * std::exp(-lam * r) - B * std::exp(-mu * r));
   }
-  FORCE_INLINE double deriv_impl(double r) const {
+  constexpr FORCE_INLINE double deriv_impl(double r) const {
     const double A = params[0], B = params[1], lam = params[2], mu = params[3];
     const double R = params[9], S = params[10];
     const double f = detail::fc(r, R, S);
@@ -629,13 +634,13 @@ struct TersoffPot : AnalyticBase<TersoffPot, 11> {
 // ── TersoffMix: mixing correction V = χ exp(−ω r) ────────────────────────────
 // params: {chi, omega}
 struct TersoffMix : AnalyticBase<TersoffMix, 2> {
-  TersoffMix(double chi, double omega, double lo, double hi)
+  constexpr TersoffMix(double chi, double omega, double lo, double hi)
       : AnalyticBase({chi, omega}, lo, hi) {}
-  FORCE_INLINE double eval_impl(double r) const {
+  constexpr FORCE_INLINE double eval_impl(double r) const {
     const auto [chi, omega] = params;
     return chi * std::exp(-omega * r);
   }
-  FORCE_INLINE double deriv_impl(double r) const {
+  constexpr FORCE_INLINE double deriv_impl(double r) const {
     const auto [chi, omega] = params;
     return -chi * omega * std::exp(-omega * r);
   }
@@ -646,9 +651,9 @@ struct TersoffMix : AnalyticBase<TersoffMix, 2> {
 // Extra params c1..c5 (indices 11-15) provide a polynomial correction.
 // params: {A, B, lambda, mu, beta, n, c, d, h, R, S, c1, c2, c3, c4, c5}
 struct TersoffModPot : AnalyticBase<TersoffModPot, 16> {
-  TersoffModPot(std::array<double, 16> p, double lo, double hi)
+  constexpr TersoffModPot(std::array<double, 16> p, double lo, double hi)
       : AnalyticBase(p, lo, hi) {}
-  FORCE_INLINE double eval_impl(double r) const {
+  constexpr FORCE_INLINE double eval_impl(double r) const {
     const double A = params[0], B = params[1];
     const double lam = params[2], mu = params[3];
     const double R = params[9], S = params[10];
@@ -659,7 +664,7 @@ struct TersoffModPot : AnalyticBase<TersoffModPot, 16> {
                         c4 * r * r * r * r + c5 * r * r * r * r * r;
     return detail::fc(r, R, S) * pair * corr;
   }
-  FORCE_INLINE double deriv_impl(double r) const {
+  constexpr FORCE_INLINE double deriv_impl(double r) const {
     const double A = params[0], B = params[1];
     const double lam = params[2], mu = params[3];
     const double R = params[9], S = params[10];
@@ -682,16 +687,17 @@ struct TersoffModPot : AnalyticBase<TersoffModPot, 16> {
 //   V = p0·p1/r + p2·(p5+p6)·exp((p3+p4−r)/(p5+p6)) − p7·p8/r^6
 // params follow potfit p[] (charges/sums multiply): {p0..p8}
 struct Kawamura : AnalyticBase<Kawamura, 9> {
-  Kawamura(double p0, double p1, double p2, double p3, double p4, double p5,
-           double p6, double p7, double p8, double lo, double hi)
+  constexpr Kawamura(double p0, double p1, double p2, double p3, double p4,
+                     double p5, double p6, double p7, double p8, double lo,
+                     double hi)
       : AnalyticBase({p0, p1, p2, p3, p4, p5, p6, p7, p8}, lo, hi) {}
-  FORCE_INLINE double eval_impl(double r) const {
+  constexpr FORCE_INLINE double eval_impl(double r) const {
     const auto [p0, p1, p2, p3, p4, p5, p6, p7, p8] = params;
     const double s = p5 + p6, t = p3 + p4;
     const double r6 = std::pow(r, 6);
     return p0 * p1 / r + p2 * s * std::exp((t - r) / s) - p7 * p8 / r6;
   }
-  FORCE_INLINE double deriv_impl(double r) const {
+  constexpr FORCE_INLINE double deriv_impl(double r) const {
     const auto [p0, p1, p2, p3, p4, p5, p6, p7, p8] = params;
     const double s = p5 + p6, t = p3 + p4;
     return -p0 * p1 / (r * r) - p2 * std::exp((t - r) / s) +
@@ -703,9 +709,9 @@ struct Kawamura : AnalyticBase<Kawamura, 9> {
 //   V = kawamura(p0..p8) + p2·p9·(exp(−2·p10·(r−p11)) − 2·exp(−p10·(r−p11)))
 // params follow potfit p[]: {p0..p11}
 struct KawamuraMix : AnalyticBase<KawamuraMix, 12> {
-  KawamuraMix(std::array<double, 12> p, double lo, double hi)
+  constexpr KawamuraMix(std::array<double, 12> p, double lo, double hi)
       : AnalyticBase(p, lo, hi) {}
-  FORCE_INLINE double eval_impl(double r) const {
+  constexpr FORCE_INLINE double eval_impl(double r) const {
     const double p0 = params[0], p1 = params[1], p2 = params[2], p3 = params[3];
     const double p4 = params[4], p5 = params[5], p6 = params[6], p7 = params[7],
                  p8 = params[8];
@@ -714,7 +720,7 @@ struct KawamuraMix : AnalyticBase<KawamuraMix, 12> {
     return p0 * p1 / r + p2 * s * std::exp((t - r) / s) - p7 * p8 / r6 +
            p2 * p9 * (std::exp(-2.0 * p10 * w) - 2.0 * std::exp(-p10 * w));
   }
-  FORCE_INLINE double deriv_impl(double r) const {
+  constexpr FORCE_INLINE double deriv_impl(double r) const {
     const double p0 = params[0], p1 = params[1], p2 = params[2], p3 = params[3];
     const double p4 = params[4], p5 = params[5], p6 = params[6], p7 = params[7],
                  p8 = params[8];
@@ -731,13 +737,13 @@ struct KawamuraMix : AnalyticBase<KawamuraMix, 12> {
 // Matches potfit softshell_value: the whole ratio A/r is raised to n.
 // params: {A, n}
 struct Softshell : AnalyticBase<Softshell, 2> {
-  Softshell(double A, double n, double lo, double hi)
+  constexpr Softshell(double A, double n, double lo, double hi)
       : AnalyticBase({A, n}, lo, hi) {}
-  FORCE_INLINE double eval_impl(double r) const {
+  constexpr FORCE_INLINE double eval_impl(double r) const {
     const auto [A, n] = params;
     return std::pow(A / r, n);
   }
-  FORCE_INLINE double deriv_impl(double r) const {
+  constexpr FORCE_INLINE double deriv_impl(double r) const {
     const auto [A, n] = params;
     return -n * std::pow(A / r, n) / r; // d/dr (A/r)^n = -(n/r)(A/r)^n
   }
@@ -746,13 +752,13 @@ struct Softshell : AnalyticBase<Softshell, 2> {
 // ── ExpPlus: V = A exp(−Br) + C ──────────────────────────────────────────────
 // params: {A, B, C}
 struct ExpPlus : AnalyticBase<ExpPlus, 3> {
-  ExpPlus(double A, double B, double C, double lo, double hi)
+  constexpr ExpPlus(double A, double B, double C, double lo, double hi)
       : AnalyticBase({A, B, C}, lo, hi) {}
-  FORCE_INLINE double eval_impl(double r) const {
+  constexpr FORCE_INLINE double eval_impl(double r) const {
     const auto [A, B, C] = params;
     return A * std::exp(-B * r) + C;
   }
-  FORCE_INLINE double deriv_impl(double r) const {
+  constexpr FORCE_INLINE double deriv_impl(double r) const {
     const auto [A, B, C] = params;
     return -A * B * std::exp(-B * r);
   }
@@ -762,15 +768,15 @@ struct ExpPlus : AnalyticBase<ExpPlus, 3> {
 //   s = r − r0;  V = 2A·exp(−B/2·s) − C·(1 + D·s)·exp(−D·s)
 // params order follows potfit p[]: {A, B, C, D, r0}
 struct Strmm : AnalyticBase<Strmm, 5> {
-  Strmm(double A, double B, double C, double D, double r0, double lo, double hi)
+  constexpr Strmm(double A, double B, double C, double D, double r0, double lo, double hi)
       : AnalyticBase({A, B, C, D, r0}, lo, hi) {}
-  FORCE_INLINE double eval_impl(double r) const {
+  constexpr FORCE_INLINE double eval_impl(double r) const {
     const auto [A, B, C, D, r0] = params;
     const double s = r - r0;
     return 2.0 * A * std::exp(-B / 2.0 * s) -
            C * (1.0 + D * s) * std::exp(-D * s);
   }
-  FORCE_INLINE double deriv_impl(double r) const {
+  constexpr FORCE_INLINE double deriv_impl(double r) const {
     const auto [A, B, C, D, r0] = params;
     const double s = r - r0;
     return -A * B * std::exp(-B / 2.0 * s) + C * D * D * s * std::exp(-D * s);
