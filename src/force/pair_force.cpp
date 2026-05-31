@@ -44,10 +44,9 @@ PairBond PairForceCalculator::accumulate_pair(Configuration &cfg,
 }
 
 std::size_t PairForceCalculator::param_count() const {
-  const std::size_t per_pot =
-      std::transform_reduce(pair.begin(), pair.end(), std::size_t{0},
-                            std::plus<>{},
-                            [](const auto &p) { return p.param_count(); });
+  const std::size_t per_pot = std::transform_reduce(
+      pair.begin(), pair.end(), std::size_t{0}, std::plus<>{},
+      [](const auto &p) { return p.param_count(); });
   const std::size_t free_g = std::ranges::count_if(
       globals, [](const auto &g) { return !g.value.fixed; });
   return per_pot + free_g;
@@ -111,7 +110,8 @@ void PairForceCalculator::eval_forces(Configuration &cfg) const {
   }
 
   cfg.calc_stress /= bc_volume(cfg.bc); // virial → stress (per unit volume)
-  events::on_force_eval(events::ForceEvalStats{conf_index, force_rms(cfg), cfg});
+  events::on_force_eval(
+      events::ForceEvalStats{conf_index, force_rms(cfg), cfg});
 }
 
 PairForceCalculator

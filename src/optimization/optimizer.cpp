@@ -20,7 +20,8 @@ int run_with_solver(std::span<Configuration> configs, ForceCalculator &model,
   };
 
   // Analytic-interface Jacobian: the typed, config-parallel central FD on the
-  // functor itself. Solvers that need a Jacobian (LM) use it; the rest ignore it.
+  // functor itself. Solvers that need a Jacobian (LM) use it; the rest ignore
+  // it.
   auto jacobian_fn = [&functor](const Eigen::VectorXd &params,
                                 Eigen::MatrixXd &fjac) {
     functor.df(params, fjac);
@@ -37,24 +38,24 @@ int run_with_solver(std::span<Configuration> configs, ForceCalculator &model,
 
 Solver make_solver(const OptimizerOptions &opts) {
   switch (opts.algorithm) {
-    case Algorithm::Powell:
-      return Solver{EigenHybridSolver{opts.max_iter, opts.xtol}};
-    case Algorithm::LineSearch:
-      return Solver{LineSearchSolver{opts.max_iter, opts.xtol}};
-    case Algorithm::DE: {
-      BoostDESolver s;
-      s.mutation_factor       = opts.de.mutation_factor;
-      s.crossover_probability = opts.de.crossover_probability;
-      s.NP_factor             = opts.de.NP_factor;
-      s.max_generations       = opts.de.max_generations;
-      s.threads               = opts.de.threads;
-      s.seed                  = opts.seed;
-      s.lower_bounds          = opts.de.lower_bounds;
-      s.upper_bounds          = opts.de.upper_bounds;
-      return Solver{std::move(s)};
-    }
-    default: // Algorithm::LM
-      return make_default_solver(opts.max_iter, opts.xtol, opts.ftol);
+  case Algorithm::Powell:
+    return Solver{EigenHybridSolver{opts.max_iter, opts.xtol}};
+  case Algorithm::LineSearch:
+    return Solver{LineSearchSolver{opts.max_iter, opts.xtol}};
+  case Algorithm::DE: {
+    BoostDESolver s;
+    s.mutation_factor = opts.de.mutation_factor;
+    s.crossover_probability = opts.de.crossover_probability;
+    s.NP_factor = opts.de.NP_factor;
+    s.max_generations = opts.de.max_generations;
+    s.threads = opts.de.threads;
+    s.seed = opts.seed;
+    s.lower_bounds = opts.de.lower_bounds;
+    s.upper_bounds = opts.de.upper_bounds;
+    return Solver{std::move(s)};
+  }
+  default: // Algorithm::LM
+    return make_default_solver(opts.max_iter, opts.xtol, opts.ftol);
   }
 }
 

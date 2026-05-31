@@ -290,7 +290,8 @@ void TersoffForceCalculator::eval_forces(Configuration &cfg) const {
   });
 
   cfg.calc_stress /= bc_volume(cfg.bc); // virial → stress (per unit volume)
-  events::on_force_eval(events::ForceEvalStats{conf_index, force_rms(cfg), cfg});
+  events::on_force_eval(
+      events::ForceEvalStats{conf_index, force_rms(cfg), cfg});
 }
 
 } // namespace potfit

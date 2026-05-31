@@ -30,8 +30,9 @@ static json sample_section(const Range &pots, int nknots) {
   json sec;
   sec["format"] = "tabulated";
   sec["potentials"] = json::array();
-  for (const auto &p : pots)
+  for (const auto &p : pots) {
     sec["potentials"].push_back(sample_one(p, nknots));
+  }
   return sec;
 }
 
