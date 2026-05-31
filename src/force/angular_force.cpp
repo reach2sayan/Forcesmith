@@ -6,21 +6,21 @@
 
 namespace potfit {
 
-int AngularForceCalculator::param_count() const {
-  int count = 0;
+std::size_t AngularForceCalculator::param_count() const {
+  std::size_t count = 0;
   for (const auto& p : pair)    count += p.param_count();
   for (const auto& p : radial)  count += p.param_count();
   for (const auto& p : angular) count += p.param_count();
   return count;
 }
 
-void AngularForceCalculator::gather_params(Eigen::VectorXd& dst, int off) const {
+void AngularForceCalculator::gather_params(Eigen::VectorXd& dst, std::size_t off) const {
   for (const auto& p : pair)    { p.gather_params(dst, off); off += p.param_count(); }
   for (const auto& p : radial)  { p.gather_params(dst, off); off += p.param_count(); }
   for (const auto& p : angular) { p.gather_params(dst, off); off += p.param_count(); }
 }
 
-void AngularForceCalculator::scatter_params(const Eigen::VectorXd& src, int off) {
+void AngularForceCalculator::scatter_params(const Eigen::VectorXd& src, std::size_t off) {
   for (auto& p : pair)    { p.scatter_params(src, off); off += p.param_count(); }
   for (auto& p : radial)  { p.scatter_params(src, off); off += p.param_count(); }
   for (auto& p : angular) { p.scatter_params(src, off); off += p.param_count(); }
@@ -78,9 +78,9 @@ void AngularForceCalculator::eval_forces(Configuration &cfg) const {
 
   for (auto &ai : cfg.atoms) {
     const auto &nbs = ai.neighbors;
-    const int nn = static_cast<int>(nbs.size());
+    const std::size_t nn = nbs.size();
 
-    for (int jj = 0; jj < nn; ++jj) {
+    for (std::size_t jj = 0; jj < nn; ++jj) {
       const auto &nb_j = nbs[jj];
       const Vec3 &d1 = nb_j.dist;
       const double r1 = d1.norm();
@@ -92,7 +92,7 @@ void AngularForceCalculator::eval_forces(Configuration &cfg) const {
       const double f1 = radial[ai.type, nb_j.neighbor->type].eval(r1);
       const double df1 = radial[ai.type, nb_j.neighbor->type].deriv(r1);
 
-      for (int kk = jj + 1; kk < nn; ++kk) {
+      for (std::size_t kk = jj + 1; kk < nn; ++kk) {
         const auto &nb_k = nbs[kk];
         const Vec3 &d2 = nb_k.dist;
         const double r2 = d2.norm();

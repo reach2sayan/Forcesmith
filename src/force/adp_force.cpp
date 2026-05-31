@@ -6,36 +6,37 @@
 
 namespace potfit {
 
-int ADPForceCalculator::param_count() const {
-  int count = 0;
-  for (const auto& p : pair)       count += p.param_count();
-  for (const auto& p : density)    count += p.param_count();
-  for (const auto& p : embedding)  count += p.param_count();
-  for (const auto& p : dipole)     count += p.param_count();
-  for (const auto& p : quadrupole) count += p.param_count();
-  return count;
+std::size_t ADPForceCalculator::param_count() const {
+  auto count_range = [](const auto &range) {
+    return std::transform_reduce(range.begin(), range.end(), std::size_t{0}, std::plus<>{},
+                                 [](const auto &p) { return p.param_count(); });
+  };
+  return count_range(pair) + count_range(density) + count_range(embedding)
+       + count_range(dipole) + count_range(quadrupole);
 }
 
-void ADPForceCalculator::gather_params(Eigen::VectorXd& dst, int off) const {
-  for (const auto& p : pair)       { p.gather_params(dst, off); off += p.param_count(); }
-  for (const auto& p : density)    { p.gather_params(dst, off); off += p.param_count(); }
-  for (const auto& p : embedding)  { p.gather_params(dst, off); off += p.param_count(); }
-  for (const auto& p : dipole)     { p.gather_params(dst, off); off += p.param_count(); }
-  for (const auto& p : quadrupole) { p.gather_params(dst, off); off += p.param_count(); }
+void ADPForceCalculator::gather_params(Eigen::VectorXd &dst, std::size_t off) const {
+  for (const auto &p : pair)       { p.gather_params(dst, off); off += p.param_count(); }
+  for (const auto &p : density)    { p.gather_params(dst, off); off += p.param_count(); }
+  for (const auto &p : embedding)  { p.gather_params(dst, off); off += p.param_count(); }
+  for (const auto &p : dipole)     { p.gather_params(dst, off); off += p.param_count(); }
+  for (const auto &p : quadrupole) { p.gather_params(dst, off); off += p.param_count(); }
 }
 
-void ADPForceCalculator::scatter_params(const Eigen::VectorXd& src, int off) {
-  for (auto& p : pair)       { p.scatter_params(src, off); off += p.param_count(); }
-  for (auto& p : density)    { p.scatter_params(src, off); off += p.param_count(); }
-  for (auto& p : embedding)  { p.scatter_params(src, off); off += p.param_count(); }
-  for (auto& p : dipole)     { p.scatter_params(src, off); off += p.param_count(); }
-  for (auto& p : quadrupole) { p.scatter_params(src, off); off += p.param_count(); }
+void ADPForceCalculator::scatter_params(const Eigen::VectorXd &src, std::size_t off) {
+  for (auto &p : pair)       { p.scatter_params(src, off); off += p.param_count(); }
+  for (auto &p : density)    { p.scatter_params(src, off); off += p.param_count(); }
+  for (auto &p : embedding)  { p.scatter_params(src, off); off += p.param_count(); }
+  for (auto &p : dipole)     { p.scatter_params(src, off); off += p.param_count(); }
+  for (auto &p : quadrupole) { p.scatter_params(src, off); off += p.param_count(); }
 }
 
 double ADPForceCalculator::max_cutoff() const {
   double rcut = 0.0;
-  for (const auto& p : pair)    rcut = std::max(rcut, p.span().second);
-  for (const auto& p : density) rcut = std::max(rcut, p.span().second);
+  for (const auto &p : pair)
+    rcut = std::max(rcut, p.span().second);
+  for (const auto &p : density)
+    rcut = std::max(rcut, p.span().second);
   return rcut;
 }
 

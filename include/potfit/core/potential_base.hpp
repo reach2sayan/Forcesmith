@@ -19,9 +19,9 @@ struct PotentialConcept {
     virtual double eval(double r) const = 0;
     virtual double deriv(double r) const = 0;
     virtual std::pair<double, double> span() const = 0;
-    virtual int param_count() const = 0;
-    virtual void gather_params(Eigen::VectorXd &x, int off) const = 0;
-    virtual void scatter_params(const Eigen::VectorXd &x, int off) = 0;
+    virtual std::size_t param_count() const = 0;
+    virtual void gather_params(Eigen::VectorXd &x, std::size_t off) const = 0;
+    virtual void scatter_params(const Eigen::VectorXd &x, std::size_t off) = 0;
     virtual std::unique_ptr<PotentialConcept> clone() const = 0;
 };
 } // namespace detail
@@ -33,11 +33,11 @@ class Potential : private detail::ErasedValue<detail::PotentialConcept> {
         constexpr double eval(double r) const override { return impl_.eval(r); }
         constexpr double deriv(double r) const override { return impl_.deriv(r); }
         constexpr std::pair<double, double> span() const override { return impl_.span(); }
-        constexpr int param_count() const override { return impl_.param_count(); }
-        constexpr void gather_params(Eigen::VectorXd &x, int off) const override {
+        constexpr std::size_t param_count() const override { return impl_.param_count(); }
+        constexpr void gather_params(Eigen::VectorXd &x, std::size_t off) const override {
             impl_.gather_params(x, off);
         }
-        constexpr void scatter_params(const Eigen::VectorXd &x, int off) override {
+        constexpr void scatter_params(const Eigen::VectorXd &x, std::size_t off) override {
             impl_.scatter_params(x, off);
         }
         std::unique_ptr<detail::PotentialConcept> clone() const override {
@@ -61,11 +61,11 @@ public:
     constexpr double eval(double r) const { return self_->eval(r); }
     constexpr double deriv(double r) const { return self_->deriv(r); }
     constexpr std::pair<double, double> span() const { return self_->span(); }
-    constexpr int param_count() const { return self_->param_count(); }
-    constexpr void gather_params(Eigen::VectorXd &x, int off) const {
+    constexpr std::size_t param_count() const { return self_->param_count(); }
+    constexpr void gather_params(Eigen::VectorXd &x, std::size_t off) const {
         self_->gather_params(x, off);
     }
-    constexpr void scatter_params(const Eigen::VectorXd &x, int off) {
+    constexpr void scatter_params(const Eigen::VectorXd &x, std::size_t off) {
         self_->scatter_params(x, off);
     }
 };

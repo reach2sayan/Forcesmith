@@ -11,7 +11,7 @@ int run_with_solver(std::span<Configuration> configs,
   PotfitFunctor functor(configs, model, opts.energy_weight, opts.stress_weight);
 
   Eigen::VectorXd x(functor.inputs());
-  std::visit([&](const auto& m){ m.gather_params(x, 0); }, model);
+  std::visit([&](const auto& m){ m.gather_params(x, std::size_t{0}); }, model);
 
   auto residual_fn = [&functor](const Eigen::VectorXd &params) {
     Eigen::VectorXd fvec(functor.values());
@@ -22,7 +22,7 @@ int run_with_solver(std::span<Configuration> configs,
   const int status = solver.minimize(x, std::move(residual_fn), functor.values());
 
   // Scatter final params back so caller sees consistent state.
-  std::visit([&](auto& m){ m.scatter_params(x, 0); }, model);
+  std::visit([&](auto& m){ m.scatter_params(x, std::size_t{0}); }, model);
 
   return status;
 }
@@ -44,7 +44,7 @@ int run_optimizer(std::span<Configuration> configs,
 
   Eigen::VectorXd x(functor.inputs());
   {
-    int off = 0;
+    std::size_t off = 0;
     for (const auto &p : potentials) { p.gather_params(x, off); off += p.param_count(); }
   }
 
@@ -58,7 +58,7 @@ int run_optimizer(std::span<Configuration> configs,
 
   // Scatter final x back into the caller's potentials span.
   {
-    int off = 0;
+    std::size_t off = 0;
     for (auto &p : potentials) { p.scatter_params(x, off); off += p.param_count(); }
   }
 

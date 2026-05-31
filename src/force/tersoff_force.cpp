@@ -75,21 +75,21 @@ constexpr double dbond_dzeta(double zeta, const TersoffParams &p) noexcept {
 
 } // anonymous namespace
 
-int TersoffForceCalculator::param_count() const {
-  int count = 0;
+std::size_t TersoffForceCalculator::param_count() const {
+  std::size_t count = 0;
   for (const auto& p : params)
     for (const Param* f : tersoff_fields(p))
       if (!f->fixed) ++count;
   return count;
 }
 
-void TersoffForceCalculator::gather_params(Eigen::VectorXd& dst, int off) const {
+void TersoffForceCalculator::gather_params(Eigen::VectorXd& dst, std::size_t off) const {
   for (const auto& p : params)
     for (const Param* f : tersoff_fields(p))
       if (!f->fixed) dst[off++] = f->value;
 }
 
-void TersoffForceCalculator::scatter_params(const Eigen::VectorXd& src, int off) {
+void TersoffForceCalculator::scatter_params(const Eigen::VectorXd& src, std::size_t off) {
   for (auto& p : params)
     for (Param* f : tersoff_fields(p))
       if (!f->fixed) f->value = src[off++];
@@ -108,13 +108,13 @@ void TersoffForceCalculator::eval_forces(Configuration &cfg) const {
   std::for_each(cfg.atoms.begin(), cfg.atoms.end(),
                 [](auto &a) { a.calc_force = Vec3::Zero(); });
 
-  const int natoms = static_cast<int>(cfg.atoms.size());
-  for (int ii = 0; ii < natoms; ++ii) {
+  const std::size_t natoms = cfg.atoms.size();
+  for (std::size_t ii = 0; ii < natoms; ++ii) {
     Atom &ai = cfg.atoms[ii];
-    const int ti = ai.type;
-    const int nn = static_cast<int>(ai.neighbors.size());
+    const std::size_t ti = ai.type;
+    const std::size_t nn = ai.neighbors.size();
 
-    for (int jj = 0; jj < nn; ++jj) {
+    for (std::size_t jj = 0; jj < nn; ++jj) {
       const NeighborEntry &nb_j = ai.neighbors[jj];
       Atom &aj = const_cast<Atom &>(*nb_j.neighbor);
       const Vec3 &d1 = nb_j.dist; // pos_j − pos_i
@@ -122,7 +122,7 @@ void TersoffForceCalculator::eval_forces(Configuration &cfg) const {
       if (r1 < 1e-14)
         continue;
 
-      const int tj = aj.type;
+      const std::size_t tj = aj.type;
       const TersoffParams &p = params[ti, tj];
 
       const double fc_ij = fc_val(r1, p.R, p.S);
@@ -138,7 +138,7 @@ void TersoffForceCalculator::eval_forces(Configuration &cfg) const {
 
       // ── Compute ζ_ij ─────────────────────────────────────────────────
       double zeta = 0.0;
-      for (int kk = 0; kk < nn; ++kk) {
+      for (std::size_t kk = 0; kk < nn; ++kk) {
         if (kk == jj)
           continue;
         const NeighborEntry &nb_k = ai.neighbors[kk];
@@ -148,7 +148,7 @@ void TersoffForceCalculator::eval_forces(Configuration &cfg) const {
           continue;
         }
 
-        const int tk = nb_k.neighbor->type;
+        const std::size_t tk = nb_k.neighbor->type;
         const TersoffParams &p_ik = params[ti, tk];
         const double fc_ik = fc_val(r2, p_ik.R, p_ik.S);
         if (fc_ik == 0.0) {
@@ -188,7 +188,7 @@ void TersoffForceCalculator::eval_forces(Configuration &cfg) const {
       const double P = 0.5 * fc_ij * VA * db_dz; // < 0 (db/dz < 0, VA > 0)
 
       const double inv_r1 = 1.0 / r1;
-      for (int kk = 0; kk < nn; ++kk) {
+      for (std::size_t kk = 0; kk < nn; ++kk) {
         if (kk == jj) {
           continue;
         }
@@ -200,7 +200,7 @@ void TersoffForceCalculator::eval_forces(Configuration &cfg) const {
           continue;
         }
 
-        const int tk = nb_k.neighbor->type;
+        const std::size_t tk = nb_k.neighbor->type;
         const TersoffParams &p_ik = params[ti, tk];
         const double fc_ik = fc_val(r2, p_ik.R, p_ik.S);
         const double dfc_ik = dfc_val(r2, p_ik.R, p_ik.S);

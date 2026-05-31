@@ -9,21 +9,19 @@
 
 namespace potfit {
 
-int PairForceCalculator::param_count() const {
-  int count = 0;
-  for (const auto &p : pair)
-    count += p.param_count();
-  return count;
+std::size_t PairForceCalculator::param_count() const {
+  return std::transform_reduce(pair.begin(), pair.end(), std::size_t{0}, std::plus<>{},
+                               [](const auto &p) { return p.param_count(); });
 }
 
-void PairForceCalculator::gather_params(Eigen::VectorXd &dst, int off) const {
+void PairForceCalculator::gather_params(Eigen::VectorXd &dst, std::size_t off) const {
   for (const auto &p : pair) {
     p.gather_params(dst, off);
     off += p.param_count();
   }
 }
 
-void PairForceCalculator::scatter_params(const Eigen::VectorXd &src, int off) {
+void PairForceCalculator::scatter_params(const Eigen::VectorXd &src, std::size_t off) {
   for (auto &p : pair) {
     p.scatter_params(src, off);
     off += p.param_count();
@@ -31,10 +29,10 @@ void PairForceCalculator::scatter_params(const Eigen::VectorXd &src, int off) {
 }
 
 double PairForceCalculator::max_cutoff() const {
-  double rcut = 0.0;
-  for (const auto &p : pair)
-    rcut = std::max(rcut, p.span().second);
-  return rcut;
+  return std::transform_reduce(
+      pair.begin(), pair.end(), 0.0,
+      [](double a, double b) { return std::max(a, b); },
+      [](const auto &p) { return p.span().second; });
 }
 
 void PairForceCalculator::eval_forces(Configuration &cfg) const {

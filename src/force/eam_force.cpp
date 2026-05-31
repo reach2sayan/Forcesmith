@@ -6,16 +6,16 @@
 
 namespace potfit {
 
-int EAMForceCalculator::param_count() const {
+std::size_t EAMForceCalculator::param_count() const {
   auto count_params = [](const auto &xs) {
     return std::transform_reduce(
-        xs.begin(), xs.end(), 0, std::plus<>{},
+        xs.begin(), xs.end(), std::size_t{0}, std::plus<>{},
         [](const auto &p) { return p.param_count(); });
   };
   return count_params(pair) + count_params(density) + count_params(embedding);
 }
 
-void EAMForceCalculator::gather_params(Eigen::VectorXd &dst, int off) const {
+void EAMForceCalculator::gather_params(Eigen::VectorXd &dst, std::size_t off) const {
   auto gather_range = [&](const auto &pots) {
     for (const auto &p : pots) {
       p.gather_params(dst, off);
@@ -27,7 +27,7 @@ void EAMForceCalculator::gather_params(Eigen::VectorXd &dst, int off) const {
   gather_range(embedding);
 }
 
-void EAMForceCalculator::scatter_params(const Eigen::VectorXd &src, int off) {
+void EAMForceCalculator::scatter_params(const Eigen::VectorXd &src, std::size_t off) {
   auto scatter = [&](auto &range) {
     for (auto &p : range) {
       p.scatter_params(src, off);

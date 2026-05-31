@@ -40,7 +40,7 @@ leaf::result<std::vector<Potential>> parse_pot_list(const json &sub,
 
 // Load paircol potentials from sub into a PotentialPair
 // (SymmetricMatrix<Potential>).
-leaf::result<void> fill_pair(PotentialPair &mat, const json &sub, int ntypes,
+leaf::result<void> fill_pair(PotentialPair &mat, const json &sub, std::size_t ntypes,
                              std::string_view label) {
   auto fail = [&](std::string msg) -> leaf::result<void> {
     return leaf::new_error(
@@ -52,8 +52,8 @@ leaf::result<void> fill_pair(PotentialPair &mat, const json &sub, int ntypes,
     return r.error();
   auto &pots = *r;
 
-  const int paircol = ntypes * (ntypes + 1) / 2;
-  if (static_cast<int>(pots.size()) != paircol)
+  const std::size_t paircol = ntypes * (ntypes + 1) / 2;
+  if (pots.size() != paircol)
     return fail("expected " + std::to_string(paircol) +
                 " potentials for ntypes=" + std::to_string(ntypes) + ", got " +
                 std::to_string(pots.size()));
@@ -65,7 +65,7 @@ leaf::result<void> fill_pair(PotentialPair &mat, const json &sub, int ntypes,
 }
 
 // Load ntypes potentials from sub into a PotentialArray (TypeArray<Potential>).
-leaf::result<void> fill_arr(PotentialArray &arr, const json &sub, int ntypes,
+leaf::result<void> fill_arr(PotentialArray &arr, const json &sub, std::size_t ntypes,
                             std::string_view label) {
   auto fail = [&](std::string msg) -> leaf::result<void> {
     return leaf::new_error(
@@ -77,7 +77,7 @@ leaf::result<void> fill_arr(PotentialArray &arr, const json &sub, int ntypes,
     return r.error();
   auto &pots = *r;
 
-  if (static_cast<int>(pots.size()) != ntypes)
+  if (pots.size() != ntypes)
     return fail("expected " + std::to_string(ntypes) + " potentials, got " +
                 std::to_string(pots.size()));
 
@@ -117,7 +117,7 @@ leaf::result<ForceCalculator> parse_force_model(std::string_view input) {
     if (!j.contains("model"))
       return fail("missing 'model' key");
     const std::string model = j["model"].get<std::string>();
-    const int ntypes = j.value("ntypes", 1);
+    const std::size_t ntypes = j.value("ntypes", std::size_t{1});
 
     // ── pair ─────────────────────────────────────────────────────────────
     if (model == "pair") {
@@ -125,8 +125,8 @@ leaf::result<ForceCalculator> parse_force_model(std::string_view input) {
       if (!r)
         return r.error();
       auto& pots = *r;
-      const int paircol = ntypes * (ntypes + 1) / 2;
-      if (static_cast<int>(pots.size()) != paircol)
+      const std::size_t paircol = ntypes * (ntypes + 1) / 2;
+      if (pots.size() != paircol)
         return fail("pair: expected " + std::to_string(paircol) +
                     " potentials for ntypes=" + std::to_string(ntypes) +
                     ", got " + std::to_string(pots.size()));
@@ -220,8 +220,8 @@ leaf::result<ForceCalculator> parse_force_model(std::string_view input) {
         return fail("tersoff: missing 'potentials' array");
 
       const auto &pots_arr = j["potentials"];
-      const int paircol = ntypes * (ntypes + 1) / 2;
-      if (static_cast<int>(pots_arr.size()) != paircol)
+      const std::size_t paircol = ntypes * (ntypes + 1) / 2;
+      if (pots_arr.size() != paircol)
         return fail("tersoff: expected " + std::to_string(paircol) +
                     " entries for ntypes=" + std::to_string(ntypes));
 
@@ -254,8 +254,8 @@ leaf::result<ForceCalculator> parse_force_model(std::string_view input) {
         return fail("stiweb: missing 'potentials' array");
 
       const auto &pots_arr = j["potentials"];
-      const int paircol = ntypes * (ntypes + 1) / 2;
-      if (static_cast<int>(pots_arr.size()) != paircol)
+      const std::size_t paircol = ntypes * (ntypes + 1) / 2;
+      if (pots_arr.size() != paircol)
         return fail("stiweb: expected " + std::to_string(paircol) +
                     " entries for ntypes=" + std::to_string(ntypes));
 

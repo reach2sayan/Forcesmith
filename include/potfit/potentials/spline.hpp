@@ -15,12 +15,12 @@ public:
   double deriv(double r) const;
   std::pair<double, double> span() const { return {x_.front(), x_.back()}; }
 
-  void set_fixed(int i, bool f) { fixed_[i] = f; }
-  bool is_fixed(int i) const { return fixed_[i]; }
+  void set_fixed(std::size_t i, bool f) { fixed_[i] = f; }
+  bool is_fixed(std::size_t i) const { return fixed_[i]; }
 
-  int param_count() const;
-  void gather_params(Eigen::VectorXd &dst, int offset) const;
-  void scatter_params(const Eigen::VectorXd &src, int offset);
+  std::size_t param_count() const;
+  void gather_params(Eigen::VectorXd &dst, std::size_t offset) const;
+  void scatter_params(const Eigen::VectorXd &src, std::size_t offset);
 
 private:
   using Makima = boost::math::interpolators::makima<std::vector<double>>;

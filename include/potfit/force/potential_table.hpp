@@ -32,9 +32,9 @@ private:
 // Stores only the ntypes*(ntypes+1)/2 unique entries.
 // Access via operator()(ti, tj) — argument order does not matter.
 template <typename T> class SymmetricMatrix {
-  int ntypes_ = 0;
+  std::size_t ntypes_ = 0;
   std::vector<T> data_;
-  constexpr int slot(int a, int b) const noexcept {
+  constexpr std::size_t slot(std::size_t a, std::size_t b) const noexcept {
     if (a > b) {
       std::swap(a, b);
     }
@@ -44,18 +44,18 @@ template <typename T> class SymmetricMatrix {
 public:
   // Reserve capacity for ntypes element types. Populate with emplace_back
   // in slot order (00, 01, 11, 02, 12, 22, …) before calling operator().
-  constexpr void reserve(int ntypes) {
+  constexpr void reserve(std::size_t ntypes) {
     ntypes_ = ntypes;
     data_.reserve(ntypes * (ntypes + 1) / 2);
   }
   template <typename U> constexpr void emplace_back(U &&u) {
     data_.emplace_back(std::forward<U>(u));
   }
-  constexpr const T &operator[](int ti, int tj) const {
+  constexpr const T &operator[](std::size_t ti, std::size_t tj) const {
     return data_[slot(ti, tj)];
   }
-  constexpr T &operator[](int ti, int tj) { return data_[slot(ti, tj)]; }
-  constexpr int         ntypes() const noexcept { return ntypes_; }
+  constexpr T &operator[](std::size_t ti, std::size_t tj) { return data_[slot(ti, tj)]; }
+  constexpr std::size_t ntypes() const noexcept { return ntypes_; }
   constexpr std::size_t size()   const noexcept { return data_.size(); }
 
   auto begin()        { return data_.begin(); }
@@ -92,13 +92,13 @@ public:
   using value_type = T;
   using size_type = std::size_t;
 
-  constexpr void reserve(int ntypes) { data_.reserve(ntypes); }
+  constexpr void reserve(std::size_t ntypes) { data_.reserve(ntypes); }
   template <typename U> constexpr void emplace_back(U &&u) {
     data_.emplace_back(std::forward<U>(u));
   }
 
-  constexpr const T &operator[](int ti) const { return data_[ti]; }
-  constexpr T &operator[](int ti) { return data_[ti]; }
+  constexpr const T &operator[](std::size_t ti) const { return data_[ti]; }
+  constexpr T &operator[](std::size_t ti) { return data_[ti]; }
   template <typename A>
     requires(!std::integral<A>) && requires(A a) { a.type; }
   constexpr const T &operator[](const A &a) const {

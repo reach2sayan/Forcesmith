@@ -57,21 +57,21 @@ constexpr std::pair<double, double> h_dh(double r, const SWParams &p) noexcept {
 
 } // anonymous namespace
 
-int StiwebForceCalculator::param_count() const {
-  int count = 0;
+std::size_t StiwebForceCalculator::param_count() const {
+  std::size_t count = 0;
   for (const auto& p : params)
     for (const Param* f : sw_fields(p))
       if (!f->fixed) ++count;
   return count;
 }
 
-void StiwebForceCalculator::gather_params(Eigen::VectorXd& dst, int off) const {
+void StiwebForceCalculator::gather_params(Eigen::VectorXd& dst, std::size_t off) const {
   for (const auto& p : params)
     for (const Param* f : sw_fields(p))
       if (!f->fixed) dst[off++] = f->value;
 }
 
-void StiwebForceCalculator::scatter_params(const Eigen::VectorXd& src, int off) {
+void StiwebForceCalculator::scatter_params(const Eigen::VectorXd& src, std::size_t off) {
   for (auto& p : params)
     for (Param* f : sw_fields(p))
       if (!f->fixed) f->value = src[off++];
@@ -123,31 +123,31 @@ void StiwebForceCalculator::eval_forces(Configuration &cfg) const {
   //   −(h1 · dh2/r2 · w) d2 − h1·h2·w' (d1/(r1r2) − c·d2/r2²)
   for (auto &ai : cfg.atoms) {
     const auto &nbs = ai.neighbors;
-    const int nn = static_cast<int>(nbs.size());
-    const int ti = ai.type;
+    const std::size_t nn = nbs.size();
+    const std::size_t ti = ai.type;
 
-    for (int jj = 0; jj < nn; ++jj) {
+    for (std::size_t jj = 0; jj < nn; ++jj) {
       const auto &nb_j = nbs[jj];
       const Vec3 &d1 = nb_j.dist;
       const double r1 = d1.norm();
       if (r1 < 1e-14)
         continue;
 
-      const int tj = nb_j.neighbor->type;
+      const std::size_t tj = nb_j.neighbor->type;
       const auto &p_ij = params[ti, tj];
       const auto [h1, dh1] = h_dh(r1, p_ij);
       if (h1 == 0.0 && dh1 == 0.0)
         continue;
       const double inv_r1 = 1.0 / r1;
 
-      for (int kk = jj + 1; kk < nn; ++kk) {
+      for (std::size_t kk = jj + 1; kk < nn; ++kk) {
         const auto &nb_k = nbs[kk];
         const Vec3 &d2 = nb_k.dist;
         const double r2 = d2.norm();
         if (r2 < 1e-14)
           continue;
 
-        const int tk = nb_k.neighbor->type;
+        const std::size_t tk = nb_k.neighbor->type;
         const auto &p_ik = params[ti, tk];
         const auto [h2, dh2] = h_dh(r2, p_ik);
         if (h2 == 0.0 && dh2 == 0.0)

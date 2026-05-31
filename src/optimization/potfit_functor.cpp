@@ -22,8 +22,9 @@ int count_residuals(std::span<Configuration> configs, double stress_weight) {
 // Build a PairForceCalculator that owns a copy of the given potentials.
 // ntypes is inferred from paircol = ntypes*(ntypes+1)/2.
 PairForceCalculator make_pair_calc(std::span<Potential> potentials) {
-  const int n_pots = static_cast<int>(potentials.size());
-  const int ntypes = static_cast<int>(std::lround((-1.0 + std::sqrt(1.0 + 8.0 * n_pots)) / 2.0));
+  const std::size_t n_pots = potentials.size();
+  const std::size_t ntypes = static_cast<std::size_t>(
+      std::lround((-1.0 + std::sqrt(1.0 + 8.0 * static_cast<double>(n_pots))) / 2.0));
   PairForceCalculator calc;
   calc.pair.reserve(ntypes);
   for (const auto& p : potentials) calc.pair.emplace_back(p);
@@ -39,7 +40,7 @@ PotfitFunctor::PotfitFunctor(std::span<Configuration> configs,
       model_(std::move(model)),
       energy_weight_(energy_weight),
       stress_weight_(stress_weight),
-      inputs_{std::visit([](const auto& m){ return m.param_count(); }, model_)},
+      inputs_{static_cast<int>(std::visit([](const auto& m){ return m.param_count(); }, model_))},
       values_{count_residuals(configs, stress_weight)} {}
 
 PotfitFunctor::PotfitFunctor(std::span<Configuration> configs,
@@ -51,7 +52,7 @@ PotfitFunctor::PotfitFunctor(std::span<Configuration> configs,
 
 int PotfitFunctor::operator()(const Eigen::VectorXd &x,
                               Eigen::VectorXd &fvec) const {
-  std::visit([&](auto& m){ m.scatter_params(x, 0); }, model_);
+  std::visit([&](auto& m){ m.scatter_params(x, std::size_t{0}); }, model_);
 
   int row = 0;
   for (auto [c, cfg] : std::views::enumerate(configs_)) {

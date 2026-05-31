@@ -26,16 +26,16 @@ template <typename Derived, std::size_t N> struct AnalyticBase {
     constexpr void set_fixed(std::size_t i, bool f) { params[i].fixed = f; }
     constexpr bool is_fixed(std::size_t i) const    { return params[i].fixed; }
 
-    constexpr int param_count() const {
-        int count = 0;
+    constexpr std::size_t param_count() const {
+        std::size_t count = 0;
         for (const auto& p : params) if (!p.fixed) ++count;
         return count;
     }
-    constexpr void gather_params(Eigen::VectorXd& dst, int off) const {
+    constexpr void gather_params(Eigen::VectorXd& dst, std::size_t off) const {
         for (const auto& p : params)
             if (!p.fixed) dst[off++] = p.value;
     }
-    constexpr void scatter_params(const Eigen::VectorXd& src, int off) {
+    constexpr void scatter_params(const Eigen::VectorXd& src, std::size_t off) {
         for (auto& p : params)
             if (!p.fixed) p.value = src[off++];
     }

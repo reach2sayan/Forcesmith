@@ -19,8 +19,8 @@ struct NeighborEntry : Serializable<NeighborEntry> {
 };
 
 struct Atom : Serializable<Atom> {
-  int type = 0;
-  int conf = 0;
+  std::size_t type = 0;
+  std::size_t conf = 0;
   Vec3 pos = Vec3::Zero();
   Vec3 force = Vec3::Zero();      // reference (target) force
   Vec3 calc_force = Vec3::Zero(); // written by ForceCalculator

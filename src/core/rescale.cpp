@@ -59,12 +59,12 @@ struct CompensatedPairPotential {
 
 std::vector<double> compute_rho_ref(EAMForceCalculator &calc,
                                     std::span<Configuration> configs) {
-  const int n = calc.ntypes;
+  const std::size_t n = calc.ntypes;
   std::for_each(configs.begin(), configs.end(),
                 [&](auto &cfg) { calc.eval_forces(cfg); });
 
   std::vector<double> rho_sum(n, 0.0);
-  std::vector<int> count(n, 0);
+  std::vector<std::size_t> count(n, 0);
   for (const auto &cfg : configs) {
     for (const auto &a : cfg.atoms) {
       if (a.type >= 0 && a.type < n) {
