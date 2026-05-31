@@ -9,25 +9,18 @@
 #include <utility>
 
 namespace potfit {
-namespace {
 
-// Helpers for quadrupole force terms (see header for derivation reference).
-// nu(M, d) = d^T M d - r²/3 × tr(M)
-FORCE_INLINE double quad_nu(const SymTens &M, const Vec3 &d) {
+FORCE_INLINE double ADPForceCalculator::quad_nu(const SymTens &M,
+                                                const Vec3 &d) {
   return d.dot(M * d) - d.squaredNorm() / 3.0 * M.trace();
 }
-// xi(M, d) = M d - tr(M)/3 × d
-FORCE_INLINE Vec3 quad_xi(const SymTens &M, const Vec3 &d) {
+
+FORCE_INLINE Vec3 ADPForceCalculator::quad_xi(const SymTens &M, const Vec3 &d) {
   return M * d - (M.trace() / 3.0) * d;
 }
 
-// ── i–j pair threaded through the force pipeline ────────────────────────────
-// Each stage adds one physical contribution to `force` (the force on atom i)
-// and passes the pair on. An empty std::optional means the two atoms are
-// coincident and contribute nothing, so the chain's .transform short-circuits.
-// Stage 1 — geometry. Empty for coincident atoms.
-std::optional<PairForce> make_pair_force(const Atom &ai,
-                                         const NeighborEntry &nb) {
+std::optional<PairForce>
+ADPForceCalculator::make_pair_force(const Atom &ai, const NeighborEntry &nb) {
   const Vec3 &d = nb.dist;
   const double r = d.norm();
   if (r < 1e-14) {
@@ -36,10 +29,8 @@ std::optional<PairForce> make_pair_force(const Atom &ai,
   return PairForce{&ai, nb.neighbor, d, r, 1.0 / r};
 }
 
-// Stage 2 — EAM pair + embedding-gradient force (same as EAMForceCalculator):
-//   F_eam = [dφ/dr + gradF_i×dg_{t(j)}/dr + gradF_j×dg_{t(i)}/dr] × r̂
-auto add_eam_force(const PotentialPair &pair, const PotentialArray &density) {
-  return [&pair, &density](PairForce &&pf) -> PairForce {
+auto ADPForceCalculator::add_eam_force() const {
+  return [this](PairForce &&pf) -> PairForce {
     const Atom &ai = *pf.ai;
     const Atom &aj = *pf.aj;
     // Gate each radial table on its own cutoff (see in_range).
@@ -56,10 +47,8 @@ auto add_eam_force(const PotentialPair &pair, const PotentialArray &density) {
   };
 }
 
-// Stage 3 — dipole force (Mishin 2005, derived via ∂E_dip/∂r_i):
-//   F_dip = du/r × (μ_i·d − μ_j·d) × d + u × (μ_i − μ_j)
-auto add_dipole_force(const PotentialPair &dipole) {
-  return [&dipole](PairForce &&pf) -> PairForce {
+auto ADPForceCalculator::add_dipole_force() const {
+  return [this](PairForce &&pf) -> PairForce {
     const Atom &ai = *pf.ai;
     const Atom &aj = *pf.aj;
     const auto &dip = dipole[ai, aj];
@@ -72,11 +61,8 @@ auto add_dipole_force(const PotentialPair &dipole) {
   };
 }
 
-// Stage 4 — quadrupole force (Mishin 2005, derived via ∂E_quad/∂r_i):
-//   F_quad = dw/r × [ν(λ_i,d) + ν(λ_j,d)] × d + 2w × [ξ(λ_i,d) + ξ(λ_j,d)]
-//   where ν(M,d)=d^T M d − r²/3 tr(M),  ξ(M,d)=Md − tr(M)/3 d
-auto add_quadrupole_force(const PotentialPair &quadrupole) {
-  return [&quadrupole](PairForce &&pf) -> PairForce {
+auto ADPForceCalculator::add_quadrupole_force() const {
+  return [this](PairForce &&pf) -> PairForce {
     const Atom &ai = *pf.ai;
     const Atom &aj = *pf.aj;
     const auto &quad = quadrupole[ai, aj];
@@ -89,8 +75,7 @@ auto add_quadrupole_force(const PotentialPair &quadrupole) {
   };
 }
 
-// Stage 5 — commit the pair's energy, force and virial to the configuration.
-auto accumulate(Atom &ai, Configuration &cfg) {
+auto ADPForceCalculator::accumulate(Atom &ai, Configuration &cfg) {
   return [&ai, &cfg](PairForce &&pf) -> PairForce {
     ai.calc_force += pf.force;
     cfg.calc_energy += 0.5 * pf.phi;
@@ -99,8 +84,6 @@ auto accumulate(Atom &ai, Configuration &cfg) {
     return std::move(pf);
   };
 }
-
-} // anonymous namespace
 
 std::size_t ADPForceCalculator::param_count() const {
   auto count_range = [](const auto &range) {
@@ -232,9 +215,9 @@ void ADPForceCalculator::eval_forces(Configuration &cfg) const {
   for (Atom &ai : cfg.atoms) {
     for (const NeighborEntry &nb : ai.neighbors) {
       make_pair_force(ai, nb)
-          .transform(add_eam_force(pair, density))
-          .transform(add_dipole_force(dipole))
-          .transform(add_quadrupole_force(quadrupole))
+          .transform(add_eam_force())
+          .transform(add_dipole_force())
+          .transform(add_quadrupole_force())
           .transform(accumulate(ai, cfg));
     }
   }

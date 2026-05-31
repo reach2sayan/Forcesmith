@@ -32,6 +32,8 @@ Solver make_solver(const OptimizerOptions &opts) {
   switch (opts.algorithm) {
     case Algorithm::Powell:
       return Solver{EigenHybridSolver{opts.max_iter, opts.xtol}};
+    case Algorithm::LineSearch:
+      return Solver{LineSearchSolver{opts.max_iter, opts.xtol}};
     case Algorithm::DE: {
       BoostDESolver s;
       s.mutation_factor       = opts.de.mutation_factor;

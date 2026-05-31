@@ -10,7 +10,7 @@
 
 namespace potfit {
 
-enum class Algorithm { LM, Powell, DE };
+enum class Algorithm { LM, Powell, DE, LineSearch };
 
 struct DEOptions {
   double      mutation_factor       = 0.65;

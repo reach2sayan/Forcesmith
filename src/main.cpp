@@ -38,7 +38,7 @@ int main(int argc, char* argv[]) {
         ("stress-weight", po::value<double>()->default_value(0.0), "stress tensor residual weight (0 = disabled)")
         ("smooth-weight", po::value<double>()->default_value(0.0), "curvature (Tikhonov) regularization weight on free knots (0 = disabled)")
         ("algorithm,a",   po::value<std::string>()->default_value("lm"),
-                              "optimization algorithm: lm | powell | de")
+                              "optimization algorithm: lm | powell (dogleg) | de | ls (Powell direction-set line search)")
         ("seed",          po::value<unsigned>()->default_value(0),
                               "RNG seed for DE (0 = random_device)")
         ("de-F",          po::value<double>()->default_value(0.65),
@@ -133,9 +133,10 @@ int main(int argc, char* argv[]) {
             const std::string alg = vm["algorithm"].as<std::string>();
             if      (alg == "powell") opts.algorithm = potfit::Algorithm::Powell;
             else if (alg == "de")     opts.algorithm = potfit::Algorithm::DE;
+            else if (alg == "ls")     opts.algorithm = potfit::Algorithm::LineSearch;
             else if (alg != "lm") {
                 std::cerr << "unknown algorithm '" << alg
-                          << "'; choose: lm | powell | de\n";
+                          << "'; choose: lm | powell | de | ls\n";
                 ret = 1; return {};
             }
 
@@ -179,8 +180,32 @@ int main(int argc, char* argv[]) {
                                   << "' output unsupported for EAM; writing native JSON\n";
                     potfit::io::write_native_eam(outp, calc);
                     return true;
+                } else if constexpr (std::is_same_v<T, potfit::ADPForceCalculator>) {
+                    if (fmt != "native")
+                        std::cerr << "warning: '" << fmt
+                                  << "' output unsupported for ADP; writing native JSON\n";
+                    potfit::io::write_native_adp(outp, calc);
+                    return true;
+                } else if constexpr (std::is_same_v<T, potfit::AngularForceCalculator>) {
+                    if (fmt != "native")
+                        std::cerr << "warning: '" << fmt
+                                  << "' output unsupported for angular; writing native JSON\n";
+                    potfit::io::write_native_angular(outp, calc);
+                    return true;
+                } else if constexpr (std::is_same_v<T, potfit::TersoffForceCalculator>) {
+                    if (fmt != "native")
+                        std::cerr << "warning: '" << fmt
+                                  << "' output unsupported for tersoff; writing native JSON\n";
+                    potfit::io::write_native_tersoff(outp, calc);
+                    return true;
+                } else if constexpr (std::is_same_v<T, potfit::StiwebForceCalculator>) {
+                    if (fmt != "native")
+                        std::cerr << "warning: '" << fmt
+                                  << "' output unsupported for stiweb; writing native JSON\n";
+                    potfit::io::write_native_stiweb(outp, calc);
+                    return true;
                 } else {
-                    return false;  // ADP/angular/tersoff/stiweb output not yet added
+                    return false;  // unknown model — no writer
                 }
             }, model);
 

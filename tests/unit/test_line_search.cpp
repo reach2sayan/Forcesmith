@@ -1,4 +1,5 @@
 #include "potfit/optimization/line_search.hpp"
+#include "potfit/optimization/solver.hpp"
 
 #include <boost/math/tools/minima.hpp>
 #include <gtest/gtest.h>
@@ -71,4 +72,26 @@ TEST(LineSearch, LinminNoStepIfAtMinimum) {
 
     EXPECT_NEAR(x[0], alpha, 1e-6);
     EXPECT_NEAR(0.5 * F(x).squaredNorm(), 0.0, 1e-14);
+}
+
+TEST(LineSearchSolver, ConvergesCoupledQuadratic) {
+    // F(x) = [x0 + x1 - 3, x0 - x1 - 1]; zero residual at (2, 1). The coupled
+    // residuals exercise Powell's conjugate-direction update (axis-aligned
+    // line searches alone would zig-zag).
+    auto F = [](const VectorXd &v) {
+        VectorXd r(2);
+        r[0] = v[0] + v[1] - 3.0;
+        r[1] = v[0] - v[1] - 1.0;
+        return r;
+    };
+
+    VectorXd x(2);
+    x << 0.0, 0.0;
+
+    potfit::LineSearchSolver solver{200, 1e-9};
+    solver.minimize(x, F, 2);
+
+    EXPECT_NEAR(x[0], 2.0, 1e-5);
+    EXPECT_NEAR(x[1], 1.0, 1e-5);
+    EXPECT_NEAR(0.5 * F(x).squaredNorm(), 0.0, 1e-10);
 }

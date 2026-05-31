@@ -3,9 +3,23 @@
 #include "potfit/force/force_calculator_concept.hpp"
 #include "potfit/force/potential_table.hpp"
 #include <Eigen/Core>
+#include <optional>
 #include <vector>
 
 namespace potfit {
+
+// ── 2-body pipeline ─────────────────────────────────────────────────────────
+// Each i–j bond is threaded through the stages; an empty std::optional (atoms
+// coincident, or r outside the potential's own range) short-circuits the chain,
+// mirroring adp/tersoff/stiweb.
+struct PairBond {
+  Atom *ai;                  // central atom
+  const Potential *pot;      // i–j pair potential φ
+  Vec3 d;                    // pos_j − pos_i
+  double r, inv_r;           // |d| and 1/|d|
+  double phi = 0.0;          // pair energy φ(r)
+  Vec3 force = Vec3::Zero(); // force on i
+};
 
 struct PairForceCalculator {
   std::size_t ntypes = 1;
@@ -18,6 +32,18 @@ struct PairForceCalculator {
   void        gather_params(Eigen::VectorXd &dst, std::size_t off) const;
   void        scatter_params(const Eigen::VectorXd &src, std::size_t off);
   double      max_cutoff() const;
+
+private:
+  // ── per-bond pipeline stages (see eval_forces) ────────────────────────────
+  // Stage 1 — geometry + cutoff gate. The neighbor list is built with the
+  // global max_cutoff(); gate each contribution on this potential's own range
+  // [rmin, rmax). Empty for coincident atoms or out-of-range separations.
+  static std::optional<PairBond>
+  make_pair_bond(Atom &ai, const NeighborEntry &nb, const Potential &pot);
+  // Stage 2 — radial force φ′(r).
+  static PairBond add_pair_force(PairBond &&pb);
+  // Stage 3 — commit energy / force / virial (0.5 for the full neighbor list).
+  static auto accumulate_pair(Configuration &cfg);
 };
 
 static_assert(ForceCalculatorModel<PairForceCalculator>);

@@ -4,9 +4,12 @@
 #include <unsupported/Eigen/NonLinearOptimization>
 
 #include <algorithm>
+#include <cmath>
+#include <optional>
 #include <random>
 #include <ranges>
 #include <thread>
+#include <vector>
 
 namespace potfit {
 
@@ -145,6 +148,91 @@ int BoostDESolver::minimize(
       boost::math::optimization::differential_evolution(cost, params, rng);
   x = Eigen::Map<const Eigen::VectorXd>(best.data(), D);
   return 0;
+}
+
+int LineSearchSolver::minimize(
+    Eigen::VectorXd &x,
+    std::function<Eigen::VectorXd(const Eigen::VectorXd &)> f,
+    int /*n_vals*/) const {
+  const int D = static_cast<int>(x.size());
+  if (D == 0)
+    return 0;
+
+  const PowellDirectionSet powell{f};
+
+  // Direction set, initialised to the unit basis.
+  std::vector<Eigen::VectorXd> dirs(D, Eigen::VectorXd::Zero(D));
+  for (int i = 0; i < D; ++i)
+    dirs[i][i] = 1.0;
+
+  for (int iter = 0; iter < max_iter; ++iter) {
+    const Eigen::VectorXd p0 = x;
+    const double fp = powell.phi(x);
+
+    const auto s = powell.sweep(x, dirs);
+    const double fret = powell.phi(x);
+
+    // Converged once a whole sweep barely moves the parameters.
+    if ((x - p0).norm() <= xtol)
+      break;
+
+    // Adopt the conjugate direction iff Powell's criterion holds, then replace
+    // the most-effective old direction with it.
+    powell.conjugate_direction(p0, x, fp, fret, s.del)
+        .transform([&](const Eigen::VectorXd &xi) {
+          powell.line_min(x, xi);
+          dirs[s.ibig] = dirs.back();
+          dirs.back() = xi;
+          return 0;
+        });
+  }
+  return 0;
+}
+void PowellDirectionSet::line_min(Eigen::VectorXd &x,
+                                  const Eigen::VectorXd &dir) const {
+  const double before = phi(x);
+  const Eigen::VectorXd save = x;
+  linmin(x, dir, f);
+  if (phi(x) <= before)
+    return;
+  x = save; // +dir worsened φ — try the opposite direction
+  const Eigen::VectorXd neg = -dir;
+  linmin(x, neg, f);
+  if (phi(x) > before)
+    x = save;
+}
+
+PowellDirectionSet::SweepResult
+PowellDirectionSet::sweep(Eigen::VectorXd &x,
+                          const std::vector<Eigen::VectorXd> &dirs) const {
+  SweepResult s;
+  for (int i = 0; i < static_cast<int>(dirs.size()); ++i) {
+    const double before = phi(x);
+    line_min(x, dirs[i]);
+    const double dec = before - phi(x);
+    if (dec > s.del) {
+      s.del = dec;
+      s.ibig = i;
+    }
+  }
+  return s;
+}
+
+std::optional<Eigen::VectorXd>
+PowellDirectionSet::conjugate_direction(const Eigen::VectorXd &p0,
+                                        const Eigen::VectorXd &x, double fp,
+                                        double fret, double del) const {
+  const Eigen::VectorXd xi = x - p0;  // net direction moved this sweep
+  const Eigen::VectorXd ptt = x + xi; // extrapolated point 2x − p0
+  const double fptt = phi(ptt);
+  if (fptt >= fp)
+    return std::nullopt;
+  const double t =
+      2.0 * (fp - 2.0 * fret + fptt) * std::pow(fp - fret - del, 2) -
+      del * std::pow(fp - fptt, 2);
+  if (t >= 0.0)
+    return std::nullopt;
+  return xi;
 }
 
 Solver make_default_solver(int max_iter, double xtol, double ftol) {

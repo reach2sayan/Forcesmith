@@ -18,6 +18,7 @@
 #include <Eigen/Core>
 #include <algorithm>
 #include <array>
+#include <optional>
 
 namespace potfit {
 
@@ -61,6 +62,38 @@ struct TersoffForceCalculator : ForceCalculatorBase<TersoffForceCalculator> {
   void gather_params(Eigen::VectorXd &dst, std::size_t off) const;
   void scatter_params(const Eigen::VectorXd &src, std::size_t off);
   double max_cutoff() const;
+
+private:
+  // The 12 free-able parameter fields of a TersoffParams, in serialization
+  // order (used by param_count / gather_params / scatter_params).
+  static std::array<Param *, 12> tersoff_fields(TersoffParams &p);
+  static std::array<const Param *, 12> tersoff_fields(const TersoffParams &p);
+
+  // Smooth cosine cutoff f_c(r) between R and S, and its derivative.
+  static double fc_val(double r, double R, double S) noexcept;
+  static double dfc_val(double r, double R, double S) noexcept;
+  // Angular function g(cos θ) = 1 + c²/d² − c²/[d² + (h − cos θ)²], and dg/dc.
+  static double g_val(double c, const TersoffParams &p) noexcept;
+  static double dg_val(double c, const TersoffParams &p) noexcept;
+  // Bond order b_ij = (1 + (β ζ)^n)^{−1/(2n)}, and db/dζ.
+  static double bond_order(double zeta, const TersoffParams &p) noexcept;
+  static double dbond_dzeta(double zeta, const TersoffParams &p) noexcept;
+
+  // ── per-bond evaluation pipeline stages (see eval_forces) ─────────────────
+  // Each stage takes a Bond, performs one conceptual step, and passes it on. An
+  // empty std::optional means "this bond contributes nothing" (outside the
+  // cutoff shell, or no angular neighbours), so the chain short-circuits.
+  // Stage 1 — pair terms. Empty unless i–j lies inside the cutoff shell.
+  static std::optional<Bond> make_bond(const TersoffParams &p, const Vec3 &d1,
+                                       double r1);
+  // Stage 2 — angular sum ζ_ij = Σ_{k≠j} ω_ik f_c(r_ik) g(cos θ_ijk).
+  auto add_zeta(const Atom &ai, std::size_t jj) const;
+  // Stage 3 — bond order b_ij from ζ_ij.
+  static Bond add_bond_order(Bond &&bond);
+  // Stage 4 — accumulate energy and the (b fixed) pair force / virial.
+  static auto accumulate_pair(Atom &ai, std::size_t jj, Configuration &cfg);
+  // Stage 5 — three-body force from ∂b_ij/∂ζ × ∂ζ/∂r_n. Empty when ζ = 0.
+  auto accumulate_three_body(Atom &ai, std::size_t jj, Configuration &cfg) const;
 };
 
 static_assert(ForceCalculatorModel<TersoffForceCalculator>);

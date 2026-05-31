@@ -8,20 +8,22 @@
 #include <utility>
 
 namespace potfit {
-namespace {
 
-constexpr FORCE_INLINE auto tersoff_fields(TersoffParams &p) {
+FORCE_INLINE std::array<Param *, 12>
+TersoffForceCalculator::tersoff_fields(TersoffParams &p) {
   return std::array<Param *, 12>{&p.A,    &p.B, &p.lambda, &p.mu,
                                  &p.beta, &p.n, &p.c,      &p.d,
                                  &p.h,    &p.R, &p.S,      &p.omega};
 }
-constexpr FORCE_INLINE auto tersoff_fields(const TersoffParams &p) {
+FORCE_INLINE std::array<const Param *, 12>
+TersoffForceCalculator::tersoff_fields(const TersoffParams &p) {
   return std::array<const Param *, 12>{&p.A,    &p.B, &p.lambda, &p.mu,
                                        &p.beta, &p.n, &p.c,      &p.d,
                                        &p.h,    &p.R, &p.S,      &p.omega};
 }
 
-constexpr FORCE_INLINE double fc_val(double r, double R, double S) noexcept {
+FORCE_INLINE double TersoffForceCalculator::fc_val(double r, double R,
+                                                   double S) noexcept {
   if (r <= R) {
     return 1.0;
   } else if (r >= S) {
@@ -31,7 +33,8 @@ constexpr FORCE_INLINE double fc_val(double r, double R, double S) noexcept {
   return 0.5 + 0.5 * std::cos(x);
 }
 
-constexpr FORCE_INLINE double dfc_val(double r, double R, double S) noexcept {
+FORCE_INLINE double TersoffForceCalculator::dfc_val(double r, double R,
+                                                    double S) noexcept {
   if (r <= R || r >= S) {
     return 0.0;
   }
@@ -39,18 +42,16 @@ constexpr FORCE_INLINE double dfc_val(double r, double R, double S) noexcept {
   return -0.5 * std::numbers::pi / (S - R) * std::sin(x);
 }
 
-// ── Angular function g(cos θ) = 1 + c²/d² − c²/[d² + (h − cos θ)²] ──────────
-
-constexpr FORCE_INLINE double g_val(double c, const TersoffParams &p) noexcept {
+FORCE_INLINE double
+TersoffForceCalculator::g_val(double c, const TersoffParams &p) noexcept {
   const double c2 = p.c * p.c;
   const double d2 = p.d * p.d;
   const double hc = p.h - c;
   return 1.0 + c2 / d2 - c2 / (d2 + hc * hc);
 }
 
-// dg/d(cos θ)
-constexpr FORCE_INLINE double dg_val(double c,
-                                     const TersoffParams &p) noexcept {
+FORCE_INLINE double
+TersoffForceCalculator::dg_val(double c, const TersoffParams &p) noexcept {
   const double c2 = p.c * p.c;
   const double d2 = p.d * p.d;
   const double hc = p.h - c;
@@ -58,9 +59,8 @@ constexpr FORCE_INLINE double dg_val(double c,
   return -2.0 * c2 * hc / (den * den);
 }
 
-// ── Bond order b_ij = (1 + (β ζ)^n)^{−1/(2n)} ───────────────────────────────
-
-constexpr double bond_order(double zeta, const TersoffParams &p) noexcept {
+double TersoffForceCalculator::bond_order(double zeta,
+                                          const TersoffParams &p) noexcept {
   if (zeta == 0.0) {
     return 1.0;
   }
@@ -68,8 +68,8 @@ constexpr double bond_order(double zeta, const TersoffParams &p) noexcept {
   return std::pow(1.0 + bz_n, -0.5 / p.n);
 }
 
-// db/dζ = −b × (β ζ)^n / [2 ζ (1 + (β ζ)^n)]
-constexpr double dbond_dzeta(double zeta, const TersoffParams &p) noexcept {
+double TersoffForceCalculator::dbond_dzeta(double zeta,
+                                           const TersoffParams &p) noexcept {
   if (zeta == 0.0) {
     return 0.0;
   }
@@ -78,14 +78,9 @@ constexpr double dbond_dzeta(double zeta, const TersoffParams &p) noexcept {
   return -0.5 * b * bz_n / (zeta * (1.0 + bz_n));
 }
 
-// ── i–j bond threaded through the evaluation pipeline ───────────────────────
-// Each stage takes a Bond, performs one conceptual step, and passes it on. An
-// empty std::optional means "this bond contributes nothing" (outside the cutoff
-// shell, or no angular neighbours), so the chain's .and_then short-circuits.
-
-// Stage 1 — pair terms. Empty unless i–j lies inside the cutoff shell.
-std::optional<Bond> make_bond(const TersoffParams &p, const Vec3 &d1,
-                              double r1) {
+std::optional<Bond> TersoffForceCalculator::make_bond(const TersoffParams &p,
+                                                      const Vec3 &d1,
+                                                      double r1) {
   if (r1 < 1e-14) {
     return std::nullopt;
   }
@@ -99,10 +94,8 @@ std::optional<Bond> make_bond(const TersoffParams &p, const Vec3 &d1,
   return Bond{&p, d1, r1, fc, dfc, VR, VA, -p.lambda * VR, -p.mu * VA};
 }
 
-// Stage 2 — angular sum ζ_ij = Σ_{k≠j} ω_ik f_c(r_ik) g(cos θ_ijk).
-auto add_zeta(const Atom &ai, std::size_t jj,
-              const SymmetricMatrix<TersoffParams> &params) {
-  return [&ai, jj, &params](Bond &&bond) -> std::optional<Bond> {
+auto TersoffForceCalculator::add_zeta(const Atom &ai, std::size_t jj) const {
+  return [this, &ai, jj](Bond &&bond) -> std::optional<Bond> {
     const std::size_t nn = ai.neighbors.size();
     double zeta = 0.0;
     for (std::size_t kk = 0; kk < nn; ++kk) {
@@ -128,14 +121,13 @@ auto add_zeta(const Atom &ai, std::size_t jj,
   };
 }
 
-// Stage 3 — bond order b_ij from ζ_ij.
-Bond add_bond_order(Bond &&bond) {
+Bond TersoffForceCalculator::add_bond_order(Bond &&bond) {
   bond.b = bond_order(bond.zeta, *bond.p);
   return std::move(bond);
 }
 
-// Stage 4 — accumulate energy and the (b fixed) pair force / virial.
-auto accumulate_pair(Atom &ai, std::size_t jj, Configuration &cfg) {
+auto TersoffForceCalculator::accumulate_pair(Atom &ai, std::size_t jj,
+                                             Configuration &cfg) {
   return [&ai, jj, &cfg](Bond &&bond) -> Bond {
     Atom &aj = const_cast<Atom &>(*ai.neighbors[jj].neighbor);
 
@@ -156,12 +148,12 @@ auto accumulate_pair(Atom &ai, std::size_t jj, Configuration &cfg) {
   };
 }
 
-// Stage 5 — three-body force from ∂b_ij/∂ζ × ∂ζ/∂r_n. Empty when ζ = 0.
+// Three-body force from ∂b_ij/∂ζ × ∂ζ/∂r_n. Empty when ζ = 0.
 //   E = (1/2) f_c [VR − b VA] ⇒ ∂E/∂b = −(1/2) f_c VA, so
 //   F_n = −∂E/∂b × db/dζ × ∂ζ/∂r_n = (1/2) f_c VA (db/dζ) ∂ζ/∂r_n ≡ P ∂ζ/∂r_n.
-auto accumulate_three_body(Atom &ai, std::size_t jj, Configuration &cfg,
-                           const SymmetricMatrix<TersoffParams> &params) {
-  return [&ai, jj, &cfg, &params](Bond &&bond) -> std::optional<Bond> {
+auto TersoffForceCalculator::accumulate_three_body(Atom &ai, std::size_t jj,
+                                                   Configuration &cfg) const {
+  return [this, &ai, jj, &cfg](Bond &&bond) -> std::optional<Bond> {
     if (bond.zeta == 0.0) {
       return std::nullopt;
     }
@@ -229,8 +221,6 @@ auto accumulate_three_body(Atom &ai, std::size_t jj, Configuration &cfg,
   };
 }
 
-} // anonymous namespace
-
 std::size_t TersoffForceCalculator::param_count() const {
   return std::transform_reduce(params.begin(), params.end(), std::size_t{0},
                                std::plus<>{}, [](const auto &p) {
@@ -292,10 +282,10 @@ void TersoffForceCalculator::eval_forces(Configuration &cfg) const {
       const TersoffParams &p = params[ti, nb_j.neighbor->type];
 
       make_bond(p, d1, d1.norm())
-          .and_then(add_zeta(ai, jj, params))
+          .and_then(add_zeta(ai, jj))
           .transform(add_bond_order)
           .transform(accumulate_pair(ai, jj, cfg))
-          .and_then(accumulate_three_body(ai, jj, cfg, params));
+          .and_then(accumulate_three_body(ai, jj, cfg));
     }
   });
 

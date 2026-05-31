@@ -59,8 +59,8 @@ get_array_n(const json &arr, std::string_view ctx) {
 }
 
 // Require key + parse as Vec3 in one shot.
-[[nodiscard]] leaf::result<Vec3>
-require_vec3(const json &obj, const char *key, std::string_view ctx) {
+[[nodiscard]] leaf::result<Vec3> require_vec3(const json &obj, const char *key,
+                                              std::string_view ctx) {
   BOOST_LEAF_AUTO(sub, require_key(obj, key, ctx));
   return get_vec3(*sub, std::string(ctx) + " '" + key + "'");
 }
@@ -99,8 +99,8 @@ require_vec3(const json &obj, const char *key, std::string_view ctx) {
   return stress;
 }
 
-[[nodiscard]] leaf::result<Atom>
-parse_atom(const json &a_obj, ElementMap &emap, std::string_view ctx) {
+[[nodiscard]] leaf::result<Atom> parse_atom(const json &a_obj, ElementMap &emap,
+                                            std::string_view ctx) {
   BOOST_LEAF_AUTO(elem, require_key(a_obj, "element", ctx));
   BOOST_LEAF_AUTO(pos, require_vec3(a_obj, "position", ctx));
 
@@ -168,9 +168,9 @@ leaf::result<std::vector<Configuration>> parse_config(std::string_view input) {
   try {
     std::size_t ci = 0;
     for (const auto &obj : j) {
-      BOOST_LEAF_AUTO(cfg, parse_configuration(
-                               obj, emap,
-                               "config[" + std::to_string(ci++) + "]"));
+      BOOST_LEAF_AUTO(
+          cfg, parse_configuration(obj, emap,
+                                   "config[" + std::to_string(ci++) + "]"));
       configs.push_back(std::move(cfg));
     }
   } catch (const json::exception &e) {
