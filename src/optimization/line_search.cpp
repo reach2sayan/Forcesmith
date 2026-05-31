@@ -17,7 +17,7 @@ namespace {
 std::pair<double, double>
 bracket_minimum(const std::function<double(double)> &g, double initial_step,
                 double max_step, int max_iter) {
-  constexpr double phi = 1.6180339887498948482;
+  using std::numbers::phi;
 
   double a = 0.0;
   double fa = g(0.0);
