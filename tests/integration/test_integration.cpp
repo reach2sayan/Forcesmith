@@ -165,7 +165,7 @@ TEST(Integration, EAMDimer_EnergyIsNegative) {
               },
               "embedding": {
                 "format": "analytic",
-                "potentials": [{"type":"sqrt","rmin":0.0,"rmax":5.0,"A":-1.0,"B":0.0}]
+                "potentials": [{"type":"sqrt","rmin":0.0,"rmax":5.0,"A":-1.0,"B":1.0}]
               }
             })"));
 
@@ -396,7 +396,7 @@ TEST(Integration, EAMDimer_ForceConsistency) {
                             "knots":[1.0,0.8,0.5,0.2,0.05,0.0]}]},
               "embedding":{"format":"analytic","potentials":[
                            {"type":"sqrt","rmin":0.0,"rmax":5.0,
-                            "A":-1.0,"B":0.0}]}
+                            "A":-1.0,"B":1.0}]}
             })"));
             auto &eam = std::get<EAMForceCalculator>(fm);
 
@@ -437,7 +437,7 @@ TEST(Integration, EAM_ThreeAtom_NewtonThirdLaw) {
                             "knots":[1.0,0.8,0.5,0.2,0.05,0.0]}]},
               "embedding":{"format":"analytic","potentials":[
                            {"type":"sqrt","rmin":0.0,"rmax":5.0,
-                            "A":-1.0,"B":0.0}]}
+                            "A":-1.0,"B":1.0}]}
             })"));
             auto &eam = std::get<EAMForceCalculator>(fm);
 
@@ -507,7 +507,7 @@ TEST(Integration, OptimizerEAM_ConvergesFromWrongParams) {
       "density": {"format":"analytic","potentials":[
                    {"type":"exp_decay","rmin":1.5,"rmax":6.0,"A":1.0,"B":1.0}]},
       "embedding":{"format":"analytic","potentials":[
-                   {"type":"sqrt","rmin":0.0,"rmax":5.0,"A":-1.0,"B":0.0}]}
+                   {"type":"sqrt","rmin":0.0,"rmax":5.0,"A":-1.0,"B":1.0}]}
     })";
     static constexpr const char* kEAMPert = R"({
       "model":"eam","ntypes":1,
@@ -516,7 +516,7 @@ TEST(Integration, OptimizerEAM_ConvergesFromWrongParams) {
       "density": {"format":"analytic","potentials":[
                    {"type":"exp_decay","rmin":1.5,"rmax":6.0,"A":1.0,"B":1.0}]},
       "embedding":{"format":"analytic","potentials":[
-                   {"type":"sqrt","rmin":0.0,"rmax":5.0,"A":-1.4,"B":0.0}]}
+                   {"type":"sqrt","rmin":0.0,"rmax":5.0,"A":-1.4,"B":1.0}]}
     })";
 
     std::string err;

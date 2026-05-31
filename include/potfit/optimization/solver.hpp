@@ -35,8 +35,8 @@ class Solver : private detail::ErasedMoveOnly<detail::SolverConcept> {
   template <typename T> struct Model final : detail::SolverConcept {
     T impl_;
     constexpr explicit Model(T t) : impl_(std::move(t)) {}
-    constexpr int minimize(Eigen::VectorXd &x, ResidualFn f, JacobianFn jac,
-                           int n_vals) const override {
+    int minimize(Eigen::VectorXd &x, ResidualFn f, JacobianFn jac,
+                 int n_vals) const override {
       return impl_.minimize(x, std::move(f), std::move(jac), n_vals);
     }
   };
@@ -50,12 +50,11 @@ public:
       : Base(std::make_unique<Model<T>>(std::move(impl))) {}
 
   constexpr Solver(Solver &&) = default;
-  constexpr Solver &operator=(Solver &&) = default;
+  Solver &operator=(Solver &&) = default;
   Solver(const Solver &) = delete;
   Solver &operator=(const Solver &) = delete;
-
-  constexpr int minimize(Eigen::VectorXd &x, ResidualFn f, JacobianFn jac,
-                         int n_vals) const {
+  int minimize(Eigen::VectorXd &x, ResidualFn f, JacobianFn jac,
+               int n_vals) const {
     return self_->minimize(x, std::move(f), std::move(jac), n_vals);
   }
 };

@@ -15,6 +15,8 @@ namespace potfit {
 // and deriv_impl(double); their bodies are defined inline below so the compiler
 // can inline them at the eval()/deriv() call sites.
 template <typename Derived, std::size_t N> struct AnalyticBase {
+  static constexpr std::size_t num_params = N;
+
   std::array<Param, N> params;
   double rmin, rmax;
 
@@ -270,8 +272,8 @@ struct Universal : AnalyticBase<Universal, 4> {
 //   V = A/r^n + (B/r^m)·cos(k·r + φ)
 // params order follows potfit p[]: {A, n, B, m, k, phi}
 struct Eopp : AnalyticBase<Eopp, 6> {
-  constexpr Eopp(double A, double n, double B, double m, double k, double phi, double lo,
-       double hi)
+  constexpr Eopp(double A, double n, double B, double m, double k, double phi,
+                 double lo, double hi)
       : AnalyticBase({A, n, B, m, k, phi}, lo, hi) {}
   constexpr FORCE_INLINE double eval_impl(double r) const {
     const auto [A, n, B, m, k, phi] = params;
@@ -285,90 +287,61 @@ struct Eopp : AnalyticBase<Eopp, 6> {
   }
 };
 
-// ── Smooth-cutoff (`_sc`) variants ──────────────────────────────────────────
-// Each is its base function multiplied by detail::apot_cutoff(r, rmax, h),
-// which takes value AND derivative to zero at the cutoff (h is the switching
-// width and the last parameter). deriv_impl uses the product rule (raw'·c +
-// raw·c'). The raw body must NOT itself early-cut at rmax — apot_cutoff already
-// zeroes there. These mirror potfit's lj_sc / morse_sc / exp_decay_sc / eopp_sc
-// exactly.
-
-// params: {epsilon, sigma, h}
-struct LjSC : AnalyticBase<LjSC, 3> {
-  constexpr LjSC(double epsilon, double sigma, double h, double lo, double hi)
-      : AnalyticBase({epsilon, sigma, h}, lo, hi) {}
-  constexpr FORCE_INLINE double eval_impl(double r) const {
-    const auto [ep, sig, h] = params;
-    const double sr6 = std::pow(sig / r, 6);
-    return 4.0 * ep * (sr6 * sr6 - sr6) * detail::apot_cutoff(r, rmax, h);
+// Generic `_sc` smooth-cutoff wrapper. Wraps ANY base analytic potential and
+// multiplies its value by detail::apot_cutoff(r, rmax, h); the derivative uses
+// the product rule (base'·c + base·c'). This mirrors potfit's generic `_sc`
+// mechanism exactly: a name ending in `_sc` appends ONE parameter h (the
+// switching width) after the base potential's parameters, and the cutoff radius
+// is the potential's rmax. apot_cutoff takes value AND derivative to zero at
+// the cutoff, so the base must NOT itself early-cut at rmax (it already zeroes
+// there). Replaces the per-function LjSC/MorseSC/ExpDecaySC/EoppSC structs;
+// any base becomes `_sc` for free by registering SmoothCutoff(Base{...}, h).
+template <typename Base> struct SmoothCutoff {
+  Base base;
+  Param h;
+  constexpr SmoothCutoff(Base b, double h_val) : base(std::move(b)), h(h_val) {}
+  constexpr FORCE_INLINE double eval(double r) const {
+    return base.eval(r) * detail::apot_cutoff(r, base.span().second, h.value);
   }
-  constexpr FORCE_INLINE double deriv_impl(double r) const {
-    const auto [ep, sig, h] = params;
-    const double sr6 = std::pow(sig / r, 6);
-    const double raw = 4.0 * ep * (sr6 * sr6 - sr6);
-    const double draw = 4.0 * ep * (-12.0 * sr6 * sr6 + 6.0 * sr6) / r;
-    return draw * detail::apot_cutoff(r, rmax, h) +
-           raw * detail::apot_cutoff_deriv(r, rmax, h);
+  constexpr FORCE_INLINE double deriv(double r) const {
+    const double r0 = base.span().second;
+    return base.deriv(r) * detail::apot_cutoff(r, r0, h.value) +
+           base.eval(r) * detail::apot_cutoff_deriv(r, r0, h.value);
   }
-};
-
-// params: {D_e, a, r_e, h}
-struct MorseSC : AnalyticBase<MorseSC, 4> {
-  constexpr MorseSC(double De, double a, double re, double h, double lo,
-                    double hi)
-      : AnalyticBase({De, a, re, h}, lo, hi) {}
-  constexpr FORCE_INLINE double eval_impl(double r) const {
-    const auto [De, a, re, h] = params;
-    const double e = std::exp(-a * (r - re));
-    return (De * (1.0 - e) * (1.0 - e) - De) * detail::apot_cutoff(r, rmax, h);
+  constexpr std::pair<double, double> span() const { return base.span(); }
+  constexpr std::size_t param_count() const {
+    return base.param_count() + (h.fixed ? 0 : 1);
   }
-  constexpr FORCE_INLINE double deriv_impl(double r) const {
-    const auto [De, a, re, h] = params;
-    const double e = std::exp(-a * (r - re));
-    const double raw = De * (1.0 - e) * (1.0 - e) - De;
-    const double draw = 2.0 * De * a * e * (1.0 - e);
-    return draw * detail::apot_cutoff(r, rmax, h) +
-           raw * detail::apot_cutoff_deriv(r, rmax, h);
+  constexpr void gather_params(Eigen::VectorXd &dst, std::size_t off) const {
+    base.gather_params(dst, off);
+    if (!h.fixed) {
+      dst[off + base.param_count()] = h.value;
+    }
   }
-};
-
-// params: {A, B, h}
-struct ExpDecaySC : AnalyticBase<ExpDecaySC, 3> {
-  constexpr ExpDecaySC(double A, double B, double h, double lo, double hi)
-      : AnalyticBase({A, B, h}, lo, hi) {}
-  constexpr FORCE_INLINE double eval_impl(double r) const {
-    const auto [A, B, h] = params;
-    return A * std::exp(-B * r) * detail::apot_cutoff(r, rmax, h);
+  constexpr void scatter_params(const Eigen::VectorXd &src, std::size_t off) {
+    base.scatter_params(src, off);
+    if (!h.fixed) {
+      h.value = src[off + base.param_count()];
+    }
   }
-  constexpr FORCE_INLINE double deriv_impl(double r) const {
-    const auto [A, B, h] = params;
-    const double raw = A * std::exp(-B * r);
-    const double draw = -A * B * std::exp(-B * r);
-    return draw * detail::apot_cutoff(r, rmax, h) +
-           raw * detail::apot_cutoff_deriv(r, rmax, h);
+  // Raw-index parameter access (used to broadcast a shared global h). Indices
+  // 0..N-1 address the base; index N addresses the appended cutoff width h.
+  constexpr void set_param(std::size_t i, double v) {
+    if (i < Base::num_params) {
+      base.set_param(i, v);
+    } else {
+      h.value = v;
+    }
   }
-};
-
-// params: {A, n, B, m, k, phi, h}
-struct EoppSC : AnalyticBase<EoppSC, 7> {
-  constexpr EoppSC(double A, double n, double B, double m, double k, double phi,
-                   double h, double lo, double hi)
-      : AnalyticBase({A, n, B, m, k, phi, h}, lo, hi) {}
-  constexpr FORCE_INLINE double eval_impl(double r) const {
-    const auto [A, n, B, m, k, phi, h] = params;
-    const double raw =
-        A / std::pow(r, n) + (B / std::pow(r, m)) * std::cos(k * r + phi);
-    return raw * detail::apot_cutoff(r, rmax, h);
+  constexpr void set_fixed(std::size_t i, bool f) {
+    if (i < Base::num_params) {
+      base.set_fixed(i, f);
+    } else {
+      h.fixed = f;
+    }
   }
-  constexpr FORCE_INLINE double deriv_impl(double r) const {
-    const auto [A, n, B, m, k, phi, h] = params;
-    const double c = std::cos(k * r + phi), s = std::sin(k * r + phi);
-    const double raw = A / std::pow(r, n) + (B / std::pow(r, m)) * c;
-    const double draw = -A * n / std::pow(r, n + 1.0) -
-                        B * m / std::pow(r, m + 1.0) * c -
-                        B * k / std::pow(r, m) * s;
-    return draw * detail::apot_cutoff(r, rmax, h) +
-           raw * detail::apot_cutoff_deriv(r, rmax, h);
+  constexpr bool is_fixed(std::size_t i) const {
+    return i < Base::num_params ? base.is_fixed(i) : h.fixed;
   }
 };
 
@@ -768,7 +741,8 @@ struct ExpPlus : AnalyticBase<ExpPlus, 3> {
 //   s = r − r0;  V = 2A·exp(−B/2·s) − C·(1 + D·s)·exp(−D·s)
 // params order follows potfit p[]: {A, B, C, D, r0}
 struct Strmm : AnalyticBase<Strmm, 5> {
-  constexpr Strmm(double A, double B, double C, double D, double r0, double lo, double hi)
+  constexpr Strmm(double A, double B, double C, double D, double r0, double lo,
+                  double hi)
       : AnalyticBase({A, B, C, D, r0}, lo, hi) {}
   constexpr FORCE_INLINE double eval_impl(double r) const {
     const auto [A, B, C, D, r0] = params;

@@ -200,3 +200,27 @@ if(INTEGRATION_TEST_SOURCES)
     )
     gtest_discover_tests(potfit_integration_tests)
 endif()
+
+# ── Evaluation-parity harness (port vs. original C potfit) ────────────────────
+# Each case converts a potfit text potential to the port's JSON, evaluates it
+# with the `potfit` binary, and diffs the forces against a committed oracle
+# reference (tests/integration/harness/reference/<case>/). Needs python3; the
+# references are pre-generated (gen_reference.sh builds the upstream C potfit and
+# is NOT part of the test). Registered only when python3 is available.
+find_package(Python3 COMPONENTS Interpreter QUIET)
+if(Python3_Interpreter_FOUND)
+    set(_harness "${CMAKE_CURRENT_SOURCE_DIR}/tests/integration/harness")
+    set(_data    "${CMAKE_CURRENT_SOURCE_DIR}/tests/integration/data/potfit_upstream")
+    # case-dir → ntypes
+    foreach(_case_spec "Al_eam_sc:1" "Al_eam_gsc:1")
+        string(REPLACE ":" ";" _parts "${_case_spec}")
+        list(GET _parts 0 _case)
+        list(GET _parts 1 _nt)
+        add_test(
+            NAME parity_${_case}
+            COMMAND bash "${_harness}/run_parity.sh"
+                    "$<TARGET_FILE:potfit>" "${_data}/${_case}" "${_nt}"
+        )
+        set_tests_properties(parity_${_case} PROPERTIES LABELS "parity")
+    endforeach()
+endif()

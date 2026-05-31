@@ -40,7 +40,7 @@ static constexpr const char* kCuTrue = R"({
   "density": {"format":"analytic","potentials":[
                {"type":"exp_decay","rmin":2.0,"rmax":5.5,"A":5.0,"B":1.0}]},
   "embedding":{"format":"analytic","potentials":[
-               {"type":"sqrt","rmin":0.01,"rmax":100.0,"A":-2.0,"B":0.0}]}
+               {"type":"sqrt","rmin":0.01,"rmax":100.0,"A":-2.0,"B":1.0}]}
 })";
 
 // Cu starting model — pair amplitude A perturbed by +27 %
@@ -51,7 +51,7 @@ static constexpr const char* kCuPerturbed = R"({
   "density": {"format":"analytic","potentials":[
                {"type":"exp_decay","rmin":2.0,"rmax":5.5,"A":5.0,"B":1.0}]},
   "embedding":{"format":"analytic","potentials":[
-               {"type":"sqrt","rmin":0.01,"rmax":100.0,"A":-2.0,"B":0.0}]}
+               {"type":"sqrt","rmin":0.01,"rmax":100.0,"A":-2.0,"B":1.0}]}
 })";
 
 // Al true model
@@ -62,7 +62,7 @@ static constexpr const char* kAlTrue = R"({
   "density": {"format":"analytic","potentials":[
                {"type":"exp_decay","rmin":2.2,"rmax":6.3,"A":4.0,"B":0.85}]},
   "embedding":{"format":"analytic","potentials":[
-               {"type":"sqrt","rmin":0.01,"rmax":100.0,"A":-1.8,"B":0.0}]}
+               {"type":"sqrt","rmin":0.01,"rmax":100.0,"A":-1.8,"B":1.0}]}
 })";
 
 // Al starting model — pair amplitude A perturbed by +28 %
@@ -73,7 +73,7 @@ static constexpr const char* kAlPerturbed = R"({
   "density": {"format":"analytic","potentials":[
                {"type":"exp_decay","rmin":2.2,"rmax":6.3,"A":4.0,"B":0.85}]},
   "embedding":{"format":"analytic","potentials":[
-               {"type":"sqrt","rmin":0.01,"rmax":100.0,"A":-1.8,"B":0.0}]}
+               {"type":"sqrt","rmin":0.01,"rmax":100.0,"A":-1.8,"B":1.0}]}
 })";
 
 // ── Configuration helpers ─────────────────────────────────────────────────────

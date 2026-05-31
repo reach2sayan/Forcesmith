@@ -17,14 +17,16 @@ struct LinearAdjustedPotential {
   double slope = 0.0;
   double intercept = 0.0;
 
-  double eval(double x) const { return base.eval(x) - slope * x - intercept; }
-  double deriv(double x) const { return base.deriv(x) - slope; }
-  std::pair<double, double> span() const { return base.span(); }
-  std::size_t param_count() const { return base.param_count(); }
-  void gather_params(Eigen::VectorXd &v, int off) const {
+  constexpr double eval(double x) const {
+    return base.eval(x) - slope * x - intercept;
+  }
+  constexpr double deriv(double x) const { return base.deriv(x) - slope; }
+  constexpr std::pair<double, double> span() const { return base.span(); }
+  constexpr std::size_t param_count() const { return base.param_count(); }
+  constexpr void gather_params(Eigen::VectorXd &v, int off) const {
     base.gather_params(v, off);
   }
-  void scatter_params(const Eigen::VectorXd &v, int off) {
+  constexpr void scatter_params(const Eigen::VectorXd &v, int off) {
     base.scatter_params(v, off);
   }
 };
@@ -35,14 +37,14 @@ struct ScaledOutputPotential {
   Potential base;
   double a = 1.0;
 
-  double eval(double r) const { return a * base.eval(r); }
-  double deriv(double r) const { return a * base.deriv(r); }
-  std::pair<double, double> span() const { return base.span(); }
-  std::size_t param_count() const { return base.param_count(); }
-  void gather_params(Eigen::VectorXd &v, int off) const {
+  constexpr double eval(double r) const { return a * base.eval(r); }
+  constexpr double deriv(double r) const { return a * base.deriv(r); }
+  constexpr std::pair<double, double> span() const { return base.span(); }
+  constexpr std::size_t param_count() const { return base.param_count(); }
+  constexpr void gather_params(Eigen::VectorXd &v, int off) const {
     base.gather_params(v, off);
   }
-  void scatter_params(const Eigen::VectorXd &v, int off) {
+  constexpr void scatter_params(const Eigen::VectorXd &v, int off) {
     base.scatter_params(v, off);
   }
 };
@@ -53,17 +55,17 @@ struct ScaledArgPotential {
   Potential base;
   double a = 1.0;
 
-  double eval(double rho) const { return base.eval(rho / a); }
-  double deriv(double rho) const { return base.deriv(rho / a) / a; }
-  std::pair<double, double> span() const {
+  constexpr double eval(double rho) const { return base.eval(rho / a); }
+  constexpr double deriv(double rho) const { return base.deriv(rho / a) / a; }
+  constexpr std::pair<double, double> span() const {
     auto [lo, hi] = base.span();
     return {a * lo, a * hi};
   }
-  std::size_t param_count() const { return base.param_count(); }
-  void gather_params(Eigen::VectorXd &v, int off) const {
+  constexpr std::size_t param_count() const { return base.param_count(); }
+  constexpr void gather_params(Eigen::VectorXd &v, int off) const {
     base.gather_params(v, off);
   }
-  void scatter_params(const Eigen::VectorXd &v, int off) {
+  constexpr void scatter_params(const Eigen::VectorXd &v, int off) {
     base.scatter_params(v, off);
   }
 };
@@ -106,14 +108,14 @@ std::vector<double> compute_rho_ref(EAMForceCalculator &calc,
 
   std::vector<double> rho_sum(n, 0.0);
   std::vector<std::size_t> count(n, 0);
-  for (const auto &cfg : configs) {
+  std::ranges::for_each(configs, [&](const auto &cfg) {
     for (const auto &a : cfg.atoms) {
       if (a.type < n) {
         rho_sum[a.type] += a.rho;
         ++count[a.type];
       }
     }
-  }
+  });
 
   std::vector<double> rho_ref(n, 0.0);
   for (auto [sum, cnt, ref] : std::views::zip(rho_sum, count, rho_ref)) {
@@ -133,29 +135,33 @@ double rescale_rho_axis(EAMForceCalculator &calc,
   // Per-type min/max sampled electron density across all configs.
   constexpr double inf = std::numeric_limits<double>::infinity();
   std::vector<double> maxrho(n, -inf), minrho(n, inf);
-  for (const auto &cfg : configs) {
+  std::ranges::for_each(configs, [&](const auto &cfg) {
     for (const auto &a : cfg.atoms) {
       if (a.type < n) {
         maxrho[a.type] = std::max(maxrho[a.type], a.rho);
         minrho[a.type] = std::min(minrho[a.type], a.rho);
       }
     }
-  }
+  });
 
   // Dominant type: the one with the largest |ρ| extent. `sign_pos` selects
   // whether the positive (max) or negative (min) side drives the scaling.
   std::size_t dom = 0;
   double best = -1.0;
   bool sign_pos = true;
-  for (std::size_t t = 0; t < n; ++t) {
-    if (!std::isfinite(maxrho[t])) {
-      continue; // no atoms of this type
+  for (auto &&[t, pair] :
+       std::views::zip(maxrho, minrho) | std::views::enumerate) {
+    auto &&[max_rho, min_rho] = pair;
+
+    if (!std::isfinite(max_rho)) {
+      continue;
     }
-    const double ext = std::max(std::abs(maxrho[t]), std::abs(minrho[t]));
+
+    const double ext = std::max(std::abs(max_rho), std::abs(min_rho));
     if (ext > best) {
       best = ext;
       dom = t;
-      sign_pos = (maxrho[t] >= -minrho[t]);
+      sign_pos = (max_rho >= -min_rho);
     }
   }
   if (best < 0.0) {
@@ -172,31 +178,26 @@ double rescale_rho_axis(EAMForceCalculator &calc,
   const double a = upper / right;
 
   // Domain violation: any sampled ρ falls outside its embedding span.
-  bool violation = false;
-  for (std::size_t t = 0; t < n; ++t) {
-    if (!std::isfinite(maxrho[t])) {
-      continue;
-    }
-    const auto [lo, hi] = calc.embedding[t].span();
-    if (minrho[t] < lo || maxrho[t] > hi) {
-      violation = true;
-    }
-  }
+  const bool violation = std::ranges::any_of(
+      std::views::iota(std::size_t{0}, n), [&](std::size_t t) {
+        if (!std::isfinite(maxrho[t]))
+          return false;
+
+        const auto [lo, hi] = calc.embedding[t].span();
+        return minrho[t] < lo || maxrho[t] > hi;
+      });
 
   // potfit skip rule: only rescale when actually needed.
-  if (!std::isfinite(a) || std::abs(a) < 1e-30) {
-    return 1.0;
-  }
-  if (!violation && std::abs(a) >= 0.95 && std::abs(a) <= 1.05) {
+  if (!std::isfinite(a) || std::abs(a) < 1e-30 ||
+      (!violation && std::abs(a) >= 0.95 && std::abs(a) <= 1.05)) {
     return 1.0;
   }
 
   // Apply one global factor: density × a, embedding argument / a.
-  for (std::size_t t = 0; t < n; ++t) {
-    calc.density[static_cast<int>(t)] = Potential(
-        ScaledOutputPotential{std::move(calc.density[static_cast<int>(t)]), a});
-    calc.embedding[static_cast<int>(t)] = Potential(
-        ScaledArgPotential{std::move(calc.embedding[static_cast<int>(t)]), a});
+  for (auto &&[density, embedding] :
+       std::views::zip(calc.density, calc.embedding)) {
+    density = Potential(ScaledOutputPotential{std::move(density), a});
+    embedding = Potential(ScaledArgPotential{std::move(embedding), a});
   }
   return a;
 }
@@ -247,6 +248,7 @@ void rescale_eam(EAMForceCalculator &calc, std::span<Configuration> configs) {
   // embed_shift does not modify density functions, so rho_ref is stable across
   // both steps.
   const auto rho_ref = compute_rho_ref(calc, configs);
+
   // Step 1: gauge-invariant linear shift → F_t′(rho_ref) = 0
   embed_shift(calc, rho_ref);
 
