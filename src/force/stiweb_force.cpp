@@ -7,6 +7,15 @@
 namespace potfit {
 namespace {
 
+auto sw_fields(SWParams& p) {
+  return std::array<Param*, 8>{&p.A, &p.B, &p.p, &p.q,
+                                &p.a, &p.sigma, &p.lambda, &p.gamma};
+}
+auto sw_fields(const SWParams& p) {
+  return std::array<const Param*, 8>{&p.A, &p.B, &p.p, &p.q,
+                                      &p.a, &p.sigma, &p.lambda, &p.gamma};
+}
+
 // ── SW 2-body: v2(r) = A [B(σ/r)^p − (σ/r)^q] exp(σ/(r − aσ)), r < aσ ──────
 // Returns {v2, dv2/dr}; both zero for r ≥ aσ.
 constexpr std::pair<double, double> v2_dv2(double r,
@@ -48,7 +57,32 @@ constexpr std::pair<double, double> h_dh(double r, const SWParams &p) noexcept {
 
 } // anonymous namespace
 
-// ─────────────────────────────────────────────────────────────────────────────
+int StiwebForceCalculator::param_count() const {
+  int count = 0;
+  for (const auto& p : params)
+    for (const Param* f : sw_fields(p))
+      if (!f->fixed) ++count;
+  return count;
+}
+
+void StiwebForceCalculator::gather_params(Eigen::VectorXd& dst, int off) const {
+  for (const auto& p : params)
+    for (const Param* f : sw_fields(p))
+      if (!f->fixed) dst[off++] = f->value;
+}
+
+void StiwebForceCalculator::scatter_params(const Eigen::VectorXd& src, int off) {
+  for (auto& p : params)
+    for (Param* f : sw_fields(p))
+      if (!f->fixed) f->value = src[off++];
+}
+
+double StiwebForceCalculator::max_cutoff() const {
+  double rcut = 0.0;
+  for (const auto& p : params)
+    rcut = std::max(rcut, p.sigma.value * p.a.value);
+  return rcut;
+}
 
 void StiwebForceCalculator::eval_forces(Configuration &cfg) const {
   cfg.calc_energy = 0.0;

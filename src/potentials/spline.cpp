@@ -42,8 +42,7 @@ SplinePotential::SplinePotential(std::vector<double> x, std::vector<double> y)
 void SplinePotential::rebuild_interp_() {
   if (x_.size() >= 4) {
     interp_.emplace(std::vector<double>(x_), std::vector<double>(y_));
-  }
-  else {
+  } else {
     interp_.reset(); // n < 4: piecewise-linear fallback in eval/deriv
   }
 }
@@ -53,38 +52,42 @@ int SplinePotential::param_count() const {
 }
 
 void SplinePotential::gather_params(Eigen::VectorXd &dst, int offset) const {
-  for (auto [y, fixed] :
-       std::views::zip(y_, fixed_) |
-           std::views::filter([](auto &&p) { return !std::get<1>(p); })) {
-    dst[offset++] = y;
+  for (auto [y, fixed] : std::views::zip(y_, fixed_)) {
+    if (!fixed) {
+      dst[offset++] = y;
+    }
   }
 }
 
 void SplinePotential::scatter_params(const Eigen::VectorXd &src, int offset) {
-  for (int i = 0; i < (int)y_.size(); ++i)
-    if (!fixed_[i])
-      y_[i] = src[offset++];
+  for (auto &&[y, fixed] : std::views::zip(y_, fixed_)) {
+    if (!fixed) {
+      y = src[offset++];
+    }
+  }
   rebuild_interp_();
 }
 
 double SplinePotential::eval(double r) const {
-  if (r <= x_.front())
+  if (r <= x_.front()) {
     return y_.front();
-  if (r >= x_.back())
+  } else if (r >= x_.back()) {
     return y_.back();
-  if (!interp_)
+  } else if (!interp_) {
     return pw_linear_eval(x_, y_, r);
+  }
   return (*interp_)(r);
 }
 
 double SplinePotential::deriv(double r) const {
   const int n = static_cast<int>(x_.size());
-  if (r <= x_.front())
+  if (r <= x_.front()) {
     return (y_[1] - y_[0]) / (x_[1] - x_[0]);
-  if (r >= x_.back())
+  } else if (r >= x_.back()) {
     return (y_[n - 1] - y_[n - 2]) / (x_[n - 1] - x_[n - 2]);
-  if (!interp_)
+  } else if (!interp_) {
     return pw_linear_deriv(x_, y_, r);
+  }
   return interp_->prime(r);
 }
 

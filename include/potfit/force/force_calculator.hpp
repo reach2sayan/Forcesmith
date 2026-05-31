@@ -10,7 +10,7 @@
 #include <variant>
 
 namespace potfit {
-
+// clang-format off
 using ForceCalculator = std::variant<
     PairForceCalculator,
     EAMForceCalculator,
@@ -19,5 +19,6 @@ using ForceCalculator = std::variant<
     TersoffForceCalculator,
     StiwebForceCalculator
 >;
+// clang-format on
 
 } // namespace potfit

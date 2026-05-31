@@ -6,6 +6,49 @@
 
 namespace potfit {
 
+int EAMForceCalculator::param_count() const {
+  auto count_params = [](const auto &xs) {
+    return std::transform_reduce(
+        xs.begin(), xs.end(), 0, std::plus<>{},
+        [](const auto &p) { return p.param_count(); });
+  };
+  return count_params(pair) + count_params(density) + count_params(embedding);
+}
+
+void EAMForceCalculator::gather_params(Eigen::VectorXd &dst, int off) const {
+  auto gather_range = [&](const auto &pots) {
+    for (const auto &p : pots) {
+      p.gather_params(dst, off);
+      off += p.param_count();
+    }
+  };
+  gather_range(pair);
+  gather_range(density);
+  gather_range(embedding);
+}
+
+void EAMForceCalculator::scatter_params(const Eigen::VectorXd &src, int off) {
+  auto scatter = [&](auto &range) {
+    for (auto &p : range) {
+      p.scatter_params(src, off);
+      off += p.param_count();
+    }
+  };
+  scatter(pair);
+  scatter(density);
+  scatter(embedding);
+}
+
+double EAMForceCalculator::max_cutoff() const {
+  auto max_range = [](const auto &range) {
+    return std::transform_reduce(
+        range.begin(), range.end(), 0.0,
+        [](double a, double b) { return std::max(a, b); },
+        [](const auto &p) { return p.span().second; });
+  };
+  return std::max(max_range(pair), max_range(density));
+}
+
 void EAMForceCalculator::eval_forces(Configuration &cfg) const {
   // ── Zero all scratch and output fields ──────────────────────────────────
   cfg.calc_energy = 0.0;

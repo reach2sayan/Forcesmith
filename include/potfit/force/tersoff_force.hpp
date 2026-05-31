@@ -35,17 +35,6 @@ struct TersoffParams {
   Param S      = 3.0; // outer cutoff (Å)
 };
 
-namespace detail {
-inline auto tersoff_fields(TersoffParams& p) {
-  return std::array<Param*, 11>{&p.A, &p.B, &p.lambda, &p.mu, &p.beta,
-                                 &p.n, &p.c, &p.d,      &p.h, &p.R, &p.S};
-}
-inline auto tersoff_fields(const TersoffParams& p) {
-  return std::array<const Param*, 11>{&p.A, &p.B, &p.lambda, &p.mu, &p.beta,
-                                       &p.n, &p.c, &p.d,      &p.h, &p.R, &p.S};
-}
-} // namespace detail
-
 // params — one TersoffParams per unique pair type (paircol =
 // ntypes*(ntypes+1)/2). Access via params(ti, tj).
 struct TersoffForceCalculator : ForceCalculatorBase<TersoffForceCalculator> {
@@ -53,32 +42,10 @@ struct TersoffForceCalculator : ForceCalculatorBase<TersoffForceCalculator> {
 
   void eval_forces(Configuration &cfg) const;
 
-  int param_count() const {
-    int count = 0;
-    for (const auto& p : params)
-      for (const Param* f : detail::tersoff_fields(p))
-        if (!f->fixed) ++count;
-    return count;
-  }
-
-  void gather_params(Eigen::VectorXd& dst, int off) const {
-    for (const auto& p : params)
-      for (const Param* f : detail::tersoff_fields(p))
-        if (!f->fixed) dst[off++] = f->value;
-  }
-
-  void scatter_params(const Eigen::VectorXd& src, int off) {
-    for (auto& p : params)
-      for (Param* f : detail::tersoff_fields(p))
-        if (!f->fixed) f->value = src[off++];
-  }
-
-  double max_cutoff() const {
-    double rcut = 0.0;
-    for (const auto& p : params)
-      rcut = std::max(rcut, p.S.value);
-    return rcut;
-  }
+  int    param_count() const;
+  void   gather_params(Eigen::VectorXd& dst, int off) const;
+  void   scatter_params(const Eigen::VectorXd& src, int off);
+  double max_cutoff() const;
 };
 
 static_assert(ForceCalculatorModel<TersoffForceCalculator>);

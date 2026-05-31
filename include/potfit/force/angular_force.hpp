@@ -28,32 +28,10 @@ struct AngularForceCalculator : ForceCalculatorBase<AngularForceCalculator> {
 
   void eval_forces(Configuration &cfg) const;
 
-  int param_count() const {
-    int count = 0;
-    for (const auto& p : pair)    count += p.param_count();
-    for (const auto& p : radial)  count += p.param_count();
-    for (const auto& p : angular) count += p.param_count();
-    return count;
-  }
-
-  void gather_params(Eigen::VectorXd& dst, int off) const {
-    for (const auto& p : pair)    { p.gather_params(dst, off); off += p.param_count(); }
-    for (const auto& p : radial)  { p.gather_params(dst, off); off += p.param_count(); }
-    for (const auto& p : angular) { p.gather_params(dst, off); off += p.param_count(); }
-  }
-
-  void scatter_params(const Eigen::VectorXd& src, int off) {
-    for (auto& p : pair)    { p.scatter_params(src, off); off += p.param_count(); }
-    for (auto& p : radial)  { p.scatter_params(src, off); off += p.param_count(); }
-    for (auto& p : angular) { p.scatter_params(src, off); off += p.param_count(); }
-  }
-
-  double max_cutoff() const {
-    double rcut = 0.0;
-    for (const auto& p : pair)   rcut = std::max(rcut, p.span().second);
-    for (const auto& p : radial) rcut = std::max(rcut, p.span().second);
-    return rcut;
-  }
+  int    param_count() const;
+  void   gather_params(Eigen::VectorXd& dst, int off) const;
+  void   scatter_params(const Eigen::VectorXd& src, int off);
+  double max_cutoff() const;
 };
 
 static_assert(ForceCalculatorModel<AngularForceCalculator>);

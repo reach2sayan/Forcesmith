@@ -8,6 +8,15 @@
 namespace potfit {
 namespace {
 
+auto tersoff_fields(TersoffParams& p) {
+  return std::array<Param*, 11>{&p.A, &p.B, &p.lambda, &p.mu, &p.beta,
+                                 &p.n, &p.c, &p.d,      &p.h, &p.R, &p.S};
+}
+auto tersoff_fields(const TersoffParams& p) {
+  return std::array<const Param*, 11>{&p.A, &p.B, &p.lambda, &p.mu, &p.beta,
+                                       &p.n, &p.c, &p.d,      &p.h, &p.R, &p.S};
+}
+
 constexpr double fc_val(double r, double R, double S) noexcept {
   if (r <= R) {
     return 1.0;
@@ -65,6 +74,33 @@ constexpr double dbond_dzeta(double zeta, const TersoffParams &p) noexcept {
 }
 
 } // anonymous namespace
+
+int TersoffForceCalculator::param_count() const {
+  int count = 0;
+  for (const auto& p : params)
+    for (const Param* f : tersoff_fields(p))
+      if (!f->fixed) ++count;
+  return count;
+}
+
+void TersoffForceCalculator::gather_params(Eigen::VectorXd& dst, int off) const {
+  for (const auto& p : params)
+    for (const Param* f : tersoff_fields(p))
+      if (!f->fixed) dst[off++] = f->value;
+}
+
+void TersoffForceCalculator::scatter_params(const Eigen::VectorXd& src, int off) {
+  for (auto& p : params)
+    for (Param* f : tersoff_fields(p))
+      if (!f->fixed) f->value = src[off++];
+}
+
+double TersoffForceCalculator::max_cutoff() const {
+  double rcut = 0.0;
+  for (const auto& p : params)
+    rcut = std::max(rcut, p.S.value);
+  return rcut;
+}
 
 void TersoffForceCalculator::eval_forces(Configuration &cfg) const {
   cfg.calc_energy = 0.0;

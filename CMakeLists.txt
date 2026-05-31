@@ -80,8 +80,7 @@ set(POTFIT_LIB_SOURCES
     src/optimization/optimizer.cpp
     src/optimization/potfit_functor.cpp
     src/optimization/solver.cpp
-    src/potentials/analytic_potential.cpp
-    src/potentials/spline.cpp
+        src/potentials/spline.cpp
 )
 
 add_library(potfit_lib STATIC ${POTFIT_LIB_SOURCES})
