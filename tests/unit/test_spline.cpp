@@ -7,8 +7,7 @@
 
 using namespace potfit;
 
-// Natural cubic spline: d2y[0] = d2y[n-1] = 0.
-// It is exact for linear functions because their second derivatives are zero.
+// makima reproduces linear functions exactly (all differences are equal, weights degenerate to average = slope).
 
 TEST(SplinePotential, EvalAtKnotsEqualsValues) {
     // arbitrary non-uniform knots
@@ -20,7 +19,6 @@ TEST(SplinePotential, EvalAtKnotsEqualsValues) {
         EXPECT_NEAR(sp.eval(xs[i]), ys[i], 1e-10) << "at knot " << i;
 }
 
-// Natural cubic spline is exact for linear functions (y'' = 0 satisfies natural BCs).
 TEST(SplinePotential, LinearFunctionExact) {
     const double a = 3.0, b = -1.5;
     SplinePotential sp({0.0, 1.0, 2.5, 4.0},
