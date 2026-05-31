@@ -24,6 +24,16 @@ public:
   void gather_params(Eigen::VectorXd &dst, std::size_t offset) const;
   void scatter_params(const Eigen::VectorXd &src, std::size_t offset);
 
+  // Curvature (smoothness) regularization: one second-difference residual per
+  // interior knot, active only when the potential has free knots. The knots are
+  // on a uniform grid, so the plain second difference is proportional to the
+  // discrete curvature.
+  std::size_t curvature_count() const {
+    return (param_count() > 0 && x_.size() >= 3) ? x_.size() - 2 : 0;
+  }
+  void write_curvature(Eigen::VectorXd &dst, std::size_t offset,
+                       double weight) const;
+
 private:
   using Makima = boost::math::interpolators::makima<std::vector<double>>;
 
@@ -32,5 +42,16 @@ private:
   std::optional<Makima> interp_; // null for the degenerate 2-knot (linear) case
   void rebuild_interp_();
 };
+
+// Curvature customization-point overloads (found by ADL from the erased
+// Potential); these make a tabulated potential participate in the Tikhonov
+// smoothness regularization. See potfit/potentials/curvature.hpp.
+inline std::size_t curvature_count(const SplinePotential &p) {
+  return p.curvature_count();
+}
+inline void write_curvature(const SplinePotential &p, Eigen::VectorXd &dst,
+                            std::size_t off, double weight) {
+  p.write_curvature(dst, off, weight);
+}
 
 } // namespace potfit

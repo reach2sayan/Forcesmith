@@ -36,6 +36,7 @@ int main(int argc, char* argv[]) {
         ("maxiter",       po::value<int>()->default_value(500),    "max optimizer iterations")
         ("eweight",       po::value<double>()->default_value(1.0), "energy residual weight")
         ("stress-weight", po::value<double>()->default_value(0.0), "stress tensor residual weight (0 = disabled)")
+        ("smooth-weight", po::value<double>()->default_value(0.0), "curvature (Tikhonov) regularization weight on free knots (0 = disabled)")
         ("algorithm,a",   po::value<std::string>()->default_value("lm"),
                               "optimization algorithm: lm | powell | de")
         ("seed",          po::value<unsigned>()->default_value(0),
@@ -122,6 +123,7 @@ int main(int argc, char* argv[]) {
             opts.max_iter      = vm["maxiter"].as<int>();
             opts.energy_weight = vm["eweight"].as<double>();
             opts.stress_weight = vm["stress-weight"].as<double>();
+            opts.smooth_weight = vm["smooth-weight"].as<double>();
             opts.seed          = vm["seed"].as<unsigned>();
             opts.de.mutation_factor       = vm["de-F"].as<double>();
             opts.de.crossover_probability = vm["de-CR"].as<double>();

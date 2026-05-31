@@ -23,7 +23,8 @@ struct PotfitFunctor {
   PotfitFunctor(std::span<Configuration> configs,
                 ForceCalculator model,
                 double energy_weight = 1.0,
-                double stress_weight = 0.0);
+                double stress_weight = 0.0,
+                double smooth_weight = 0.0);
 
   // Evaluate residual vector fvec given parameter vector x.
   int operator()(const Eigen::VectorXd &x, Eigen::VectorXd &fvec) const;
@@ -43,6 +44,8 @@ private:
   mutable ForceCalculator   model_; // mutable: scatter_params updates params during eval
   double energy_weight_;
   double stress_weight_;
+  double smooth_weight_;
+  int smooth_count_ = 0;   // # curvature residuals (0 when smooth_weight_ == 0)
   int inputs_ = 0;
   int values_ = 0;
   mutable std::uint64_t iter_ = 0;

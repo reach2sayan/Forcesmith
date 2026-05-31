@@ -28,6 +28,7 @@ struct OptimizerOptions {
   double    ftol          = 1e-7;
   double    energy_weight = 1.0;
   double    stress_weight = 0.0;
+  double    smooth_weight = 0.0;  // Tikhonov curvature penalty on free knots
   Algorithm algorithm     = Algorithm::LM;
   unsigned  seed          = 0;    // 0 → std::random_device (used by DE)
   DEOptions de;

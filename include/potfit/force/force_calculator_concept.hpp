@@ -33,6 +33,26 @@ void scatter_range(Range &range, const Eigen::VectorXd &src, std::size_t &off) {
   }
 }
 
+// Total number of curvature (smoothness) residuals contributed by a range of
+// potentials, and writing those residuals — mirrors gather_range/scatter_range.
+template <typename Range>
+std::size_t smoothness_count_range(const Range &range) {
+  std::size_t n = 0;
+  for (const auto &p : range) {
+    n += p.smoothness_count();
+  }
+  return n;
+}
+
+template <typename Range>
+void write_smoothness_range(const Range &range, Eigen::VectorXd &dst,
+                            std::size_t &off, double weight) {
+  for (const auto &p : range) {
+    p.write_smoothness(dst, off, weight);
+    off += p.smoothness_count();
+  }
+}
+
 #if defined(__GNUC__) && !defined(__clang__)
 #pragma GCC diagnostic pop
 #endif

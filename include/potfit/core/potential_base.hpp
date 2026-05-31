@@ -1,6 +1,7 @@
 #pragma once
 
 #include "potfit/core/erased.hpp"
+#include "potfit/potentials/curvature.hpp"
 #include <Eigen/Core>
 #include <concepts>
 #include <memory>
@@ -22,6 +23,9 @@ struct PotentialConcept {
     virtual std::size_t param_count() const = 0;
     virtual void gather_params(Eigen::VectorXd &x, std::size_t off) const = 0;
     virtual void scatter_params(const Eigen::VectorXd &x, std::size_t off) = 0;
+    virtual std::size_t smoothness_count() const = 0;
+    virtual void write_smoothness(Eigen::VectorXd &x, std::size_t off,
+                                  double weight) const = 0;
     virtual std::unique_ptr<PotentialConcept> clone() const = 0;
 };
 } // namespace detail
@@ -39,6 +43,16 @@ class Potential : private detail::ErasedValue<detail::PotentialConcept> {
         }
         constexpr void scatter_params(const Eigen::VectorXd &x, std::size_t off) override {
             impl_.scatter_params(x, off);
+        }
+        // Dispatch to the curvature customization point via ADL (unqualified so
+        // tabulated potentials' overloads are found; analytic ones use the
+        // default that reports zero curvature residuals).
+        std::size_t smoothness_count() const override {
+            return curvature_count(impl_);
+        }
+        void write_smoothness(Eigen::VectorXd &x, std::size_t off,
+                              double weight) const override {
+            write_curvature(impl_, x, off, weight);
         }
         std::unique_ptr<detail::PotentialConcept> clone() const override {
             return std::make_unique<Model>(*this);
@@ -67,6 +81,10 @@ public:
     }
     constexpr void scatter_params(const Eigen::VectorXd &x, std::size_t off) {
         self_->scatter_params(x, off);
+    }
+    std::size_t smoothness_count() const { return self_->smoothness_count(); }
+    void write_smoothness(Eigen::VectorXd &x, std::size_t off, double weight) const {
+        self_->write_smoothness(x, off, weight);
     }
 };
 

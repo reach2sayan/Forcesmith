@@ -1,6 +1,7 @@
 #include "potfit/optimization/potfit_functor.hpp"
 
 #include "potfit/events/signals.hpp"
+#include "potfit/force/smoothness.hpp"
 
 #include <ranges>
 
@@ -21,13 +22,20 @@ int count_residuals(std::span<Configuration> configs, double stress_weight) {
 
 PotfitFunctor::PotfitFunctor(std::span<Configuration> configs,
                              ForceCalculator model,
-                             double energy_weight, double stress_weight)
+                             double energy_weight, double stress_weight,
+                             double smooth_weight)
     : configs_(configs),
       model_(std::move(model)),
       energy_weight_(energy_weight),
       stress_weight_(stress_weight),
+      smooth_weight_(smooth_weight),
+      smooth_count_{smooth_weight > 0.0
+                        ? static_cast<int>(std::visit(
+                              [](const auto& m){ return model_smoothness_count(m); },
+                              model_))
+                        : 0},
       inputs_{static_cast<int>(std::visit([](const auto& m){ return m.param_count(); }, model_))},
-      values_{count_residuals(configs, stress_weight)} {}
+      values_{count_residuals(configs, stress_weight) + smooth_count_} {}
 
 int PotfitFunctor::operator()(const Eigen::VectorXd &x,
                               Eigen::VectorXd &fvec) const {
@@ -51,6 +59,15 @@ int PotfitFunctor::operator()(const Eigen::VectorXd &x,
       fvec[row++] = stress_weight_ * (cfg.calc_stress(0,2) - cfg.stress(0,2));
       fvec[row++] = stress_weight_ * (cfg.calc_stress(1,2) - cfg.stress(1,2));
     }
+  }
+
+  // Tikhonov curvature penalty on free knots (appended after the data residuals).
+  if (smooth_count_ > 0) {
+    std::visit([&](auto& m){
+      model_write_smoothness(m, fvec, static_cast<std::size_t>(row),
+                             smooth_weight_);
+    }, model_);
+    row += smooth_count_;
   }
 
   events::on_iteration(

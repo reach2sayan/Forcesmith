@@ -7,7 +7,8 @@ namespace {
 
 int run_with_solver(std::span<Configuration> configs, ForceCalculator &model,
                     const OptimizerOptions &opts, const Solver &solver) {
-  PotfitFunctor functor(configs, model, opts.energy_weight, opts.stress_weight);
+  PotfitFunctor functor(configs, model, opts.energy_weight, opts.stress_weight,
+                        opts.smooth_weight);
 
   Eigen::VectorXd x(functor.inputs());
   std::visit([&](const auto &m) { m.gather_params(x, std::size_t{0}); }, model);

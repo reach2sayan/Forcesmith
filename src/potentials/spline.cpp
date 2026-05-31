@@ -76,6 +76,17 @@ void SplinePotential::scatter_params(const Eigen::VectorXd &src,
   rebuild_interp_();
 }
 
+void SplinePotential::write_curvature(Eigen::VectorXd &dst, std::size_t offset,
+                                      double weight) const {
+  if (curvature_count() == 0) {
+    return;
+  }
+  // One residual per interior knot: weight * (y[k-1] - 2 y[k] + y[k+1]).
+  for (std::size_t k = 1; k + 1 < y_.size(); ++k) {
+    dst[offset++] = weight * (y_[k - 1] - 2.0 * y_[k] + y_[k + 1]);
+  }
+}
+
 double SplinePotential::eval(double r) const {
   if (r <= x_.front()) {
     return y_.front();
