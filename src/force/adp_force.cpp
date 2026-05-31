@@ -2,6 +2,7 @@
 #include "potfit/core/neighbor_list.hpp"
 #include "potfit/events/signals.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <numeric>
 
@@ -43,7 +44,11 @@ double ADPForceCalculator::max_cutoff() const {
         [](const auto &p) { return p.span().second; });
   };
 
-  return std::max(max_cutoff(pair), max_cutoff(density));
+  // Cover every radial table: dipole/quadrupole may reach farther than the
+  // pair/density tables, and those neighbours must not be truncated (potfit
+  // gates each contribution on its own per-table cutoff).
+  return std::max({max_cutoff(pair), max_cutoff(density), max_cutoff(dipole),
+                   max_cutoff(quadrupole)});
 }
 
 // Helpers for quadrupole force terms (see header for derivation reference).
@@ -141,10 +146,12 @@ void ADPForceCalculator::eval_forces(Configuration &cfg) const {
 
       ai.calc_force += fvec;
       cfg.calc_energy += 0.5 * phi;
-      cfg.calc_stress += 0.5 * d * fvec.transpose();
+      // Virial: bond ⊗ force-on-partner = d ⊗ (−fvec); 0.5 for the full list.
+      cfg.calc_stress -= 0.5 * d * fvec.transpose();
     }
   }
 
+  cfg.calc_stress /= bc_volume(cfg.bc); // virial → stress (per unit volume)
   events::on_force_eval(events::ForceEvalStats{conf_index, force_rms(cfg)});
 }
 

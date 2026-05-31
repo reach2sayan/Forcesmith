@@ -104,9 +104,9 @@ void StiwebForceCalculator::eval_forces(Configuration &cfg) const {
 
   cfg.calc_energy = 0.0;
   cfg.calc_stress = SymTens::Zero();
-  for (auto &a : cfg.atoms) {
-    a.calc_force = Vec3::Zero();
-  }
+  std::ranges::for_each(cfg.atoms, [](auto& a) {
+      a.calc_force = Vec3::Zero();
+  });
 
   // ── 2-body loop ──────────────────────────────────────────────────────────
   // Full neighbor list: each pair counted twice, factor 0.5 per entry.
@@ -123,7 +123,9 @@ void StiwebForceCalculator::eval_forces(Configuration &cfg) const {
 
       ai.calc_force += fvec;
       cfg.calc_energy += 0.5 * v2;
-      cfg.calc_stress += 0.5 * nb.dist * fvec.transpose();
+      // Virial: bond ⊗ force-on-partner = dist ⊗ (−fvec); 0.5 for the full
+      // list.
+      cfg.calc_stress -= 0.5 * nb.dist * fvec.transpose();
     }
   }
 
@@ -199,12 +201,14 @@ void StiwebForceCalculator::eval_forces(Configuration &cfg) const {
         const_cast<Atom &>(*nb_j.neighbor).calc_force += fj;
         const_cast<Atom &>(*nb_k.neighbor).calc_force += fk;
 
-        cfg.calc_stress += d1 * (-fj).transpose();
-        cfg.calc_stress += d2 * (-fk).transpose();
+        // Virial: bond ⊗ force-on-partner (fj, fk are applied to atoms j, k).
+        cfg.calc_stress += d1 * fj.transpose();
+        cfg.calc_stress += d2 * fk.transpose();
       }
     }
   }
 
+  cfg.calc_stress /= bc_volume(cfg.bc); // virial → stress (per unit volume)
   events::on_force_eval(events::ForceEvalStats{conf_index, force_rms(cfg)});
 }
 

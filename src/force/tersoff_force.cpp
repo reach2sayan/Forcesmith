@@ -9,13 +9,14 @@ namespace potfit {
 namespace {
 
 auto tersoff_fields(TersoffParams &p) {
-  return std::array<Param *, 11>{&p.A, &p.B, &p.lambda, &p.mu, &p.beta, &p.n,
-                                 &p.c, &p.d, &p.h,      &p.R,  &p.S};
+  return std::array<Param *, 12>{&p.A, &p.B, &p.lambda, &p.mu,    &p.beta, &p.n,
+                                 &p.c, &p.d, &p.h,       &p.R,     &p.S,
+                                 &p.omega};
 }
 auto tersoff_fields(const TersoffParams &p) {
-  return std::array<const Param *, 11>{&p.A,    &p.B, &p.lambda, &p.mu,
+  return std::array<const Param *, 12>{&p.A,    &p.B, &p.lambda, &p.mu,
                                        &p.beta, &p.n, &p.c,      &p.d,
-                                       &p.h,    &p.R, &p.S};
+                                       &p.h,    &p.R, &p.S,      &p.omega};
 }
 
 constexpr double fc_val(double r, double R, double S) noexcept {
@@ -111,10 +112,10 @@ void TersoffForceCalculator::scatter_params(const Eigen::VectorXd &src,
 }
 
 double TersoffForceCalculator::max_cutoff() const {
-  double rcut = 0.0;
-  for (const auto &p : params)
-    rcut = std::max(rcut, p.S.value);
-  return rcut;
+  return std::transform_reduce(
+      params.begin(), params.end(), 0.0,
+      [](double a, double b) { return std::max(a, b); },
+      [](const auto &p) { return p.S.value; });
 }
 
 void TersoffForceCalculator::eval_forces(Configuration &cfg) const {
@@ -173,7 +174,7 @@ void TersoffForceCalculator::eval_forces(Configuration &cfg) const {
         }
 
         const double cos_theta = d1.dot(d2) / (r1 * r2);
-        zeta += fc_ik * g_val(cos_theta, p);
+        zeta += p_ik.omega * fc_ik * g_val(cos_theta, p);
       }
 
       const double b_ij = bond_order(zeta, p);
@@ -237,21 +238,25 @@ void TersoffForceCalculator::eval_forces(Configuration &cfg) const {
         const double Ac = cos_theta * inv_r1 * inv_r1 - inv_r1 * inv_r2;
         const double Bc = cos_theta * inv_r2 * inv_r2 - inv_r1 * inv_r2;
 
+        // Mixing weight ω for the i–k pair carries through every ζ-gradient
+        // term (matches potfit's omega[col_k] on both the f_c and g parts).
+        const double w_ik = p_ik.omega;
+
         // ∂ζ/∂r_i = g × dfc_ik × (−d2/r2) + fc_ik × dgv × (Ac d1 + Bc d2)
         const Vec3 dz_dri =
-            -dfc_ik * inv_r2 * gv * d2 + fc_ik * dgv * (Ac * d1 + Bc * d2);
+            w_ik * (-dfc_ik * inv_r2 * gv * d2 + fc_ik * dgv * (Ac * d1 + Bc * d2));
 
         // ∂ζ/∂r_j = fc_ik × dgv × (d2/(r1 r2) − c d1/r1²)
         const Vec3 dz_drj =
-            fc_ik * dgv *
+            w_ik * fc_ik * dgv *
             (inv_r1 * inv_r2 * d2 - cos_theta * inv_r1 * inv_r1 * d1);
 
         // ∂ζ/∂r_k = g × dfc_ik × (d2/r2) + fc_ik × dgv × (d1/(r1 r2) − c
         // d2/r2²)
         const Vec3 dz_drk =
-            dfc_ik * inv_r2 * gv * d2 +
-            fc_ik * dgv *
-                (inv_r1 * inv_r2 * d1 - cos_theta * inv_r2 * inv_r2 * d2);
+            w_ik * (dfc_ik * inv_r2 * gv * d2 +
+                    fc_ik * dgv *
+                        (inv_r1 * inv_r2 * d1 - cos_theta * inv_r2 * inv_r2 * d2));
 
         const Vec3 Fi_3b = P * dz_dri;
         const Vec3 Fj_3b = P * dz_drj;
@@ -261,14 +266,15 @@ void TersoffForceCalculator::eval_forces(Configuration &cfg) const {
         aj.calc_force += Fj_3b;
         ak.calc_force += Fk_3b;
 
-        // Virial: bond-force outer products for the angular neighbors j, k
-        // (factor 0.5 cancels the double counting from the full pair sum)
-        cfg.calc_stress +=
-            0.5 * (d1 * (-Fj_3b).transpose() + d2 * (-Fk_3b).transpose());
+        // Virial: bond ⊗ force-on-partner. Fj_3b/Fk_3b are the forces applied
+        // to atoms j, k; no extra 0.5 (the 0.5 already lives in P, matching the
+        // way the forces themselves are applied).
+        cfg.calc_stress += d1 * Fj_3b.transpose() + d2 * Fk_3b.transpose();
       }
     }
   }
 
+  cfg.calc_stress /= bc_volume(cfg.bc); // virial → stress (per unit volume)
   events::on_force_eval(events::ForceEvalStats{conf_index, force_rms(cfg)});
 }
 

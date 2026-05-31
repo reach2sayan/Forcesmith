@@ -207,8 +207,8 @@ leaf::result<ForceCalculator> parse_force_model(std::string_view input) {
       auto rr = fill_pair(calc.radial, j["radial"], ntypes, "angular.radial");
       if (!rr)
         return rr.error();
-      auto ra =
-          fill_pair(calc.angular, j["angular"], ntypes, "angular.angular");
+      // angular g is indexed by the central atom type → ntypes entries.
+      auto ra = fill_arr(calc.angular, j["angular"], ntypes, "angular.angular");
       if (!ra)
         return ra.error();
 
@@ -243,6 +243,10 @@ leaf::result<ForceCalculator> parse_force_model(std::string_view input) {
         tp.h = p.at("h").get<double>();
         tp.R = p.at("R").get<double>();
         tp.S = p.at("S").get<double>();
+        // Optional bond-order mixing weight (potfit's omega). Absent → 1.0,
+        // fixed (diagonal/same-type pairs); present → free for fitting.
+        if (p.contains("omega"))
+          tp.omega = Param{p.at("omega").get<double>(), false};
         calc.params.emplace_back(tp);
       }
 

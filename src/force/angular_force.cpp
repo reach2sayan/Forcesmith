@@ -62,7 +62,9 @@ void AngularForceCalculator::eval_forces(Configuration &cfg) const {
       const Vec3 fvec = (dphi / r) * nb.dist;
       ai.calc_force += fvec;
       cfg.calc_energy += 0.5 * phi;
-      cfg.calc_stress += 0.5 * nb.dist * fvec.transpose();
+      // Virial: bond ⊗ force-on-partner = dist ⊗ (−fvec); 0.5 for the full
+      // list.
+      cfg.calc_stress -= 0.5 * nb.dist * fvec.transpose();
     }
   }
 
@@ -115,10 +117,9 @@ void AngularForceCalculator::eval_forces(Configuration &cfg) const {
         const double df2 = radial[ai.type, nb_k.neighbor->type].deriv(r2);
 
         const double c = d1.dot(d2) * inv_r1 * inv_r2;
-        const double g =
-            angular[nb_j.neighbor->type, nb_k.neighbor->type].eval(c);
-        const double dg =
-            angular[nb_j.neighbor->type, nb_k.neighbor->type].deriv(c);
+        // g indexed by the central atom's type (matches potfit force_ang.c).
+        const double g = angular[ai.type].eval(c);
+        const double dg = angular[ai.type].deriv(c);
 
         cfg.calc_energy += f1 * f2 * g;
 
@@ -142,13 +143,14 @@ void AngularForceCalculator::eval_forces(Configuration &cfg) const {
         const_cast<Atom &>(*nb_j.neighbor).calc_force += fj;
         const_cast<Atom &>(*nb_k.neighbor).calc_force += fk;
 
-        // Virial: bond-force outer products (j and k contributions)
-        cfg.calc_stress += d1 * (-fj).transpose();
-        cfg.calc_stress += d2 * (-fk).transpose();
+        // Virial: bond ⊗ force-on-partner (fj, fk are applied to atoms j, k).
+        cfg.calc_stress += d1 * fj.transpose();
+        cfg.calc_stress += d2 * fk.transpose();
       }
     }
   });
 
+  cfg.calc_stress /= bc_volume(cfg.bc); // virial → stress (per unit volume)
   events::on_force_eval(events::ForceEvalStats{conf_index, force_rms(cfg)});
 }
 

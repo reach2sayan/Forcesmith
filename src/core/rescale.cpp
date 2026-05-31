@@ -37,16 +37,16 @@ struct CompensatedPairPotential {
   double coeff_alpha = 0.0;
   double coeff_beta = 0.0;
 
-  double eval(double r) const {
+  constexpr double eval(double r) const {
     return phi.eval(r) + coeff_alpha * g_beta.eval(r) +
            coeff_beta * g_alpha.eval(r);
   }
-  double deriv(double r) const {
+  constexpr double deriv(double r) const {
     return phi.deriv(r) + coeff_alpha * g_beta.deriv(r) +
            coeff_beta * g_alpha.deriv(r);
   }
-  std::pair<double, double> span() const { return phi.span(); }
-  int param_count() const { return phi.param_count(); }
+  constexpr std::pair<double, double> span() const { return phi.span(); }
+  constexpr int param_count() const { return phi.param_count(); }
   void gather_params(Eigen::VectorXd &v, int off) const {
     phi.gather_params(v, off);
   }
@@ -107,8 +107,9 @@ void embed_shift(EAMForceCalculator &calc, std::span<const double> rho_ref) {
     for (int tj = ti; tj < n; ++tj) {
       const double ca = slope[ti];
       const double cb = slope[tj];
-      if (std::abs(ca) < 1e-14 && std::abs(cb) < 1e-14)
+      if (std::abs(ca) < 1e-14 && std::abs(cb) < 1e-14) {
         continue;
+      }
       calc.pair[ti, tj] = Potential(CompensatedPairPotential{
           std::move(calc.pair[ti, tj]),
           calc.density[ti], // g_alpha: density contributed by type ti

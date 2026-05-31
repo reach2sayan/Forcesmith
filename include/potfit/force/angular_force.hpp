@@ -19,12 +19,13 @@ namespace potfit {
 // Potential tables for ntypes element types (paircol = ntypes*(ntypes+1)/2):
 //   pair    — φ_{ij}(r)      pair repulsion,              paircol entries
 //   radial  — f_{ij}(r)      radial three-body modulation, paircol entries
-//   angular — g_{jk}(cos θ)  angular function, indexed by the two *neighbor*
-//                             types tj and tk,              paircol entries
+//   angular — g_i(cos θ)     angular function, indexed by the *central* atom
+//                             type i (matches potfit's col = 2*paircol + typ_i),
+//                                                          ntypes entries
 struct AngularForceCalculator : ForceCalculatorBase<AngularForceCalculator> {
-  PotentialPair pair;
-  PotentialPair radial;
-  PotentialPair angular;
+  PotentialPair  pair;
+  PotentialPair  radial;
+  PotentialArray angular;
 
   void eval_forces(Configuration &cfg) const;
 

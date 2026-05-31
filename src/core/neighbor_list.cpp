@@ -1,37 +1,97 @@
 #include "potfit/core/neighbor_list.hpp"
 #include "potfit/core/potential_base.hpp"
 
+#include <algorithm>
+#include <cmath>
 #include <ranges>
+#include <variant>
+#include <vector>
 
 namespace potfit {
 
 namespace {
 
+// Resolve the pair potential for a (type_i, type_j) pair, if a table is given.
+const Potential *resolve_pot(const PotentialPair *pots, const Atom &ai,
+                             const Atom &aj) {
+  if (pots && ai.type < pots->ntypes() && aj.type < pots->ntypes())
+    return &(*pots)[ai.type, aj.type];
+  return nullptr;
+}
+
+// Periodic build: replicate the cell out to ceil(rcut / box_height) image
+// shells per lattice direction (matching potfit's config.c), so that for cells
+// smaller than the cutoff every periodic neighbour — including an atom's own
+// images — is found. Each ordered pair is stored on the owning atom; the
+// equal-and-opposite mirror entry supplies the reaction on the partner, and the
+// +R/−R image entries of a self-pair cancel (zero net self force) and each
+// contribute the correct 0.5·phi, so no separate "self" handling is needed.
+void build_periodic(Configuration &cfg, double rcut, double rcut2,
+                    const PotentialPair *pots, const PeriodicBC &pbc) {
+  const Mat3 &box = pbc.box();
+  const Vec3 a = box.col(0), b = box.col(1), c = box.col(2);
+
+  // Image shells needed per axis: ceil(rcut * |reciprocal lattice vector|),
+  // where the reciprocal vectors are the rows of the inverse box.
+  const Mat3 &inv = pbc.inv_box();
+  const int sx = static_cast<int>(std::ceil(rcut * inv.row(0).norm()));
+  const int sy = static_cast<int>(std::ceil(rcut * inv.row(1).norm()));
+  const int sz = static_cast<int>(std::ceil(rcut * inv.row(2).norm()));
+
+  // Wrap positions into the unit cell so the base separation is minimal and
+  // the image shells above are guaranteed to cover the cutoff sphere.
+  std::vector<Vec3> wpos(cfg.atoms.size());
+  for (std::size_t k = 0; k < cfg.atoms.size(); ++k)
+    wpos[k] = pbc.wrap(cfg.atoms[k].pos);
+
+  for (std::size_t i = 0; i < cfg.atoms.size(); ++i) {
+    for (std::size_t j = 0; j < cfg.atoms.size(); ++j) {
+      const Vec3 base = wpos[j] - wpos[i];
+      for (int ix = -sx; ix <= sx; ++ix)
+        for (int iy = -sy; iy <= sy; ++iy)
+          for (int iz = -sz; iz <= sz; ++iz) {
+            if (i == j && ix == 0 && iy == 0 && iz == 0)
+              continue; // skip an atom paired with itself in the home cell
+            const Vec3 d = base + ix * a + iy * b + iz * c;
+            if (d.squaredNorm() >= rcut2)
+              continue;
+            NeighborEntry entry;
+            entry.neighbor = &cfg.atoms[j];
+            entry.pot = resolve_pot(pots, cfg.atoms[i], cfg.atoms[j]);
+            entry.dist = d;
+            cfg.atoms[i].neighbors.push_back(entry);
+          }
+    }
+  }
+}
+
+// Non-periodic (cluster) build: direct pairs only, no images.
+void build_infinite(Configuration &cfg, double rcut2,
+                    const PotentialPair *pots) {
+  for (std::size_t i = 0; i < cfg.atoms.size(); ++i)
+    for (std::size_t j = 0; j < cfg.atoms.size(); ++j) {
+      if (i == j)
+        continue;
+      const Vec3 d = cfg.atoms[j].pos - cfg.atoms[i].pos;
+      if (d.squaredNorm() >= rcut2)
+        continue;
+      NeighborEntry entry;
+      entry.neighbor = &cfg.atoms[j];
+      entry.pot = resolve_pot(pots, cfg.atoms[i], cfg.atoms[j]);
+      entry.dist = d;
+      cfg.atoms[i].neighbors.push_back(entry);
+    }
+}
+
 void build_impl(Configuration &cfg, double rcut, const PotentialPair *pots) {
   std::ranges::for_each(cfg.atoms, [](auto &a) { a.neighbors.clear(); });
   const double rcut2 = rcut * rcut;
 
-  std::ranges::for_each(std::views::cartesian_product(cfg.atoms, cfg.atoms) |
-                            std::views::filter([](auto &&p) {
-                              return &std::get<0>(p) != &std::get<1>(p);
-                            }),
-                        [&](auto &&pair) {
-                          auto &&[ai, aj] = pair;
-                          const Vec3 d = bc_min_image(cfg.bc, aj.pos - ai.pos);
-                          if (d.squaredNorm() >= rcut2)
-                            return;
-
-                          const Potential *pot = nullptr;
-                          if (pots && ai.type < pots->ntypes() &&
-                              aj.type < pots->ntypes())
-                            pot = &(*pots)[ai.type, aj.type];
-
-                          NeighborEntry entry;
-                          entry.neighbor = &aj;
-                          entry.pot = pot;
-                          entry.dist = d;
-                          ai.neighbors.push_back(entry);
-                        });
+  if (const auto *pbc = std::get_if<PeriodicBC>(&cfg.bc)) {
+    build_periodic(cfg, rcut, rcut2, pots, *pbc);
+  } else {
+    build_infinite(cfg, rcut2, pots);
+  }
 }
 
 } // anonymous namespace

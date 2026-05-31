@@ -30,8 +30,8 @@ using Registry = std::unordered_map<std::string_view, Entry>;
 
 template <typename... Names>
   requires(std::convertible_to<Names, std::string_view> && ...)
-void add(Registry &reg, int nparams, std::vector<std::string> pnames, Maker maker,
-         Names... names) {
+void add(Registry &reg, int nparams, std::vector<std::string> pnames,
+         Maker maker, Names... names) {
   Entry e{nparams, std::move(pnames), std::move(maker)};
   (reg.try_emplace(std::string_view{names}, e), ...);
 }
@@ -55,21 +55,21 @@ const Registry &registry() {
     add(m,  5, {"A","B","C","D","E"},                                                        [](auto p, auto lo, auto hi) { return Potential(Born(p[0], p[1], p[2], p[3], p[4],                           lo, hi)); }, "born"                       );
     add(m,  2, {"A","n"},                                                                    [](auto p, auto lo, auto hi) { return Potential(PowerDecay(p[0], p[1],                                        lo, hi)); }, "power_decay", "power"       );
     add(m,  2, {"A","B"},                                                                    [](auto p, auto lo, auto hi) { return Potential(ExpDecay(p[0], p[1],                                          lo, hi)); }, "exp_decay",   "exp"         );
-    add(m,  3, {"A","n","B"},                                                                [](auto p, auto lo, auto hi) { return Potential(MexpDecay(p[0], p[1], p[2],                                   lo, hi)); }, "mexp_decay",  "mexp"        );
+    add(m,  3, {"A","B","r0"},                                                               [](auto p, auto lo, auto hi) { return Potential(MexpDecay(p[0], p[1], p[2],                                   lo, hi)); }, "mexp_decay",  "mexp"        );
     add(m,  2, {"k","r0"},                                                                   [](auto p, auto lo, auto hi) { return Potential(Harmonic(p[0], p[1],                                          lo, hi)); }, "harmonic"                   );
-    add(m,  4, {"E0","r0","A","B"},                                                          [](auto p, auto lo, auto hi) { return Potential(Universal(p[0], p[1], p[2], p[3],                             lo, hi)); }, "universal"                  );
-    add(m,  6, {"A","n","B","C","D","m"},                                                    [](auto p, auto lo, auto hi) { return Potential(Eopp(p[0], p[1], p[2], p[3], p[4], p[5],                     lo, hi)); }, "eopp"                       );
-    add(m,  6, {"A","B","C","D","E","F"},                                                    [](auto p, auto lo, auto hi) { return Potential(EoppExp(p[0], p[1], p[2], p[3], p[4], p[5],                  lo, hi)); }, "eopp_exp",    "eopp_exp_"   );
-    add(m,  7, {"A","B","C","D","E","F","G"},                                                [](auto p, auto lo, auto hi) { return Potential(Meopp(p[0], p[1], p[2], p[3], p[4], p[5], p[6],              lo, hi)); }, "meopp"                      );
-    add(m,  5, {"A","r0","n","m","B"},                                                       [](auto p, auto lo, auto hi) { return Potential(GenLJ(p[0], p[1], p[2], p[3], p[4],                          lo, hi)); }, "gen_lj",      "genlj"       );
+    add(m,  4, {"E0","a","b","c"},                                                           [](auto p, auto lo, auto hi) { return Potential(Universal(p[0], p[1], p[2], p[3],                             lo, hi)); }, "universal"                  );
+    add(m,  6, {"A","n","B","m","k","phi"},                                                  [](auto p, auto lo, auto hi) { return Potential(Eopp(p[0], p[1], p[2], p[3], p[4], p[5],                     lo, hi)); }, "eopp"                       );
+    add(m,  6, {"A","B","C","m","k","phi"},                                                  [](auto p, auto lo, auto hi) { return Potential(EoppExp(p[0], p[1], p[2], p[3], p[4], p[5],                  lo, hi)); }, "eopp_exp",    "eopp_exp_"   );
+    add(m,  7, {"A","n","B","m","k","phi","r0"},                                             [](auto p, auto lo, auto hi) { return Potential(Meopp(p[0], p[1], p[2], p[3], p[4], p[5], p[6],              lo, hi)); }, "meopp"                      );
+    add(m,  5, {"A","n","m","r0","B"},                                                       [](auto p, auto lo, auto hi) { return Potential(GenLJ(p[0], p[1], p[2], p[3], p[4],                          lo, hi)); }, "gen_lj",      "genlj"       );
     add(m,  7, {"D1","a1","r1","D2","a2","r2","C"},                                          [](auto p, auto lo, auto hi) { return Potential(DoubleMorse(p[0], p[1], p[2], p[3], p[4], p[5], p[6],        lo, hi)); }, "double_morse","dbl_morse"   );
-    add(m,  5, {"A","B","C","D","E"},                                                        [](auto p, auto lo, auto hi) { return Potential(DoubleExp(p[0], p[1], p[2], p[3], p[4],                      lo, hi)); }, "double_exp",  "dbl_exp"     );
-    add(m,  6, {"A","B","C","D","E","F"},                                                    [](auto p, auto lo, auto hi) { return Potential(Mishin(p[0], p[1], p[2], p[3], p[4], p[5],                   lo, hi)); }, "mishin"                     );
+    add(m,  5, {"A","B","r1","C","r2"},                                                      [](auto p, auto lo, auto hi) { return Potential(DoubleExp(p[0], p[1], p[2], p[3], p[4],                      lo, hi)); }, "double_exp",  "dbl_exp"     );
+    add(m,  6, {"A","B","C","r0","n","d"},                                                   [](auto p, auto lo, auto hi) { return Potential(Mishin(p[0], p[1], p[2], p[3], p[4], p[5],                   lo, hi)); }, "mishin"                     );
     add(m,  2, {"A","B"},                                                                    [](auto p, auto lo, auto hi) { return Potential(SqrtFunc(p[0], p[1],                                          lo, hi)); }, "sqrt"                       );
     add(m,  1, {"C"},                                                                        [](auto p, auto lo, auto hi) { return Potential(ConstFunc(p[0],                                               lo, hi)); }, "const"                      );
     add(m,  3, {"A","B","C"},                                                                [](auto p, auto lo, auto hi) { return Potential(Parabola(p[0], p[1], p[2],                                   lo, hi)); }, "parabola"                   );
     add(m,  5, {"a0","a1","a2","a3","a4"},                                                   [](auto p, auto lo, auto hi) { return Potential(Poly5(p[0], p[1], p[2], p[3], p[4],                          lo, hi)); }, "poly5"                      );
-    add(m,  6, {"A","B","p","q","a","sigma"},                                                [](auto p, auto lo, auto hi) { return Potential(StiwWeb2(p[0], p[1], p[2], p[3], p[4], p[5],                 lo, hi)); }, "stiweb_2",    "sw2"         );
+    add(m,  6, {"A","B","p","q","delta","rc"},                                               [](auto p, auto lo, auto hi) { return Potential(StiwWeb2(p[0], p[1], p[2], p[3], p[4], p[5],                 lo, hi)); }, "stiweb_2",    "sw2"         );
     add(m,  2, {"gamma","a"},                                                                [](auto p, auto lo, auto hi) { return Potential(StiwWeb3(p[0], p[1],                                          lo, hi)); }, "stiweb_3",    "sw3"         );
     add(m, 11, {"A","B","lambda","mu","beta","n","c","d","h","R","S"},                        [](auto p, auto lo, auto hi) { return Potential(TersoffPot(p[0], p[1], p[2], p[3], p[4], p[5], p[6], p[7], p[8], p[9], p[10], lo, hi)); }, "tersoff", "tersoff_pot");
     add(m,  2, {"chi","omega"},                                                              [](auto p, auto lo, auto hi) { return Potential(TersoffMix(p[0], p[1],                                        lo, hi)); }, "tersoff_mix"                );
@@ -118,7 +118,8 @@ leaf::result<std::vector<Potential>> parse_potential(std::string_view input) {
         const double rmax = p.at("rmax").get<double>();
         const auto &knots_arr = p.at("knots");
         if (!knots_arr.is_array() || knots_arr.size() < 2)
-          return fail("tabulated potential: 'knots' must be an array of >= 2 values");
+          return fail(
+              "tabulated potential: 'knots' must be an array of >= 2 values");
 
         const int n = static_cast<int>(knots_arr.size());
         const double h = (rmax - rmin) / (n - 1);
@@ -158,7 +159,8 @@ leaf::result<std::vector<Potential>> parse_potential(std::string_view input) {
         params.reserve(static_cast<std::size_t>(nparams));
         for (const auto &name : param_names) {
           if (!p.contains(name))
-            return fail("missing parameter '" + name + "' for type " + type_name);
+            return fail("missing parameter '" + name + "' for type " +
+                        type_name);
           params.push_back(p[name].get<double>());
         }
 

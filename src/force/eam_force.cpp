@@ -95,10 +95,13 @@ void EAMForceCalculator::eval_forces(Configuration &cfg) const {
 
       ai.calc_force += fvec;
       cfg.calc_energy += 0.5 * phi;
-      cfg.calc_stress += 0.5 * nb.dist * fvec.transpose();
+      // Virial: bond ⊗ force-on-partner = dist ⊗ (−fvec); 0.5 for the full
+      // list.
+      cfg.calc_stress -= 0.5 * nb.dist * fvec.transpose();
     }
   }
 
+  cfg.calc_stress /= bc_volume(cfg.bc); // virial → stress (per unit volume)
   events::on_force_eval(events::ForceEvalStats{conf_index, force_rms(cfg)});
 }
 
