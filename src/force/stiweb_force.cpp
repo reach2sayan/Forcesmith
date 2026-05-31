@@ -56,19 +56,14 @@ std::pair<double, double> h_dh(double r, const SWParams &p) noexcept {
 } // anonymous namespace
 
 std::size_t StiwebForceCalculator::param_count() const {
-  std::size_t count = 0;
-  for (const auto &p : params) {
-    for (const Param *f : sw_fields(p)) {
-      if (!f->fixed) {
-        ++count;
-      }
-    }
-  }
-  for (const auto &l : lambda) {
-    if (!l.fixed) {
-      ++count;
-    }
-  }
+  auto count = std::transform_reduce(
+      params.begin(), params.end(), std::size_t{0}, std::plus<>{},
+      [](const auto &p) {
+        return std::ranges::count_if(sw_fields(p),
+                                     [](const Param *f) { return !f->fixed; });
+      });
+  count +=
+      std::ranges::count_if(lambda, [](const auto &l) { return !l.fixed; });
   return count;
 }
 

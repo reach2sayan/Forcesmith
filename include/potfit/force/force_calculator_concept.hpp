@@ -17,6 +17,19 @@ namespace potfit {
 #pragma GCC diagnostic ignored "-Wdangling-reference"
 #endif
 
+// True iff r lies in the radial table p's own cutoff range [rmin, rmax). The
+// neighbor list is built with the global max_cutoff() over all tables, so a
+// table with a shorter cutoff would otherwise be fed neighbors past its last
+// knot — where spline potentials linearly *extrapolate* (nonzero) instead of
+// vanishing. Gate every radial table eval/deriv on this. Do NOT use it for the
+// EAM/ADP embedding F(ρ) (argument ρ legitimately falls outside the table, where
+// extrapolation is intended) nor for the angular g(cosθ) table (cosθ ∈ [-1,1]
+// is always within the table's own domain).
+template <typename Pot> bool in_range(const Pot &p, double r) {
+  const auto [rmin, rmax] = p.span();
+  return r >= rmin && r < rmax;
+}
+
 template <typename Range>
 void gather_range(const Range &range, Eigen::VectorXd &dst, std::size_t &off) {
   for (const auto &p : range) {

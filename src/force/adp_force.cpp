@@ -42,10 +42,14 @@ auto add_eam_force(const PotentialPair &pair, const PotentialArray &density) {
   return [&pair, &density](PairForce &&pf) -> PairForce {
     const Atom &ai = *pf.ai;
     const Atom &aj = *pf.aj;
-    pf.phi = pair[ai, aj].eval(pf.r);
-    const double dphi = pair[ai, aj].deriv(pf.r);
-    const double drho_j = density[aj].deriv(pf.r);
-    const double drho_i = density[ai].deriv(pf.r);
+    // Gate each radial table on its own cutoff (see in_range).
+    const auto &phi_pot = pair[ai, aj];
+    const auto &g_j = density[aj];
+    const auto &g_i = density[ai];
+    pf.phi = in_range(phi_pot, pf.r) ? phi_pot.eval(pf.r) : 0.0;
+    const double dphi = in_range(phi_pot, pf.r) ? phi_pot.deriv(pf.r) : 0.0;
+    const double drho_j = in_range(g_j, pf.r) ? g_j.deriv(pf.r) : 0.0;
+    const double drho_i = in_range(g_i, pf.r) ? g_i.deriv(pf.r) : 0.0;
     pf.force +=
         (dphi + ai.gradF * drho_j + aj.gradF * drho_i) * pf.inv_r * pf.d;
     return std::move(pf);
@@ -58,8 +62,9 @@ auto add_dipole_force(const PotentialPair &dipole) {
   return [&dipole](PairForce &&pf) -> PairForce {
     const Atom &ai = *pf.ai;
     const Atom &aj = *pf.aj;
-    const double u = dipole[ai, aj].eval(pf.r);
-    const double du = dipole[ai, aj].deriv(pf.r);
+    const auto &dip = dipole[ai, aj];
+    const double u = in_range(dip, pf.r) ? dip.eval(pf.r) : 0.0;
+    const double du = in_range(dip, pf.r) ? dip.deriv(pf.r) : 0.0;
     const double dot_i = ai.mu.dot(pf.d);
     const double dot_j = aj.mu.dot(pf.d);
     pf.force += (du * pf.inv_r * (dot_i - dot_j)) * pf.d + u * (ai.mu - aj.mu);
@@ -74,8 +79,9 @@ auto add_quadrupole_force(const PotentialPair &quadrupole) {
   return [&quadrupole](PairForce &&pf) -> PairForce {
     const Atom &ai = *pf.ai;
     const Atom &aj = *pf.aj;
-    const double w = quadrupole[ai, aj].eval(pf.r);
-    const double dw = quadrupole[ai, aj].deriv(pf.r);
+    const auto &quad = quadrupole[ai, aj];
+    const double w = in_range(quad, pf.r) ? quad.eval(pf.r) : 0.0;
+    const double dw = in_range(quad, pf.r) ? quad.deriv(pf.r) : 0.0;
     const double nu = quad_nu(ai.lambda, pf.d) + quad_nu(aj.lambda, pf.d);
     const Vec3 xi = quad_xi(ai.lambda, pf.d) + quad_xi(aj.lambda, pf.d);
     pf.force += (dw * pf.inv_r * nu) * pf.d + 2.0 * w * xi;
@@ -163,9 +169,21 @@ void ADPForceCalculator::eval_forces(Configuration &cfg) const {
         continue;
       }
 
-      rho += density[aj].eval(r);
-      mu += dipole[ai, aj].eval(r) * nb.dist;
-      lambda += quadrupole[ai, aj].eval(r) * (nb.dist * nb.dist.transpose());
+      // Gate each radial table on its own cutoff (see in_range): the neighbor
+      // list spans the global max_cutoff(), so a shorter table would otherwise
+      // extrapolate past its last knot here.
+      const auto &g = density[aj];
+      const auto &dip = dipole[ai, aj];
+      const auto &quad = quadrupole[ai, aj];
+      if (in_range(g, r)) {
+        rho += g.eval(r);
+      }
+      if (in_range(dip, r)) {
+        mu += dip.eval(r) * nb.dist;
+      }
+      if (in_range(quad, r)) {
+        lambda += quad.eval(r) * (nb.dist * nb.dist.transpose());
+      }
     }
 
     ai.rho += rho;

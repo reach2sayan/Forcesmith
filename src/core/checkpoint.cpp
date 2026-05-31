@@ -15,70 +15,93 @@ namespace potfit {
 
 namespace leaf = boost::leaf;
 
-static std::filesystem::path cfg_path(const std::filesystem::path &p) {
+namespace {
+
+[[nodiscard]] leaf::error_id err(std::string msg) {
+  return leaf::new_error(CheckpointError{std::move(msg)});
+}
+
+[[nodiscard]] std::filesystem::path cfg_path(const std::filesystem::path &p) {
   return std::filesystem::path(p.string() + ".cfg.bin");
 }
-static std::filesystem::path pot_path(const std::filesystem::path &p) {
+[[nodiscard]] std::filesystem::path pot_path(const std::filesystem::path &p) {
   return std::filesystem::path(p.string() + ".pot");
 }
 
+// Open a stream, mapping failure into the result channel.
+template <class Stream>
+[[nodiscard]] leaf::result<Stream>
+open_file(const std::filesystem::path &path, std::ios::openmode mode,
+          std::string_view verb) {
+  Stream f(path, mode);
+  if (!f)
+    return err("cannot open for " + std::string(verb) + ": " + path.string());
+  return f;
+}
+
+[[nodiscard]] leaf::result<void>
+save_configs(const std::filesystem::path &path,
+             const std::vector<Configuration> &configs) {
+  BOOST_LEAF_AUTO(f, open_file<std::ofstream>(path, std::ios::binary, "writing"));
+  boost::archive::binary_oarchive ar(f);
+  ar &configs;
+  return {};
+}
+
+[[nodiscard]] leaf::result<void>
+save_potentials(const std::filesystem::path &path,
+                const std::vector<Potential> &pots) {
+  try {
+    io::write_native(path, pots);
+  } catch (const std::exception &e) {
+    return err(e.what());
+  }
+  return {};
+}
+
+[[nodiscard]] leaf::result<void>
+load_configs(const std::filesystem::path &path,
+             std::vector<Configuration> &configs) {
+  BOOST_LEAF_AUTO(f, open_file<std::ifstream>(path, std::ios::binary, "reading"));
+  try {
+    boost::archive::binary_iarchive ar(f);
+    ar &configs;
+  } catch (const std::exception &e) {
+    return err("failed to deserialize configs: " + std::string(e.what()));
+  }
+  return {};
+}
+
+[[nodiscard]] leaf::result<void>
+load_potentials(const std::filesystem::path &path,
+                std::vector<Potential> &potentials) {
+  BOOST_LEAF_AUTO(f,
+                  open_file<std::ifstream>(path, std::ios::in, "reading"));
+  std::string text{std::istreambuf_iterator<char>(f),
+                   std::istreambuf_iterator<char>{}};
+  BOOST_LEAF_AUTO(pots, io::parse_potential(text));
+  potentials = std::move(pots);
+  return {};
+}
+
+} // namespace
+
 leaf::result<void> CheckpointWriter::write() const {
   if (!configs_)
-    return leaf::new_error(CheckpointError{"write() called without configs()"});
+    return err("write() called without configs()");
   if (!pots_)
-    return leaf::new_error(
-        CheckpointError{"write() called without potentials()"});
+    return err("write() called without potentials()");
 
-  {
-    std::ofstream f(cfg_path(prefix_), std::ios::binary);
-    if (!f)
-      return leaf::new_error(CheckpointError{"cannot open for writing: " +
-                                             cfg_path(prefix_).string()});
-    boost::archive::binary_oarchive ar(f);
-    ar &*configs_;
-  }
-
-  try {
-    io::write_native(pot_path(prefix_), *pots_);
-  } catch (const std::exception &e) {
-    return leaf::new_error(CheckpointError{e.what()});
-  }
-
+  BOOST_LEAF_CHECK(save_configs(cfg_path(prefix_), *configs_));
+  BOOST_LEAF_CHECK(save_potentials(pot_path(prefix_), *pots_));
   return {};
 }
 
 leaf::result<void>
 CheckpointReader::read(std::vector<Configuration> &configs,
                        std::vector<Potential> &potentials) const {
-  {
-    std::ifstream f(cfg_path(prefix_), std::ios::binary);
-    if (!f)
-      return leaf::new_error(CheckpointError{"cannot open for reading: " +
-                                             cfg_path(prefix_).string()});
-    try {
-      boost::archive::binary_iarchive ar(f);
-      ar & configs;
-    } catch (const std::exception &e) {
-      return leaf::new_error(CheckpointError{"failed to deserialize configs: " +
-                                             std::string(e.what())});
-    }
-  }
-
-  {
-    std::ifstream f(pot_path(prefix_));
-    if (!f)
-      return leaf::new_error(CheckpointError{"cannot open for reading: " +
-                                             pot_path(prefix_).string()});
-
-    std::string text{std::istreambuf_iterator<char>(f),
-                     std::istreambuf_iterator<char>{}};
-
-    auto res = io::parse_potential(text);
-    if (!res)
-      return res.error();
-    potentials = std::move(*res);
-  }
-
+  BOOST_LEAF_CHECK(load_configs(cfg_path(prefix_), configs));
+  BOOST_LEAF_CHECK(load_potentials(pot_path(prefix_), potentials));
   return {};
 }
 

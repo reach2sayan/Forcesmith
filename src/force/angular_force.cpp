@@ -57,8 +57,13 @@ void AngularForceCalculator::eval_forces(Configuration &cfg) const {
       if (r < 1e-14) {
         continue;
       }
-      const double phi = pair[ai.type, nb.neighbor->type].eval(r);
-      const double dphi = pair[ai.type, nb.neighbor->type].deriv(r);
+      // Gate the pair table on its own cutoff (see in_range).
+      const auto &phi_pot = pair[ai.type, nb.neighbor->type];
+      if (!in_range(phi_pot, r)) {
+        continue;
+      }
+      const double phi = phi_pot.eval(r);
+      const double dphi = phi_pot.deriv(r);
       const Vec3 fvec = (dphi / r) * nb.dist;
       ai.calc_force += fvec;
       cfg.calc_energy += 0.5 * phi;
@@ -101,8 +106,14 @@ void AngularForceCalculator::eval_forces(Configuration &cfg) const {
       }
       const double inv_r1 = 1.0 / r1;
 
-      const double f1 = radial[ai.type, nb_j.neighbor->type].eval(r1);
-      const double df1 = radial[ai.type, nb_j.neighbor->type].deriv(r1);
+      // Gate the radial table on its own cutoff (see in_range): a neighbor
+      // beyond it makes the whole f1·f2·g term vanish, so skip it.
+      const auto &rad_j = radial[ai.type, nb_j.neighbor->type];
+      if (!in_range(rad_j, r1)) {
+        continue;
+      }
+      const double f1 = rad_j.eval(r1);
+      const double df1 = rad_j.deriv(r1);
 
       for (std::size_t kk = jj + 1; kk < nn; ++kk) {
         const auto &nb_k = nbs[kk];
@@ -113,8 +124,12 @@ void AngularForceCalculator::eval_forces(Configuration &cfg) const {
         }
         const double inv_r2 = 1.0 / r2;
 
-        const double f2 = radial[ai.type, nb_k.neighbor->type].eval(r2);
-        const double df2 = radial[ai.type, nb_k.neighbor->type].deriv(r2);
+        const auto &rad_k = radial[ai.type, nb_k.neighbor->type];
+        if (!in_range(rad_k, r2)) {
+          continue;
+        }
+        const double f2 = rad_k.eval(r2);
+        const double df2 = rad_k.deriv(r2);
 
         const double c = d1.dot(d2) * inv_r1 * inv_r2;
         // g indexed by the central atom's type (matches potfit force_ang.c).

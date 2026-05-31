@@ -81,8 +81,7 @@ target_link_options(potfit_warnings INTERFACE
 
 set(POTFIT_LIB_SOURCES
         src/core/checkpoint.cpp
-    src/core/elements.cpp
-    src/core/neighbor_list.cpp
+        src/core/neighbor_list.cpp
     src/core/rescale.cpp
     src/force/adp_force.cpp
     src/force/pair_force.cpp

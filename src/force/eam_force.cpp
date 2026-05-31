@@ -57,7 +57,10 @@ void EAMForceCalculator::eval_forces(Configuration &cfg) const {
   for (auto &ai : cfg.atoms) {
     for (const auto &nb : ai.neighbors) {
       const double r = nb.dist.norm();
-      ai.rho += density[*nb.neighbor].eval(r);
+      const auto &g = density[*nb.neighbor];
+      if (in_range(g, r)) {
+        ai.rho += g.eval(r);
+      }
     }
   }
 
@@ -84,10 +87,16 @@ void EAMForceCalculator::eval_forces(Configuration &cfg) const {
         continue;
       const double inv_r = 1.0 / r;
 
-      const double phi = pair[ai, aj].eval(r);
-      const double dphi = pair[ai, aj].deriv(r);
-      const double drho_j = density[aj].deriv(r);
-      const double drho_i = density[ai].deriv(r);
+      // Gate each radial table on its own cutoff (see in_range): the neighbor
+      // list spans the global max_cutoff(), so a shorter table would otherwise
+      // extrapolate past its last knot here.
+      const auto &phi_pot = pair[ai, aj];
+      const auto &g_j = density[aj];
+      const auto &g_i = density[ai];
+      const double phi = in_range(phi_pot, r) ? phi_pot.eval(r) : 0.0;
+      const double dphi = in_range(phi_pot, r) ? phi_pot.deriv(r) : 0.0;
+      const double drho_j = in_range(g_j, r) ? g_j.deriv(r) : 0.0;
+      const double drho_i = in_range(g_i, r) ? g_i.deriv(r) : 0.0;
 
       const double fscale =
           (dphi + ai.gradF * drho_j + aj.gradF * drho_i) * inv_r;

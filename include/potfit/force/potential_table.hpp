@@ -51,6 +51,10 @@ public:
   template <typename U> constexpr void emplace_back(U &&u) {
     data_.emplace_back(std::forward<U>(u));
   }
+  // value_type / push_back let SymmetricMatrix satisfy back_inserter's needs.
+  using value_type = T;
+  constexpr void push_back(const T &t) { data_.push_back(t); }
+  constexpr void push_back(T &&t) { data_.push_back(std::move(t)); }
   constexpr const T &operator[](std::size_t ti, std::size_t tj) const {
     return data_[slot(ti, tj)];
   }
@@ -96,6 +100,9 @@ public:
   template <typename U> constexpr void emplace_back(U &&u) {
     data_.emplace_back(std::forward<U>(u));
   }
+  // push_back lets TypeArray satisfy back_inserter's needs (value_type above).
+  constexpr void push_back(const T &t) { data_.push_back(t); }
+  constexpr void push_back(T &&t) { data_.push_back(std::move(t)); }
 
   constexpr const T &operator[](std::size_t ti) const { return data_[ti]; }
   constexpr T &operator[](std::size_t ti) { return data_[ti]; }

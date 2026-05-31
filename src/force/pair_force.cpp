@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <iterator>
 #include <numeric>
 
 namespace potfit {
@@ -43,9 +44,16 @@ void PairForceCalculator::eval_forces(Configuration &cfg) const {
   for (auto &atom : cfg.atoms) {
     for (const auto &nb : atom.neighbors) {
       const double r = nb.dist.norm();
-      if (r < 1e-14)
+      if (r < 1e-14) {
         continue;
+      }
       const Potential &pot = pair[atom, *nb.neighbor];
+      // The neighbor list is built with the global max_cutoff(); gate each
+      // contribution on this specific pair potential's own range [rmin, rmax].
+      const auto [rmin, rmax] = pot.span();
+      if (r < rmin || r >= rmax) {
+        continue;
+      }
       const double inv_r = 1.0 / r;
       const double phi = pot.eval(r);
       const double dphi = pot.deriv(r);
@@ -53,7 +61,8 @@ void PairForceCalculator::eval_forces(Configuration &cfg) const {
 
       atom.calc_force += fvec;
       cfg.calc_energy += 0.5 * phi;
-      // Virial: bond ⊗ force-on-partner = dist ⊗ (−fvec); 0.5 for the full list.
+      // Virial: bond ⊗ force-on-partner = dist ⊗ (−fvec); 0.5 for the full
+      // list.
       cfg.calc_stress -= 0.5 * nb.dist * fvec.transpose();
     }
   }
@@ -68,10 +77,9 @@ make_pair_force_calculator(std::vector<Potential> potentials) {
   const std::size_t ntypes = static_cast<std::size_t>(std::lround(
       (-1.0 + std::sqrt(1.0 + 8.0 * static_cast<double>(n))) / 2.0));
   PairForceCalculator calc;
+  calc.ntypes = ntypes;
   calc.pair.reserve(ntypes);
-  for (auto &p : potentials) {
-    calc.pair.emplace_back(std::move(p));
-  }
+  std::ranges::move(potentials, std::back_inserter(calc.pair));
   return calc;
 }
 
