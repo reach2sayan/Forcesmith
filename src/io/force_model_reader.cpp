@@ -13,7 +13,7 @@ namespace leaf = boost::leaf;
 
 namespace {
 
-using Fail = leaf::result<ForceModel>;
+using Fail = leaf::result<ForceCalculator>;
 
 // Parse a sub-object of shape {"format": ..., "potentials": [...]}
 // into a flat vector<Potential>. Mirrors the logic in parse_potential.
@@ -101,8 +101,8 @@ leaf::result<void> require_keys(const json &obj,
 
 } // anonymous namespace
 
-leaf::result<ForceModel> parse_force_model(std::string_view input) {
-  auto fail = [](std::string msg) -> leaf::result<ForceModel> {
+leaf::result<ForceCalculator> parse_force_model(std::string_view input) {
+  auto fail = [](std::string msg) -> leaf::result<ForceCalculator> {
     return leaf::new_error(ParseError{std::move(msg), 0});
   };
 
@@ -124,7 +124,17 @@ leaf::result<ForceModel> parse_force_model(std::string_view input) {
       auto r = parse_potential(input);
       if (!r)
         return r.error();
-      return ForceModel{std::move(*r)};
+      auto& pots = *r;
+      const int paircol = ntypes * (ntypes + 1) / 2;
+      if (static_cast<int>(pots.size()) != paircol)
+        return fail("pair: expected " + std::to_string(paircol) +
+                    " potentials for ntypes=" + std::to_string(ntypes) +
+                    ", got " + std::to_string(pots.size()));
+      PairForceCalculator calc;
+      calc.ntypes = ntypes;
+      calc.pair.reserve(ntypes);
+      for (auto& p : pots) calc.pair.emplace_back(std::move(p));
+      return ForceCalculator{std::move(calc)};
     }
 
     // ── eam ──────────────────────────────────────────────────────────────
@@ -147,7 +157,7 @@ leaf::result<ForceModel> parse_force_model(std::string_view input) {
       if (!re)
         return re.error();
 
-      return ForceModel{std::move(calc)};
+      return ForceCalculator{std::move(calc)};
     }
 
     // ── adp ──────────────────────────────────────────────────────────────
@@ -178,7 +188,7 @@ leaf::result<ForceModel> parse_force_model(std::string_view input) {
       if (!rq)
         return rq.error();
 
-      return ForceModel{std::move(calc)};
+      return ForceCalculator{std::move(calc)};
     }
 
     // ── angular ───────────────────────────────────────────────────────────
@@ -201,7 +211,7 @@ leaf::result<ForceModel> parse_force_model(std::string_view input) {
       if (!ra)
         return ra.error();
 
-      return ForceModel{std::move(calc)};
+      return ForceCalculator{std::move(calc)};
     }
 
     // ── tersoff ───────────────────────────────────────────────────────────
@@ -235,7 +245,7 @@ leaf::result<ForceModel> parse_force_model(std::string_view input) {
         calc.params.emplace_back(tp);
       }
 
-      return ForceModel{std::move(calc)};
+      return ForceCalculator{std::move(calc)};
     }
 
     // ── stiweb ────────────────────────────────────────────────────────────
@@ -266,7 +276,7 @@ leaf::result<ForceModel> parse_force_model(std::string_view input) {
         calc.params.emplace_back(sp);
       }
 
-      return ForceModel{std::move(calc)};
+      return ForceCalculator{std::move(calc)};
     }
 
     return fail("unsupported model '" + model + "'");

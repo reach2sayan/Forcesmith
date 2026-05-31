@@ -21,27 +21,71 @@
 //   gamma  — 3-body radial damping (dimensionless)
 
 #include "potfit/core/atom.hpp"
-#include "potfit/force/force_calculator.hpp"
+#include "potfit/core/param.hpp"
+#include "potfit/force/force_calculator_concept.hpp"
 #include "potfit/force/potential_table.hpp"
+
+#include <Eigen/Core>
+#include <algorithm>
+#include <array>
 
 namespace potfit {
 
 struct SWParams {
-  double A = 1.0;      // 2-body amplitude (eV)
-  double B = 1.0;      // 2-body inner shape (dimensionless)
-  double p = 4.0;      // repulsive exponent
-  double q = 0.0;      // attractive exponent
-  double a = 1.8;      // cutoff (in units of σ)
-  double sigma = 1.0;  // length scale (Å)
-  double lambda = 1.0; // 3-body strength (eV)
-  double gamma = 1.0;  // 3-body radial damping
+  Param A      = 1.0; // 2-body amplitude (eV)
+  Param B      = 1.0; // 2-body inner shape (dimensionless)
+  Param p      = 4.0; // repulsive exponent
+  Param q      = 0.0; // attractive exponent
+  Param a      = 1.8; // cutoff (in units of σ)
+  Param sigma  = 1.0; // length scale (Å)
+  Param lambda = 1.0; // 3-body strength (eV)
+  Param gamma  = 1.0; // 3-body radial damping
 };
+
+namespace detail {
+inline auto sw_fields(SWParams& p) {
+  return std::array<Param*, 8>{&p.A, &p.B, &p.p, &p.q,
+                                &p.a, &p.sigma, &p.lambda, &p.gamma};
+}
+inline auto sw_fields(const SWParams& p) {
+  return std::array<const Param*, 8>{&p.A, &p.B, &p.p, &p.q,
+                                      &p.a, &p.sigma, &p.lambda, &p.gamma};
+}
+} // namespace detail
 
 // params — one SWParams per unique pair type (paircol = ntypes*(ntypes+1)/2).
 // Access via params(ti, tj).
 struct StiwebForceCalculator : ForceCalculatorBase<StiwebForceCalculator> {
   SymmetricMatrix<SWParams> params;
+
   void eval_forces(Configuration &cfg) const;
+
+  int param_count() const {
+    int count = 0;
+    for (const auto& p : params)
+      for (const Param* f : detail::sw_fields(p))
+        if (!f->fixed) ++count;
+    return count;
+  }
+
+  void gather_params(Eigen::VectorXd& dst, int off) const {
+    for (const auto& p : params)
+      for (const Param* f : detail::sw_fields(p))
+        if (!f->fixed) dst[off++] = f->value;
+  }
+
+  void scatter_params(const Eigen::VectorXd& src, int off) {
+    for (auto& p : params)
+      for (Param* f : detail::sw_fields(p))
+        if (!f->fixed) f->value = src[off++];
+  }
+
+  double max_cutoff() const {
+    double rcut = 0.0;
+    for (const auto& p : params)
+      rcut = std::max(rcut, p.sigma.value * p.a.value);
+    return rcut;
+  }
 };
 
 static_assert(ForceCalculatorModel<StiwebForceCalculator>);

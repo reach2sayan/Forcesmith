@@ -1,29 +1,30 @@
 #include "potfit/force/pair_force.hpp"
 
-#include "potfit/core/potential_base.hpp"
+#include "potfit/core/neighbor_list.hpp"
 #include "potfit/events/signals.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <numeric>
-#include <ranges>
 
 namespace potfit {
 
 void PairForceCalculator::eval_forces(Configuration &cfg) const {
+  build_neighbor_list(cfg, max_cutoff());
+
   cfg.calc_energy = 0.0;
   cfg.calc_stress = SymTens::Zero();
   std::ranges::for_each(cfg.atoms,
                         [](auto &atom) { atom.calc_force = Vec3::Zero(); });
 
   for (auto &atom : cfg.atoms) {
-    for (const auto &nb :
-         atom.neighbors | std::views::filter([](const auto &nb) {
-           return static_cast<bool>(nb.pot);
-         })) {
+    for (const auto &nb : atom.neighbors) {
       const double r = nb.dist.norm();
+      if (r < 1e-14) continue;
+      const Potential& pot = pair[atom, *nb.neighbor];
       const double inv_r = 1.0 / r;
-      const double phi = nb.pot->eval(r);
-      const double dphi = nb.pot->deriv(r);
+      const double phi = pot.eval(r);
+      const double dphi = pot.deriv(r);
       const Vec3 fvec = (dphi * inv_r) * nb.dist;
 
       atom.calc_force += fvec;

@@ -2,6 +2,7 @@
 
 #include "potfit/core/atom.hpp"
 #include "potfit/core/potential_base.hpp"
+#include "potfit/force/force_calculator.hpp"
 #include "potfit/optimization/solver.hpp"
 
 #include <span>
@@ -14,16 +15,26 @@ struct OptimizerOptions {
   double xtol = 1e-7;
   double ftol = 1e-7;
   double energy_weight = 1.0;
+  double stress_weight = 0.0;
 };
 
-// Uses EigenLMSolver by default (backward-compatible).
+// Pair-only overloads (backward-compatible).
 int run_optimizer(std::span<Configuration> configs,
                   std::vector<Potential> &potentials,
                   const OptimizerOptions &opts = {});
 
-// Uses the provided solver — plug in any SolverImpl this way.
 int run_optimizer(std::span<Configuration> configs,
                   std::vector<Potential> &potentials,
+                  const OptimizerOptions &opts,
+                  const Solver &solver);
+
+// Generic overloads: work with any ForceCalculator (EAM, Tersoff, etc.).
+int run_optimizer(std::span<Configuration> configs,
+                  ForceCalculator &model,
+                  const OptimizerOptions &opts = {});
+
+int run_optimizer(std::span<Configuration> configs,
+                  ForceCalculator &model,
                   const OptimizerOptions &opts,
                   const Solver &solver);
 

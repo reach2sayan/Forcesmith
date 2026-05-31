@@ -34,6 +34,7 @@ int main(int argc, char* argv[]) {
                               "checkpoint prefix: save after each run, resume if present")
         ("maxiter",       po::value<int>()->default_value(500),    "max optimizer iterations")
         ("eweight",       po::value<double>()->default_value(1.0), "energy residual weight")
+        ("stress-weight", po::value<double>()->default_value(0.0), "stress tensor residual weight (0 = disabled)")
     ;
 
     po::variables_map vm;
@@ -105,6 +106,7 @@ int main(int argc, char* argv[]) {
             potfit::OptimizerOptions opts;
             opts.max_iter      = vm["maxiter"].as<int>();
             opts.energy_weight = vm["eweight"].as<double>();
+            opts.stress_weight = vm["stress-weight"].as<double>();
 
             const int status = potfit::run_optimizer(configs_vec, potentials, opts);
             std::cout << "optimizer finished with status " << status << "\n";

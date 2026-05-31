@@ -1,87 +1,91 @@
 #include "potfit/potentials/spline.hpp"
 
 #include <algorithm>
+#include <boost/assert.hpp>
 #include <cassert>
+#include <ranges>
 
 namespace potfit {
 
-SplinePotential::SplinePotential(std::vector<double> x, std::vector<double> y) {
-  assert(x.size() == y.size() && x.size() >= 2);
+namespace {
+
+// Piecewise-linear fallback used when n < 4 (makima needs >= 4 points).
+double pw_linear_eval(const std::vector<double> &x,
+                      const std::vector<double> &y, double r) {
+  BOOST_ASSERT_MSG(std::ranges::is_sorted(x), "Expected sorted x values");
   const int n = static_cast<int>(x.size());
-  x_ = Eigen::Map<const Eigen::VectorXd>(x.data(), n);
-  y_ = Eigen::Map<const Eigen::VectorXd>(y.data(), n);
-  d2y_ = Eigen::VectorXd::Zero(n);
-  compute_d2y();
+  int i =
+      static_cast<int>(std::upper_bound(x.begin(), x.end(), r) - x.begin()) - 1;
+  i = std::clamp(i, 0, n - 2);
+  const double t = (r - x[i]) / (x[i + 1] - x[i]);
+  return y[i] + t * (y[i + 1] - y[i]);
 }
 
-// Natural cubic spline: d2y_[0] = d2y_[n-1] = 0.
-// Thomas algorithm solves the interior tridiagonal system.
-void SplinePotential::compute_d2y() {
-  const int n = static_cast<int>(x_.size());
-  d2y_.setZero();
+double pw_linear_deriv(const std::vector<double> &x,
+                       const std::vector<double> &y, double r) {
+  BOOST_ASSERT_MSG(std::ranges::is_sorted(x), "Expected sorted x values");
+  const int n = static_cast<int>(x.size());
+  int i =
+      static_cast<int>(std::upper_bound(x.begin(), x.end(), r) - x.begin()) - 1;
+  i = std::clamp(i, 0, n - 2);
+  return (y[i + 1] - y[i]) / (x[i + 1] - x[i]);
+}
 
-  if (n == 2)
-    return; // linear: second derivatives remain zero
+} // namespace
 
-  Eigen::VectorXd h(n - 1);
-  for (int i = 0; i < n - 1; ++i)
-    h[i] = x_[i + 1] - x_[i];
+SplinePotential::SplinePotential(std::vector<double> x, std::vector<double> y)
+    : x_(std::move(x)), y_(std::move(y)), fixed_(x_.size(), false) {
+  assert(x_.size() == y_.size() && x_.size() >= 2);
+  rebuild_interp_();
+}
 
-  Eigen::VectorXd diag(n - 2), rhs(n - 2), upper(n - 3);
-  for (int i = 0; i < n - 2; ++i) {
-    diag[i] = 2.0 * (h[i] + h[i + 1]);
-    rhs[i] =
-        6.0 * ((y_[i + 2] - y_[i + 1]) / h[i + 1] - (y_[i + 1] - y_[i]) / h[i]);
+void SplinePotential::rebuild_interp_() {
+  if (x_.size() >= 4) {
+    interp_.emplace(std::vector<double>(x_), std::vector<double>(y_));
   }
-  for (int i = 0; i < n - 3; ++i)
-    upper[i] = h[i + 1];
-
-  for (int i = 1; i < n - 2; ++i) {
-    const double factor = h[i] / diag[i - 1];
-    diag[i] -= factor * upper[i - 1];
-    rhs[i] -= factor * rhs[i - 1];
+  else {
+    interp_.reset(); // n < 4: piecewise-linear fallback in eval/deriv
   }
+}
 
-  d2y_[n - 2] = rhs[n - 3] / diag[n - 3];
-  for (int i = n - 3; i >= 1; --i)
-    d2y_[i] = (rhs[i - 1] - upper[i - 1] * d2y_[i + 1]) / diag[i - 1];
-  // d2y_[0] and d2y_[n-1] remain 0 (natural BCs)
+int SplinePotential::param_count() const {
+  return std::ranges::count(fixed_, false);
+}
+
+void SplinePotential::gather_params(Eigen::VectorXd &dst, int offset) const {
+  for (auto [y, fixed] :
+       std::views::zip(y_, fixed_) |
+           std::views::filter([](auto &&p) { return !std::get<1>(p); })) {
+    dst[offset++] = y;
+  }
+}
+
+void SplinePotential::scatter_params(const Eigen::VectorXd &src, int offset) {
+  for (int i = 0; i < (int)y_.size(); ++i)
+    if (!fixed_[i])
+      y_[i] = src[offset++];
+  rebuild_interp_();
 }
 
 double SplinePotential::eval(double r) const {
-  const int n = static_cast<int>(x_.size());
-  if (r <= x_[0])
-    return y_[0];
-  if (r >= x_[n - 1])
-    return y_[n - 1];
-
-  const int i = static_cast<int>(std::upper_bound(x_.data(), x_.data() + n, r) -
-                                 x_.data()) -
-                1;
-  const double h = x_[i + 1] - x_[i];
-  const double a = (x_[i + 1] - r) / h;
-  const double b = (r - x_[i]) / h;
-  return a * y_[i] + b * y_[i + 1] +
-         ((a * a * a - a) * d2y_[i] + (b * b * b - b) * d2y_[i + 1]) * (h * h) /
-             6.0;
+  if (r <= x_.front())
+    return y_.front();
+  if (r >= x_.back())
+    return y_.back();
+  if (!interp_)
+    return pw_linear_eval(x_, y_, r);
+  return (*interp_)(r);
 }
 
 double SplinePotential::deriv(double r) const {
   const int n = static_cast<int>(x_.size());
-  if (r <= x_[0])
+  if (r <= x_.front())
     return (y_[1] - y_[0]) / (x_[1] - x_[0]);
-  if (r >= x_[n - 1])
+  if (r >= x_.back())
     return (y_[n - 1] - y_[n - 2]) / (x_[n - 1] - x_[n - 2]);
-
-  const int i = static_cast<int>(std::upper_bound(x_.data(), x_.data() + n, r) -
-                                 x_.data()) -
-                1;
-  const double h = x_[i + 1] - x_[i];
-  const double a = (x_[i + 1] - r) / h;
-  const double b = (r - x_[i]) / h;
-  return (y_[i + 1] - y_[i]) / h +
-         (-(3.0 * a * a - 1.0) * d2y_[i] + (3.0 * b * b - 1.0) * d2y_[i + 1]) *
-             h / 6.0;
+  if (!interp_)
+    return pw_linear_deriv(x_, y_, r);
+  return interp_->prime(r);
 }
 
 } // namespace potfit

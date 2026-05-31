@@ -160,3 +160,18 @@ target_link_libraries(potfit_tests PRIVATE
 
 include(GoogleTest)
 gtest_discover_tests(potfit_tests)
+
+# ── Integration tests ─────────────────────────────────────────────────────────
+file(GLOB INTEGRATION_TEST_SOURCES "tests/integration/*.cpp")
+if(INTEGRATION_TEST_SOURCES)
+    add_executable(potfit_integration_tests ${INTEGRATION_TEST_SOURCES})
+    target_include_directories(potfit_integration_tests PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}/include"
+    )
+    target_link_libraries(potfit_integration_tests PRIVATE
+        potfit_warnings
+        potfit_lib
+        GTest::gtest_main
+    )
+    gtest_discover_tests(potfit_integration_tests)
+endif()

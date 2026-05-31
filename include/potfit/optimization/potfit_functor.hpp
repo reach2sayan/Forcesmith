@@ -1,13 +1,13 @@
 #pragma once
 
-// Step 9: Eigen::LevenbergMarquardt functor.
+// Eigen::LevenbergMarquardt functor.
 // Satisfies the DenseFunctor concept required by Eigen's LM implementation.
 // Residuals: force components (3*N_atoms per conf) + weighted energy (1 per
-// conf). Jacobian: central finite differences (Δ=1e-5); switch to analytic
-// later per potential type.
+// conf) + optional stress (6 per conf). Jacobian: central finite differences.
 
 #include "potfit/core/atom.hpp"
 #include "potfit/core/potential_base.hpp"
+#include "potfit/force/force_calculator.hpp"
 
 #include <Eigen/Core>
 #include <span>
@@ -20,8 +20,18 @@ struct PotfitFunctor {
   using ValueType = Eigen::VectorXd;
   using JacobianType = Eigen::MatrixXd;
 
+  // Generic constructor: works with any ForceCalculator (pair, EAM, Tersoff…).
   PotfitFunctor(std::span<Configuration> configs,
-                std::span<Potential> potentials, double energy_weight = 1.0);
+                ForceCalculator model,
+                double energy_weight = 1.0,
+                double stress_weight = 0.0);
+
+  // Backward-compatible constructor for pair-only models.
+  // Wraps potentials in a PairForceCalculator internally.
+  PotfitFunctor(std::span<Configuration> configs,
+                std::span<Potential> potentials,
+                double energy_weight = 1.0,
+                double stress_weight = 0.0);
 
   // Evaluate residual vector fvec given parameter vector x.
   int operator()(const Eigen::VectorXd &x, Eigen::VectorXd &fvec) const;
@@ -32,13 +42,15 @@ struct PotfitFunctor {
   constexpr int inputs() const { return inputs_; }
   constexpr int values() const { return values_; }
 
-  std::span<const Potential> potentials() const { return potentials_; }
-  std::span<Potential> potentials() { return potentials_; }
+  // Access the underlying force calculator (e.g. to gather final params).
+  const ForceCalculator& model() const { return model_; }
+        ForceCalculator& model()       { return model_; }
 
 private:
-  std::span<Configuration> configs_;
-  std::span<Potential> potentials_;
+  std::span<Configuration>  configs_;
+  mutable ForceCalculator   model_; // mutable: scatter_params updates params during eval
   double energy_weight_;
+  double stress_weight_;
   int inputs_ = 0;
   int values_ = 0;
   mutable std::uint64_t iter_ = 0;

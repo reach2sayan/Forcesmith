@@ -1,5 +1,3 @@
-#include "potfit/core/neighbor_list.hpp"
-#include "potfit/force/force_calculator.hpp"
 #include "potfit/force/pair_force.hpp"
 
 #include <gtest/gtest.h>
@@ -31,7 +29,6 @@ struct LJPotential {
 
 // ── Test helpers ──────────────────────────────────────────────────────────────
 
-// Returns a configuration with two atoms separated by r; no neighbor list built.
 static Configuration make_dimer_geometry(double r) {
     Configuration cfg;
     cfg.bc     = PeriodicBC(100.0 * Mat3::Identity());
@@ -44,11 +41,11 @@ static Configuration make_dimer_geometry(double r) {
     return cfg;
 }
 
-static PotentialPair lj_pots(double eps = 1.0, double sigma = 1.0) {
-    PotentialPair pots;
-    pots.reserve(1);  // 1 type → 1 pair (0,0)
-    pots.emplace_back(LJPotential{eps, sigma});
-    return pots;
+static PairForceCalculator lj_calc(double eps = 1.0, double sigma = 1.0) {
+    PairForceCalculator calc;
+    calc.pair.reserve(1);
+    calc.pair.emplace_back(LJPotential{eps, sigma});
+    return calc;
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
@@ -58,11 +55,8 @@ TEST(ForceCalculator, ZeroForceAtEquilibrium) {
     const double eps   = 1.5;
     const double r_eq  = std::pow(2.0, 1.0 / 6.0) * sigma;
 
-    auto pots = lj_pots(eps, sigma);
+    auto calc = lj_calc(eps, sigma);
     auto cfg  = make_dimer_geometry(r_eq);
-    build_neighbor_list(cfg, r_eq * 2.0, pots);
-
-    PairForceCalculator calc;
     calc.eval_forces(cfg);
 
     EXPECT_NEAR(cfg.atoms[0].calc_force.norm(), 0.0, 1e-10);
@@ -73,11 +67,8 @@ TEST(ForceCalculator, NewtonThirdLaw) {
     const double sigma = 2.0;
     const double r     = 2.7 * sigma;
 
-    auto pots = lj_pots(1.0, sigma);
+    auto calc = lj_calc(1.0, sigma);
     auto cfg  = make_dimer_geometry(r);
-    build_neighbor_list(cfg, r * 2.0, pots);
-
-    PairForceCalculator calc;
     calc.eval_forces(cfg);
 
     const Vec3 net = cfg.atoms[0].calc_force + cfg.atoms[1].calc_force;
@@ -88,11 +79,8 @@ TEST(ForceCalculator, AttractiveForceInWell) {
     const double sigma = 2.0;
     const double r     = 2.5 * sigma;
 
-    auto pots = lj_pots(1.0, sigma);
+    auto calc = lj_calc(1.0, sigma);
     auto cfg  = make_dimer_geometry(r);
-    build_neighbor_list(cfg, r * 2.0, pots);
-
-    PairForceCalculator calc;
     calc.eval_forces(cfg);
 
     EXPECT_GT(cfg.atoms[0].calc_force[0], 0.0);
@@ -103,11 +91,8 @@ TEST(ForceCalculator, EnergyNegativeInWell) {
     const double sigma = 2.0;
     const double r     = 2.5 * sigma;
 
-    auto pots = lj_pots(1.0, sigma);
+    auto calc = lj_calc(1.0, sigma);
     auto cfg  = make_dimer_geometry(r);
-    build_neighbor_list(cfg, r * 2.0, pots);
-
-    PairForceCalculator calc;
     calc.eval_forces(cfg);
 
     EXPECT_TRUE(std::isfinite(cfg.calc_energy));
@@ -119,11 +104,8 @@ TEST(ForceCalculator, EnergyAtEquilibriumIsMinimum) {
     const double eps   = 1.5;
     const double r_eq  = std::pow(2.0, 1.0 / 6.0) * sigma;
 
-    auto pots = lj_pots(eps, sigma);
+    auto calc = lj_calc(eps, sigma);
     auto cfg  = make_dimer_geometry(r_eq);
-    build_neighbor_list(cfg, r_eq * 2.0, pots);
-
-    PairForceCalculator calc;
     calc.eval_forces(cfg);
 
     EXPECT_NEAR(cfg.calc_energy, -eps, 1e-12);
@@ -133,11 +115,8 @@ TEST(ForceCalculator, StressSymmetric) {
     const double sigma = 2.0;
     const double r     = 2.5 * sigma;
 
-    auto pots = lj_pots(1.0, sigma);
+    auto calc = lj_calc(1.0, sigma);
     auto cfg  = make_dimer_geometry(r);
-    build_neighbor_list(cfg, r * 2.0, pots);
-
-    PairForceCalculator calc;
     calc.eval_forces(cfg);
 
     const SymTens& s = cfg.calc_stress;
@@ -150,11 +129,8 @@ TEST(ForceCalculator, ForcesClearedOnReeval) {
     const double sigma = 2.0;
     const double r     = 2.5 * sigma;
 
-    auto pots = lj_pots(1.0, sigma);
+    auto calc = lj_calc(1.0, sigma);
     auto cfg  = make_dimer_geometry(r);
-    build_neighbor_list(cfg, r * 2.0, pots);
-
-    PairForceCalculator calc;
     calc.eval_forces(cfg);
     const Vec3   f0_first = cfg.atoms[0].calc_force;
     const double e_first  = cfg.calc_energy;
@@ -162,4 +138,14 @@ TEST(ForceCalculator, ForcesClearedOnReeval) {
     calc.eval_forces(cfg);
     EXPECT_NEAR((cfg.atoms[0].calc_force - f0_first).norm(), 0.0, 1e-14);
     EXPECT_NEAR(cfg.calc_energy, e_first, 1e-14);
+}
+
+TEST(ForceCalculator, ParamCountZeroForNoParam) {
+    auto calc = lj_calc(1.0, 2.0);
+    EXPECT_EQ(calc.param_count(), 0);
+}
+
+TEST(ForceCalculator, MaxCutoffMatchesSpan) {
+    auto calc = lj_calc(1.0, 2.0);
+    EXPECT_NEAR(calc.max_cutoff(), 20.0, 1e-14);
 }

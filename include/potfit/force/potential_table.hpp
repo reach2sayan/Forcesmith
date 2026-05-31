@@ -57,6 +57,13 @@ public:
   constexpr T &operator[](int ti, int tj) { return data_[slot(ti, tj)]; }
   constexpr int         ntypes() const noexcept { return ntypes_; }
   constexpr std::size_t size()   const noexcept { return data_.size(); }
+
+  auto begin()        { return data_.begin(); }
+  auto end()          { return data_.end(); }
+  auto begin()  const { return data_.begin(); }
+  auto end()    const { return data_.end(); }
+  auto cbegin() const { return data_.cbegin(); }
+  auto cend()   const { return data_.cend(); }
   template <typename A, typename B>
     requires requires(A a, B b) {
       a.type;

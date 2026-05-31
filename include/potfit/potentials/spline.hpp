@@ -1,6 +1,8 @@
 #pragma once
 
 #include <Eigen/Core>
+#include <boost/math/interpolators/makima.hpp>
+#include <optional>
 #include <utility>
 #include <vector>
 
@@ -11,24 +13,22 @@ public:
   SplinePotential(std::vector<double> x, std::vector<double> y);
   double eval(double r) const;
   double deriv(double r) const;
-  constexpr std::pair<double, double> span() const {
-    return {x_[0], x_[x_.size() - 1]};
-  }
+  std::pair<double, double> span() const { return {x_.front(), x_.back()}; }
 
-  // Param interface: free parameters are the knot y-values (x-knots are fixed).
-  constexpr int param_count() const { return static_cast<int>(x_.size()); }
-  void gather_params(Eigen::VectorXd &dst, int offset) const {
-    dst.segment(offset, y_.size()) = y_;
-  }
+  void set_fixed(int i, bool f) { fixed_[i] = f; }
+  bool is_fixed(int i) const { return fixed_[i]; }
 
-  void scatter_params(const Eigen::VectorXd &src, int offset) {
-    y_ = src.segment(offset, y_.size());
-    compute_d2y();
-  }
+  int param_count() const;
+  void gather_params(Eigen::VectorXd &dst, int offset) const;
+  void scatter_params(const Eigen::VectorXd &src, int offset);
 
 private:
-  Eigen::VectorXd x_, y_, d2y_; // knots, values, second derivatives
-  void compute_d2y(); // recomputes d2y_ from x_ and y_ (Thomas algorithm)
+  using Makima = boost::math::interpolators::makima<std::vector<double>>;
+
+  std::vector<double> x_, y_;
+  std::vector<bool> fixed_;
+  std::optional<Makima> interp_; // null for the degenerate 2-knot (linear) case
+  void rebuild_interp_();
 };
 
 } // namespace potfit

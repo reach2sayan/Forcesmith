@@ -1,5 +1,7 @@
 #pragma once
 
+#include "potfit/core/param.hpp"
+
 #include <Eigen/Core>
 #include <array>
 #include <cmath>
@@ -13,23 +15,36 @@ namespace potfit {
 // deriv_impl(double r)->double.
 
 template <typename Derived, std::size_t N> struct AnalyticBase {
-    std::array<double, N> params;
+    std::array<Param, N> params;
     double rmin, rmax;
 
     constexpr double eval(double r)  const { return static_cast<const Derived&>(*this).eval_impl(r);  }
     constexpr double deriv(double r) const { return static_cast<const Derived&>(*this).deriv_impl(r); }
-    constexpr std::pair<double,double> span()        const { return {rmin, rmax}; }
-    constexpr int    param_count()                   const { return static_cast<int>(N); }
-    constexpr void   gather_params(Eigen::VectorXd& dst, int off) const {
-        std::ranges::copy(params, dst.data() + off);
+    constexpr std::pair<double,double> span() const { return {rmin, rmax}; }
+
+    // Mark parameter i as fixed (excluded from optimizer) or free.
+    constexpr void set_fixed(std::size_t i, bool f) { params[i].fixed = f; }
+    constexpr bool is_fixed(std::size_t i) const    { return params[i].fixed; }
+
+    constexpr int param_count() const {
+        int count = 0;
+        for (const auto& p : params) if (!p.fixed) ++count;
+        return count;
     }
-    constexpr void   scatter_params(const Eigen::VectorXd& src, int off) {
-        std::copy_n(src.data() + off, N, params.begin());
+    constexpr void gather_params(Eigen::VectorXd& dst, int off) const {
+        for (const auto& p : params)
+            if (!p.fixed) dst[off++] = p.value;
+    }
+    constexpr void scatter_params(const Eigen::VectorXd& src, int off) {
+        for (auto& p : params)
+            if (!p.fixed) p.value = src[off++];
     }
 
 protected:
-    AnalyticBase(std::array<double, N> p, double lo, double hi) noexcept
-        : params(p), rmin(lo), rmax(hi) {}
+    AnalyticBase(std::array<double, N> vals, double lo, double hi) noexcept
+        : rmin(lo), rmax(hi) {
+        for (std::size_t i = 0; i < N; ++i) params[i] = Param{vals[i]};
+    }
 };
 
 // ── Internal helpers ──────────────────────────────────────────────────────────

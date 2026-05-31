@@ -12,7 +12,7 @@ using namespace potfit::io;
 
 struct FMResult {
     bool       ok = false;
-    ForceModel model;
+    ForceCalculator model;
     ParseError error;
 };
 
@@ -42,14 +42,15 @@ TEST(ForceModelReader, Pair_Analytic_LJ) {
       ]
     })");
     ASSERT_TRUE(r.ok) << r.error.message;
-    ASSERT_TRUE(std::holds_alternative<std::vector<Potential>>(r.model));
-    const auto& pots = std::get<std::vector<Potential>>(r.model);
-    ASSERT_EQ(pots.size(), 1u);
+    ASSERT_TRUE(std::holds_alternative<PairForceCalculator>(r.model));
+    const auto& calc = std::get<PairForceCalculator>(r.model);
+    EXPECT_EQ(calc.pair.size(), 1u);
     // LJ minimum at r = 2^(1/6) * sigma ≈ 2.806
     const double sig = 2.5;
     const double r_eq = sig * std::pow(2.0, 1.0 / 6.0);
-    EXPECT_NEAR(pots[0].eval(r_eq), -1.0, 1e-12);
-    EXPECT_NEAR(pots[0].deriv(r_eq), 0.0, 1e-10);
+    const auto& phi00 = calc.pair[0, 0];
+    EXPECT_NEAR(phi00.eval(r_eq), -1.0, 1e-12);
+    EXPECT_NEAR(phi00.deriv(r_eq), 0.0, 1e-10);
 }
 
 TEST(ForceModelReader, Pair_Tabulated) {
@@ -61,10 +62,11 @@ TEST(ForceModelReader, Pair_Tabulated) {
       ]
     })");
     ASSERT_TRUE(r.ok) << r.error.message;
-    ASSERT_TRUE(std::holds_alternative<std::vector<Potential>>(r.model));
-    const auto& pots = std::get<std::vector<Potential>>(r.model);
-    ASSERT_EQ(pots.size(), 1u);
-    EXPECT_NEAR(pots[0].eval(2.0), 0.0, 1e-10); // middle knot = 0
+    ASSERT_TRUE(std::holds_alternative<PairForceCalculator>(r.model));
+    const auto& calc = std::get<PairForceCalculator>(r.model);
+    EXPECT_EQ(calc.pair.size(), 1u);
+    const auto& p00 = calc.pair[0, 0];
+    EXPECT_NEAR(p00.eval(2.0), 0.0, 1e-10); // middle knot = 0
 }
 
 // ── eam model ─────────────────────────────────────────────────────────────────
