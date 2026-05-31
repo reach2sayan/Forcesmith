@@ -95,6 +95,7 @@ set(POTFIT_LIB_SOURCES
     src/io/force_model_reader.cpp
     src/io/output_writer.cpp
     src/io/potential_reader.cpp
+    src/optimization/line_search.cpp
     src/optimization/optimizer.cpp
     src/optimization/potfit_functor.cpp
     src/optimization/solver.cpp
@@ -155,6 +156,7 @@ set(UNIT_TEST_SOURCES
     tests/unit/test_force_calc.cpp
     tests/unit/test_force_model_reader.cpp
     tests/unit/test_neighbor_list.cpp
+    tests/unit/test_line_search.cpp
     tests/unit/test_optimizer.cpp
     tests/unit/test_potential_reader.cpp
     tests/unit/test_rescale.cpp
