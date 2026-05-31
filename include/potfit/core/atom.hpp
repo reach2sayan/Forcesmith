@@ -53,6 +53,7 @@ struct Configuration : Serializable<Configuration> {
   SymTens stress = SymTens::Zero();
   double calc_energy = 0.0;
   SymTens calc_stress = SymTens::Zero();
+  double calc_limit = 0.0; // accumulated F(ρ) out-of-range penalty (RESCALE-style)
 };
 
 // Root-mean-square of the per-atom calculated forces over a configuration.

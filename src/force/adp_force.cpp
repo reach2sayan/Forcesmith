@@ -151,6 +151,7 @@ void ADPForceCalculator::eval_forces(Configuration &cfg) const {
   // ── Zero scratch + output ────────────────────────────────────────────────
   cfg.calc_energy = 0.0;
   cfg.calc_stress = SymTens::Zero();
+  cfg.calc_limit = 0.0;
   for (auto &atom : cfg.atoms) {
     atom.ZeroForce();
     atom.ZeroScratch();
@@ -195,6 +196,21 @@ void ADPForceCalculator::eval_forces(Configuration &cfg) const {
   const double energy = std::transform_reduce(
       cfg.atoms.begin(), cfg.atoms.end(), 0.0, std::plus<>{}, [&](auto &ai) {
         const auto &emb = embedding[ai];
+
+        // Clamp out-of-range ρ to the embedding table and punish the overshoot
+        // (matches potfit's RESCALE branch, force_eam.c:334-358): F(ρ) is
+        // evaluated at the clamped ρ, never extrapolated.
+        const auto [rho_begin, rho_end] = emb.span();
+        if (ai.rho > rho_end) {
+          const double d = ai.rho - rho_end;
+          cfg.calc_limit += kDummyWeight * 10.0 * d * d;
+          ai.rho = rho_end;
+        } else if (ai.rho < rho_begin) {
+          const double d = rho_begin - ai.rho;
+          cfg.calc_limit += kDummyWeight * 10.0 * d * d;
+          ai.rho = rho_begin;
+        }
+
         ai.gradF = emb.deriv(ai.rho);
 
         double e = emb.eval(ai.rho);

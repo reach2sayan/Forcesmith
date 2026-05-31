@@ -46,6 +46,7 @@ void EAMForceCalculator::eval_forces(Configuration &cfg) const {
   // ── Zero all scratch and output fields ──────────────────────────────────
   cfg.calc_energy = 0.0;
   cfg.calc_stress = SymTens::Zero();
+  cfg.calc_limit = 0.0;
   for (auto &atom : cfg.atoms) {
     atom.calc_force = Vec3::Zero();
     atom.rho = 0.0;
@@ -65,7 +66,20 @@ void EAMForceCalculator::eval_forces(Configuration &cfg) const {
   }
 
   // ── After pass 1: embedding energy + gradF_i = dF_i/dρ_i ────────────────
+  // Out-of-range ρ is clamped to the embedding table's [begin,end] and the
+  // overshoot is punished via cfg.calc_limit (matches potfit's RESCALE branch,
+  // force_eam.c:334-358): F(ρ) is evaluated at the clamped ρ, never extrapolated.
   for (auto &ai : cfg.atoms) {
+    const auto [rho_begin, rho_end] = embedding[ai].span();
+    if (ai.rho > rho_end) {
+      const double d = ai.rho - rho_end;
+      cfg.calc_limit += kDummyWeight * 10.0 * d * d;
+      ai.rho = rho_end;
+    } else if (ai.rho < rho_begin) {
+      const double d = rho_begin - ai.rho;
+      cfg.calc_limit += kDummyWeight * 10.0 * d * d;
+      ai.rho = rho_begin;
+    }
     cfg.calc_energy += embedding[ai].eval(ai.rho);
     ai.gradF = embedding[ai].deriv(ai.rho);
   }

@@ -15,6 +15,21 @@ namespace potfit {
 
 namespace leaf = boost::leaf;
 
+// BOOST_LEAF_CHECK/AUTO expand to a GNU statement expression ({ ... }), which
+// Clang flags under -Wgnu-statement-expression-from-macro-expansion. It is a
+// deliberate Boost.LEAF idiom, not our code — suppress it for this TU rather
+// than weakening the warning project-wide. The push is placed after the first
+// declaration (the namespace alias above) so it lands in clangd's main-file body
+// rather than the preamble; otherwise the push/pop pair is split across the
+// preamble boundary and clangd reports a spurious "no matching push" at the pop.
+// clang-format off keeps the `ignored` pragma on one physical line.
+// clang-format off
+#if defined(__clang__)
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wgnu-statement-expression-from-macro-expansion"
+#endif
+// clang-format on
+
 namespace {
 
 [[nodiscard]] leaf::error_id err(std::string msg) {
@@ -30,9 +45,9 @@ namespace {
 
 // Open a stream, mapping failure into the result channel.
 template <class Stream>
-[[nodiscard]] leaf::result<Stream>
-open_file(const std::filesystem::path &path, std::ios::openmode mode,
-          std::string_view verb) {
+[[nodiscard]] leaf::result<Stream> open_file(const std::filesystem::path &path,
+                                             std::ios::openmode mode,
+                                             std::string_view verb) {
   Stream f(path, mode);
   if (!f)
     return err("cannot open for " + std::string(verb) + ": " + path.string());
@@ -42,9 +57,10 @@ open_file(const std::filesystem::path &path, std::ios::openmode mode,
 [[nodiscard]] leaf::result<void>
 save_configs(const std::filesystem::path &path,
              const std::vector<Configuration> &configs) {
-  BOOST_LEAF_AUTO(f, open_file<std::ofstream>(path, std::ios::binary, "writing"));
+  BOOST_LEAF_AUTO(f,
+                  open_file<std::ofstream>(path, std::ios::binary, "writing"));
   boost::archive::binary_oarchive ar(f);
-  ar &configs;
+  ar & configs;
   return {};
 }
 
@@ -62,10 +78,11 @@ save_potentials(const std::filesystem::path &path,
 [[nodiscard]] leaf::result<void>
 load_configs(const std::filesystem::path &path,
              std::vector<Configuration> &configs) {
-  BOOST_LEAF_AUTO(f, open_file<std::ifstream>(path, std::ios::binary, "reading"));
+  BOOST_LEAF_AUTO(f,
+                  open_file<std::ifstream>(path, std::ios::binary, "reading"));
   try {
     boost::archive::binary_iarchive ar(f);
-    ar &configs;
+    ar & configs;
   } catch (const std::exception &e) {
     return err("failed to deserialize configs: " + std::string(e.what()));
   }
@@ -75,8 +92,7 @@ load_configs(const std::filesystem::path &path,
 [[nodiscard]] leaf::result<void>
 load_potentials(const std::filesystem::path &path,
                 std::vector<Potential> &potentials) {
-  BOOST_LEAF_AUTO(f,
-                  open_file<std::ifstream>(path, std::ios::in, "reading"));
+  BOOST_LEAF_AUTO(f, open_file<std::ifstream>(path, std::ios::in, "reading"));
   std::string text{std::istreambuf_iterator<char>(f),
                    std::istreambuf_iterator<char>{}};
   BOOST_LEAF_AUTO(pots, io::parse_potential(text));
@@ -87,10 +103,12 @@ load_potentials(const std::filesystem::path &path,
 } // namespace
 
 leaf::result<void> CheckpointWriter::write() const {
-  if (!configs_)
+  if (!configs_) {
     return err("write() called without configs()");
-  if (!pots_)
+  }
+  if (!pots_) {
     return err("write() called without potentials()");
+  }
 
   BOOST_LEAF_CHECK(save_configs(cfg_path(prefix_), *configs_));
   BOOST_LEAF_CHECK(save_potentials(pot_path(prefix_), *pots_));
@@ -106,3 +124,7 @@ CheckpointReader::read(std::vector<Configuration> &configs,
 }
 
 } // namespace potfit
+
+#if defined(__clang__)
+#pragma clang diagnostic pop
+#endif

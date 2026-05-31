@@ -17,17 +17,22 @@ namespace potfit {
 #pragma GCC diagnostic ignored "-Wdangling-reference"
 #endif
 
-// True iff r lies in the radial table p's own cutoff range [rmin, rmax). The
+// potfit's DUMMY_WEIGHT (defines.h): weight on the EAM/ADP embedding F(ρ)
+// out-of-range punishment residual.
+inline constexpr double kDummyWeight = 100.0;
+
+// True iff r lies in the radial table p's own cutoff range [rmin, rmax]. The
 // neighbor list is built with the global max_cutoff() over all tables, so a
 // table with a shorter cutoff would otherwise be fed neighbors past its last
 // knot — where spline potentials linearly *extrapolate* (nonzero) instead of
 // vanishing. Gate every radial table eval/deriv on this. Do NOT use it for the
-// EAM/ADP embedding F(ρ) (argument ρ legitimately falls outside the table, where
-// extrapolation is intended) nor for the angular g(cosθ) table (cosθ ∈ [-1,1]
-// is always within the table's own domain).
+// EAM/ADP embedding F(ρ) (argument ρ legitimately falls outside the table,
+// where it is clamped instead) nor for the angular g(cosθ) table (cosθ ∈ [-1,1]
+// is always within the table's own domain). The upper bound is inclusive to
+// match C potfit's `r <= end[col]` and the inclusive neighbor-list cutoff.
 template <typename Pot> bool in_range(const Pot &p, double r) {
   const auto [rmin, rmax] = p.span();
-  return r >= rmin && r < rmax;
+  return r >= rmin && r <= rmax;
 }
 
 template <typename Range>
@@ -50,11 +55,9 @@ void scatter_range(Range &range, const Eigen::VectorXd &src, std::size_t &off) {
 // potentials, and writing those residuals — mirrors gather_range/scatter_range.
 template <typename Range>
 std::size_t smoothness_count_range(const Range &range) {
-  std::size_t n = 0;
-  for (const auto &p : range) {
-    n += p.smoothness_count();
-  }
-  return n;
+  return std::transform_reduce(
+      range.begin(), range.end(), std::size_t{0}, std::plus<>{},
+      [](const auto &p) { return p.smoothness_count(); });
 }
 
 template <typename Range>
@@ -73,16 +76,16 @@ void write_smoothness_range(const Range &range, Eigen::VectorXd &dst,
 template <typename T>
 concept ForceCalculatorModel =
     requires(T calc, Configuration &cfg, Eigen::VectorXd &v, std::size_t off) {
-        { calc.eval_forces(cfg) }       -> std::same_as<void>;
-        { calc.param_count() }          -> std::same_as<std::size_t>;
-        { calc.gather_params(v, off) }  -> std::same_as<void>;
-        { calc.scatter_params(v, off) } -> std::same_as<void>;
-        { calc.max_cutoff() }           -> std::same_as<double>;
+      { calc.eval_forces(cfg) } -> std::same_as<void>;
+      { calc.param_count() } -> std::same_as<std::size_t>;
+      { calc.gather_params(v, off) } -> std::same_as<void>;
+      { calc.scatter_params(v, off) } -> std::same_as<void>;
+      { calc.max_cutoff() } -> std::same_as<double>;
     };
 
 template <typename Derived> struct ForceCalculatorBase {
-    std::size_t ntypes = 1;
-    std::uint64_t conf_index = 0;
+  std::size_t ntypes = 1;
+  std::uint64_t conf_index = 0;
 };
 
 } // namespace potfit

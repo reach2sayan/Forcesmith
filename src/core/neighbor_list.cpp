@@ -14,8 +14,9 @@ namespace {
 // Resolve the pair potential for a (type_i, type_j) pair, if a table is given.
 const Potential *resolve_pot(const PotentialPair *pots, const Atom &ai,
                              const Atom &aj) {
-  if (pots && ai.type < pots->ntypes() && aj.type < pots->ntypes())
+  if (pots && ai.type < pots->ntypes() && aj.type < pots->ntypes()) {
     return &(*pots)[ai.type, aj.type];
+  }
   return nullptr;
 }
 
@@ -50,11 +51,13 @@ void build_periodic(Configuration &cfg, double rcut, double rcut2,
       for (int ix = -sx; ix <= sx; ++ix)
         for (int iy = -sy; iy <= sy; ++iy)
           for (int iz = -sz; iz <= sz; ++iz) {
-            if (i == j && ix == 0 && iy == 0 && iz == 0)
+            if (i == j && ix == 0 && iy == 0 && iz == 0) {
               continue; // skip an atom paired with itself in the home cell
+            }
             const Vec3 d = base + ix * a + iy * b + iz * c;
-            if (d.squaredNorm() >= rcut2)
-              continue;
+            if (d.squaredNorm() > rcut2) {
+              continue; // inclusive r <= rcut (config.c:1130)
+            }
             NeighborEntry entry;
             entry.neighbor = &cfg.atoms[j];
             entry.pot = resolve_pot(pots, cfg.atoms[i], cfg.atoms[j]);
@@ -73,8 +76,8 @@ void build_infinite(Configuration &cfg, double rcut2,
       if (i == j)
         continue;
       const Vec3 d = cfg.atoms[j].pos - cfg.atoms[i].pos;
-      if (d.squaredNorm() >= rcut2)
-        continue;
+      if (d.squaredNorm() > rcut2)
+        continue; // inclusive r <= rcut (config.c:1130)
       NeighborEntry entry;
       entry.neighbor = &cfg.atoms[j];
       entry.pot = resolve_pot(pots, cfg.atoms[i], cfg.atoms[j]);

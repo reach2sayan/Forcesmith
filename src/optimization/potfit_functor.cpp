@@ -10,40 +10,43 @@ namespace potfit {
 namespace {
 
 int count_residuals(std::span<Configuration> configs, double stress_weight) {
-  int n = 0;
-  for (const auto& cfg : configs)
-    n += static_cast<int>(3 * cfg.atoms.size()) + 1;
-  if (stress_weight > 0.0)
+  int n = std::transform_reduce(
+      configs.begin(), configs.end(), 0, std::plus<>{}, [](const auto &cfg) {
+        return static_cast<int>(3 * cfg.atoms.size()) + 2;
+        // 3N force + energy + limit
+      });
+
+  if (stress_weight > 0.0) {
     n += 6 * static_cast<int>(configs.size());
+  }
   return n;
 }
 
 } // namespace
 
 PotfitFunctor::PotfitFunctor(std::span<Configuration> configs,
-                             ForceCalculator model,
-                             double energy_weight, double stress_weight,
-                             double smooth_weight)
-    : configs_(configs),
-      model_(std::move(model)),
-      energy_weight_(energy_weight),
-      stress_weight_(stress_weight),
+                             ForceCalculator model, double energy_weight,
+                             double stress_weight, double smooth_weight)
+    : configs_(configs), model_(std::move(model)),
+      energy_weight_(energy_weight), stress_weight_(stress_weight),
       smooth_weight_(smooth_weight),
-      smooth_count_{smooth_weight > 0.0
-                        ? static_cast<int>(std::visit(
-                              [](const auto& m){ return model_smoothness_count(m); },
-                              model_))
-                        : 0},
-      inputs_{static_cast<int>(std::visit([](const auto& m){ return m.param_count(); }, model_))},
+      smooth_count_{
+          smooth_weight > 0.0
+              ? static_cast<int>(std::visit(
+                    [](const auto &m) { return model_smoothness_count(m); },
+                    model_))
+              : 0},
+      inputs_{static_cast<int>(
+          std::visit([](const auto &m) { return m.param_count(); }, model_))},
       values_{count_residuals(configs, stress_weight) + smooth_count_} {}
 
 int PotfitFunctor::operator()(const Eigen::VectorXd &x,
                               Eigen::VectorXd &fvec) const {
-  std::visit([&](auto& m){ m.scatter_params(x, std::size_t{0}); }, model_);
+  std::visit([&](auto &m) { m.scatter_params(x, std::size_t{0}); }, model_);
 
   int row = 0;
   for (auto [c, cfg] : std::views::enumerate(configs_)) {
-    std::visit([&](auto& m){ m.eval_forces(cfg); }, model_);
+    std::visit([&](auto &m) { m.eval_forces(cfg); }, model_);
 
     for (const auto &atom : cfg.atoms) {
       fvec[row++] = atom.calc_force[0] - atom.force[0];
@@ -52,21 +55,28 @@ int PotfitFunctor::operator()(const Eigen::VectorXd &x,
     }
     fvec[row++] = energy_weight_ * (cfg.calc_energy - cfg.energy);
     if (stress_weight_ > 0.0) {
-      fvec[row++] = stress_weight_ * (cfg.calc_stress(0,0) - cfg.stress(0,0));
-      fvec[row++] = stress_weight_ * (cfg.calc_stress(1,1) - cfg.stress(1,1));
-      fvec[row++] = stress_weight_ * (cfg.calc_stress(2,2) - cfg.stress(2,2));
-      fvec[row++] = stress_weight_ * (cfg.calc_stress(0,1) - cfg.stress(0,1));
-      fvec[row++] = stress_weight_ * (cfg.calc_stress(0,2) - cfg.stress(0,2));
-      fvec[row++] = stress_weight_ * (cfg.calc_stress(1,2) - cfg.stress(1,2));
+      fvec[row++] = stress_weight_ * (cfg.calc_stress(0, 0) - cfg.stress(0, 0));
+      fvec[row++] = stress_weight_ * (cfg.calc_stress(1, 1) - cfg.stress(1, 1));
+      fvec[row++] = stress_weight_ * (cfg.calc_stress(2, 2) - cfg.stress(2, 2));
+      fvec[row++] = stress_weight_ * (cfg.calc_stress(0, 1) - cfg.stress(0, 1));
+      fvec[row++] = stress_weight_ * (cfg.calc_stress(0, 2) - cfg.stress(0, 2));
+      fvec[row++] = stress_weight_ * (cfg.calc_stress(1, 2) - cfg.stress(1, 2));
     }
+    // EAM/ADP out-of-range ρ punishment (already weighted by kDummyWeight·10;
+    // squared by the LM objective → matches potfit's dsquare(limit_p)). Zero
+    // for models without an embedding term.
+    fvec[row++] = cfg.calc_limit;
   }
 
-  // Tikhonov curvature penalty on free knots (appended after the data residuals).
+  // Tikhonov curvature penalty on free knots (appended after the data
+  // residuals).
   if (smooth_count_ > 0) {
-    std::visit([&](auto& m){
-      model_write_smoothness(m, fvec, static_cast<std::size_t>(row),
-                             smooth_weight_);
-    }, model_);
+    std::visit(
+        [&](auto &m) {
+          model_write_smoothness(m, fvec, static_cast<std::size_t>(row),
+                                 smooth_weight_);
+        },
+        model_);
     row += smooth_count_;
   }
 

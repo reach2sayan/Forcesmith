@@ -19,12 +19,12 @@ namespace {
 // coincident, or r outside the potential's own range) short-circuits the chain,
 // mirroring adp/tersoff/stiweb.
 struct PairBond {
-  Atom            *ai;                  // central atom
-  const Potential *pot;                 // i–j pair potential φ
-  Vec3             d;                   // pos_j − pos_i
-  double           r, inv_r;            // |d| and 1/|d|
-  double           phi = 0.0;           // pair energy φ(r)
-  Vec3             force = Vec3::Zero(); // force on i
+  Atom *ai;                  // central atom
+  const Potential *pot;      // i–j pair potential φ
+  Vec3 d;                    // pos_j − pos_i
+  double r, inv_r;           // |d| and 1/|d|
+  double phi = 0.0;          // pair energy φ(r)
+  Vec3 force = Vec3::Zero(); // force on i
 };
 
 // Stage 1 — geometry + cutoff gate. The neighbor list is built with the global
