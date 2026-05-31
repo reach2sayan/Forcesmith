@@ -68,11 +68,8 @@ void ADPForceCalculator::eval_forces(Configuration &cfg) const {
   cfg.calc_energy = 0.0;
   cfg.calc_stress = SymTens::Zero();
   for (auto &atom : cfg.atoms) {
-    atom.calc_force = Vec3::Zero();
-    atom.rho = 0.0;
-    atom.gradF = 0.0;
-    atom.mu = Vec3::Zero();
-    atom.lambda = SymTens::Zero();
+    atom.ZeroForce();
+    atom.ZeroScratch();
   }
 
   // ── Pass 1: accumulate ρ_i, μ_i, λ_i ────────────────────────────────────

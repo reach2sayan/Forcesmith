@@ -4,6 +4,8 @@
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
+#include <array>
+#include <cstddef>
 #include <string>
 
 namespace potfit::io {
@@ -11,118 +13,168 @@ namespace potfit::io {
 using json = nlohmann::json;
 namespace leaf = boost::leaf;
 
-leaf::result<std::vector<Configuration>> parse_config(std::string_view input) {
-  auto fail = [](std::string msg) -> leaf::result<std::vector<Configuration>> {
-    return leaf::new_error(ParseError{std::move(msg), 0});
-  };
+namespace {
 
+// element symbol → Atom.type index; built dynamically, first seen = 0.
+struct ElementMap {
+  std::vector<std::string> syms;
+
+  int operator()(const std::string &s) {
+    if (auto it = std::ranges::find(syms, s); it != syms.end())
+      return static_cast<int>(it - syms.begin());
+    syms.push_back(s);
+    return static_cast<int>(syms.size()) - 1;
+  }
+};
+
+[[nodiscard]] leaf::error_id err(std::string msg) {
+  return leaf::new_error(ParseError{std::move(msg), 0});
+}
+
+// Required key present → sub-json by pointer (avoids result<T&>).
+[[nodiscard]] leaf::result<const json *>
+require_key(const json &obj, const char *key, std::string_view ctx) {
+  if (!obj.contains(key))
+    return err(std::string(ctx) + ": missing key '" + key + "'");
+  return &obj[key];
+}
+
+// Array of exactly N doubles.
+template <std::size_t N>
+[[nodiscard]] leaf::result<std::array<double, N>>
+get_array_n(const json &arr, std::string_view ctx) {
+  if (!arr.is_array() || arr.size() != N)
+    return err(std::string(ctx) + ": must be an array of " + std::to_string(N) +
+               " doubles");
+  std::array<double, N> out{};
+  for (std::size_t i = 0; i < N; ++i)
+    out[i] = arr[i].get<double>();
+  return out;
+}
+
+[[nodiscard]] leaf::result<Vec3> get_vec3(const json &arr,
+                                          std::string_view ctx) {
+  BOOST_LEAF_AUTO(a, get_array_n<3>(arr, ctx));
+  return Vec3{a[0], a[1], a[2]};
+}
+
+// Require key + parse as Vec3 in one shot.
+[[nodiscard]] leaf::result<Vec3>
+require_vec3(const json &obj, const char *key, std::string_view ctx) {
+  BOOST_LEAF_AUTO(sub, require_key(obj, key, ctx));
+  return get_vec3(*sub, std::string(ctx) + " '" + key + "'");
+}
+
+[[nodiscard]] leaf::result<Mat3> parse_box(const json &obj,
+                                           std::string_view ctx) {
+  BOOST_LEAF_AUTO(x, require_vec3(obj, "X", ctx));
+  BOOST_LEAF_AUTO(y, require_vec3(obj, "Y", ctx));
+  BOOST_LEAF_AUTO(z, require_vec3(obj, "Z", ctx));
+  Mat3 box;
+  box.col(0) = x;
+  box.col(1) = y;
+  box.col(2) = z;
+  return box;
+}
+
+[[nodiscard]] leaf::result<double> parse_energy(const json &obj,
+                                                std::string_view ctx) {
+  BOOST_LEAF_AUTO(e, require_key(obj, "E", ctx));
+  return (*e).get<double>();
+}
+
+// Optional "S" = [xx, yy, zz, xy, yz, zx]; absent → Zero().
+[[nodiscard]] leaf::result<SymTens> parse_stress(const json &obj,
+                                                 std::string_view ctx) {
+  SymTens stress = SymTens::Zero();
+  if (!obj.contains("S"))
+    return stress;
+  BOOST_LEAF_AUTO(s, (get_array_n<6>(obj["S"], std::string(ctx) + " 'S'")));
+  stress(0, 0) = s[0];
+  stress(1, 1) = s[1];
+  stress(2, 2) = s[2];
+  stress(0, 1) = stress(1, 0) = s[3];
+  stress(1, 2) = stress(2, 1) = s[4];
+  stress(0, 2) = stress(2, 0) = s[5];
+  return stress;
+}
+
+[[nodiscard]] leaf::result<Atom>
+parse_atom(const json &a_obj, ElementMap &emap, std::string_view ctx) {
+  BOOST_LEAF_AUTO(elem, require_key(a_obj, "element", ctx));
+  BOOST_LEAF_AUTO(pos, require_vec3(a_obj, "position", ctx));
+
+  Atom a;
+  a.type = static_cast<std::size_t>(emap((*elem).get<std::string>()));
+  a.pos = pos;
+
+  if (a_obj.contains("force")) {
+    BOOST_LEAF_AUTO(f, get_vec3(a_obj["force"], std::string(ctx) + " 'force'"));
+    a.force = f;
+  }
+  return a;
+}
+
+[[nodiscard]] leaf::result<Configuration>
+parse_configuration(const json &obj, ElementMap &emap, std::string_view ctx) {
+  if (!obj.is_object())
+    return err(std::string(ctx) + ": each configuration must be a JSON object");
+
+  Configuration cfg;
+
+  BOOST_LEAF_AUTO(box, parse_box(obj, ctx));
+  cfg.bc = PeriodicBC(box);
+
+  BOOST_LEAF_AUTO(e, parse_energy(obj, ctx));
+  cfg.energy = e;
+
+  cfg.weight = obj.value("W", 1.0);
+
+  BOOST_LEAF_AUTO(s, parse_stress(obj, ctx));
+  cfg.stress = s;
+
+  BOOST_LEAF_AUTO(atoms, require_key(obj, "atoms", ctx));
+  if (!(*atoms).is_array())
+    return err(std::string(ctx) + ": 'atoms' must be an array");
+
+  cfg.atoms.reserve((*atoms).size());
+  std::size_t ai = 0;
+  for (const auto &a_obj : *atoms) {
+    BOOST_LEAF_AUTO(atom, parse_atom(a_obj, emap,
+                                     std::string(ctx) + " atom[" +
+                                         std::to_string(ai++) + "]"));
+    cfg.atoms.push_back(std::move(atom));
+  }
+  return cfg;
+}
+
+} // namespace
+
+leaf::result<std::vector<Configuration>> parse_config(std::string_view input) {
   json j;
   try {
     j = json::parse(input);
   } catch (const json::parse_error &e) {
-    return leaf::new_error(ParseError{e.what(), 0});
+    return err(e.what());
   }
 
   if (!j.is_array())
-    return fail("top-level JSON must be an array of configurations");
+    return err("top-level JSON must be an array of configurations");
 
-  // element symbol → Atom.type index; built dynamically, first seen = 0
-  std::vector<std::string> element_map;
-  auto element_index = [&](const std::string &sym) -> int {
-    if (auto it = std::ranges::find(element_map, sym); it != element_map.end())
-      return static_cast<int>(it - element_map.begin());
-    element_map.push_back(sym);
-    return static_cast<int>(element_map.size()) - 1;
-  };
-
+  ElementMap emap;
   std::vector<Configuration> configs;
   configs.reserve(j.size());
 
   try {
+    std::size_t ci = 0;
     for (const auto &obj : j) {
-      if (!obj.is_object())
-        return fail("each configuration must be a JSON object");
-
-      Configuration cfg;
-
-      // Box vectors
-      for (const char *key : {"X", "Y", "Z"}) {
-        if (!obj.contains(key))
-          return fail(std::string("configuration missing box vector '") + key +
-                      "'");
-        if (!obj[key].is_array() || obj[key].size() != 3)
-          return fail(std::string("box vector '") + key +
-                      "' must be array of 3 doubles");
-      }
-      Mat3 box;
-      box.col(0) = Vec3{obj["X"][0].get<double>(), obj["X"][1].get<double>(),
-                        obj["X"][2].get<double>()};
-      box.col(1) = Vec3{obj["Y"][0].get<double>(), obj["Y"][1].get<double>(),
-                        obj["Y"][2].get<double>()};
-      box.col(2) = Vec3{obj["Z"][0].get<double>(), obj["Z"][1].get<double>(),
-                        obj["Z"][2].get<double>()};
-      cfg.bc = PeriodicBC(box);
-
-      // Energy (required)
-      if (!obj.contains("E"))
-        return fail("configuration missing energy key 'E'");
-      cfg.energy = obj["E"].get<double>();
-
-      // Weight (optional, default 1.0)
-      cfg.weight = obj.value("W", 1.0);
-
-      // Stress (optional)
-      if (obj.contains("S")) {
-        const auto &s = obj["S"];
-        if (!s.is_array() || s.size() != 6)
-          return fail(
-              "'S' must be an array of 6 doubles [xx, yy, zz, xy, yz, zx]");
-
-        cfg.stress(0, 0) = s[0].get<double>();
-        cfg.stress(1, 1) = s[1].get<double>();
-        cfg.stress(2, 2) = s[2].get<double>();
-        cfg.stress(0, 1) = cfg.stress(1, 0) = s[3].get<double>();
-        cfg.stress(1, 2) = cfg.stress(2, 1) = s[4].get<double>();
-        cfg.stress(0, 2) = cfg.stress(2, 0) = s[5].get<double>();
-      }
-
-      // Atoms
-      if (!obj.contains("atoms"))
-        return fail("configuration missing 'atoms' array");
-      const auto &atoms_arr = obj["atoms"];
-      if (!atoms_arr.is_array())
-        return fail("'atoms' must be an array");
-
-      for (const auto &a_obj : atoms_arr) {
-        if (!a_obj.contains("element"))
-          return fail("atom missing 'element' key");
-        if (!a_obj.contains("position"))
-          return fail("atom missing 'position' key");
-
-        const auto &pos_arr = a_obj["position"];
-        if (!pos_arr.is_array() || pos_arr.size() != 3)
-          return fail("atom 'position' must be an array of 3 doubles");
-
-        Atom a;
-        a.type = element_index(a_obj["element"].get<std::string>());
-        a.pos = Vec3{pos_arr[0].get<double>(), pos_arr[1].get<double>(),
-                     pos_arr[2].get<double>()};
-
-        if (a_obj.contains("force")) {
-          const auto &f = a_obj["force"];
-          if (!f.is_array() || f.size() != 3)
-            return fail("atom 'force' must be an array of 3 doubles");
-          a.force =
-              Vec3{f[0].get<double>(), f[1].get<double>(), f[2].get<double>()};
-        }
-
-        cfg.atoms.push_back(std::move(a));
-      }
-
+      BOOST_LEAF_AUTO(cfg, parse_configuration(
+                               obj, emap,
+                               "config[" + std::to_string(ci++) + "]"));
       configs.push_back(std::move(cfg));
     }
   } catch (const json::exception &e) {
-    return leaf::new_error(ParseError{e.what(), 0});
+    return err(e.what());
   }
 
   return configs;

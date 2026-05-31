@@ -35,6 +35,14 @@ struct Atom : Serializable<Atom> {
   double gradF = 0.0;               // dF/dρ (embedding energy gradient)
   Vec3 mu = Vec3::Zero();           // dipole distortion (ADP)
   SymTens lambda = SymTens::Zero(); // quadrupole distortion (ADP)
+
+  void ZeroScratch() {
+    rho = 0.0;
+    gradF = 0.0;
+    mu = Vec3::Zero();
+    lambda = SymTens::Zero();
+  }
+  void ZeroForce() { calc_force = Vec3::Zero(); }
 };
 
 struct Configuration : Serializable<Configuration> {
