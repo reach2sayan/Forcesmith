@@ -24,6 +24,15 @@
 
 namespace potfit {
 
+struct PairForce {
+  const Atom *ai;            // central atom
+  const Atom *aj;            // neighbour
+  Vec3 d;                    // pos_j − pos_i
+  double r, inv_r;           // |d| and 1/|d|
+  double phi = 0.0;          // pair energy φ(r) (filled by the EAM stage)
+  Vec3 force = Vec3::Zero(); // running F_i
+};
+
 // Potential tables for ntypes element types (paircol = ntypes*(ntypes+1)/2):
 //   pair       — φ_{ij}(r)  pair repulsion,         paircol entries
 //   density    — g_i(r)     electron density,        ntypes entries
@@ -31,18 +40,18 @@ namespace potfit {
 //   dipole     — u_{ij}(r)  dipole coupling,         paircol entries
 //   quadrupole — w_{ij}(r)  quadrupole coupling,     paircol entries
 struct ADPForceCalculator : ForceCalculatorBase<ADPForceCalculator> {
-  PotentialPair  pair;
+  PotentialPair pair;
   PotentialArray density;
   PotentialArray embedding;
-  PotentialPair  dipole;
-  PotentialPair  quadrupole;
+  PotentialPair dipole;
+  PotentialPair quadrupole;
 
   void eval_forces(Configuration &cfg) const;
 
   std::size_t param_count() const;
-  void        gather_params(Eigen::VectorXd& dst, std::size_t off) const;
-  void        scatter_params(const Eigen::VectorXd& src, std::size_t off);
-  double      max_cutoff() const;
+  void gather_params(Eigen::VectorXd &dst, std::size_t off) const;
+  void scatter_params(const Eigen::VectorXd &src, std::size_t off);
+  double max_cutoff() const;
 };
 
 static_assert(ForceCalculatorModel<ADPForceCalculator>);

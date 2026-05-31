@@ -39,6 +39,17 @@ struct TersoffParams {
   Param omega{1.0, true};
 };
 
+struct Bond {
+  const TersoffParams *p; // i–j pair parameters
+  Vec3 d1;                // pos_j − pos_i
+  double r1;              // |d1|
+  double fc, dfc;         // cutoff f_c(r1) and its derivative
+  double VR, VA;          // repulsive / attractive pair terms
+  double VRp, VAp;        // their radial derivatives
+  double zeta = 0.0;      // angular sum ζ_ij
+  double b = 1.0;         // bond order b_ij
+};
+
 // params — one TersoffParams per unique pair type (paircol =
 // ntypes*(ntypes+1)/2). Access via params(ti, tj).
 struct TersoffForceCalculator : ForceCalculatorBase<TersoffForceCalculator> {

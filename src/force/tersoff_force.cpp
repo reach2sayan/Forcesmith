@@ -4,22 +4,24 @@
 
 #include <cmath>
 #include <numbers>
+#include <optional>
+#include <utility>
 
 namespace potfit {
 namespace {
 
-auto tersoff_fields(TersoffParams &p) {
-  return std::array<Param *, 12>{&p.A, &p.B, &p.lambda, &p.mu,    &p.beta, &p.n,
-                                 &p.c, &p.d, &p.h,       &p.R,     &p.S,
-                                 &p.omega};
+constexpr FORCE_INLINE auto tersoff_fields(TersoffParams &p) {
+  return std::array<Param *, 12>{&p.A,    &p.B, &p.lambda, &p.mu,
+                                 &p.beta, &p.n, &p.c,      &p.d,
+                                 &p.h,    &p.R, &p.S,      &p.omega};
 }
-auto tersoff_fields(const TersoffParams &p) {
+constexpr FORCE_INLINE auto tersoff_fields(const TersoffParams &p) {
   return std::array<const Param *, 12>{&p.A,    &p.B, &p.lambda, &p.mu,
                                        &p.beta, &p.n, &p.c,      &p.d,
                                        &p.h,    &p.R, &p.S,      &p.omega};
 }
 
-constexpr double fc_val(double r, double R, double S) noexcept {
+constexpr FORCE_INLINE double fc_val(double r, double R, double S) noexcept {
   if (r <= R) {
     return 1.0;
   } else if (r >= S) {
@@ -29,7 +31,7 @@ constexpr double fc_val(double r, double R, double S) noexcept {
   return 0.5 + 0.5 * std::cos(x);
 }
 
-constexpr double dfc_val(double r, double R, double S) noexcept {
+constexpr FORCE_INLINE double dfc_val(double r, double R, double S) noexcept {
   if (r <= R || r >= S) {
     return 0.0;
   }
@@ -39,7 +41,7 @@ constexpr double dfc_val(double r, double R, double S) noexcept {
 
 // ── Angular function g(cos θ) = 1 + c²/d² − c²/[d² + (h − cos θ)²] ──────────
 
-constexpr double g_val(double c, const TersoffParams &p) noexcept {
+constexpr FORCE_INLINE double g_val(double c, const TersoffParams &p) noexcept {
   const double c2 = p.c * p.c;
   const double d2 = p.d * p.d;
   const double hc = p.h - c;
@@ -47,7 +49,8 @@ constexpr double g_val(double c, const TersoffParams &p) noexcept {
 }
 
 // dg/d(cos θ)
-constexpr double dg_val(double c, const TersoffParams &p) noexcept {
+constexpr FORCE_INLINE double dg_val(double c,
+                                     const TersoffParams &p) noexcept {
   const double c2 = p.c * p.c;
   const double d2 = p.d * p.d;
   const double hc = p.h - c;
@@ -73,6 +76,158 @@ constexpr double dbond_dzeta(double zeta, const TersoffParams &p) noexcept {
   const double bz_n = std::pow(p.beta * zeta, p.n);
   const double b = std::pow(1.0 + bz_n, -0.5 / p.n);
   return -0.5 * b * bz_n / (zeta * (1.0 + bz_n));
+}
+
+// ── i–j bond threaded through the evaluation pipeline ───────────────────────
+// Each stage takes a Bond, performs one conceptual step, and passes it on. An
+// empty std::optional means "this bond contributes nothing" (outside the cutoff
+// shell, or no angular neighbours), so the chain's .and_then short-circuits.
+
+
+// Stage 1 — pair terms. Empty unless i–j lies inside the cutoff shell.
+std::optional<Bond> make_bond(const TersoffParams &p, const Vec3 &d1,
+                              double r1) {
+  if (r1 < 1e-14) {
+    return std::nullopt;
+  }
+  const double fc = fc_val(r1, p.R, p.S);
+  const double dfc = dfc_val(r1, p.R, p.S);
+  if (fc == 0.0 && dfc == 0.0) {
+    return std::nullopt;
+  }
+  const double VR = p.A * std::exp(-p.lambda * r1);
+  const double VA = p.B * std::exp(-p.mu * r1);
+  return Bond{&p, d1, r1, fc, dfc, VR, VA, -p.lambda * VR, -p.mu * VA};
+}
+
+// Stage 2 — angular sum ζ_ij = Σ_{k≠j} ω_ik f_c(r_ik) g(cos θ_ijk).
+auto add_zeta(const Atom &ai, std::size_t jj,
+              const SymmetricMatrix<TersoffParams> &params) {
+  return [&ai, jj, &params](Bond &&bond) -> std::optional<Bond> {
+    const std::size_t nn = ai.neighbors.size();
+    double zeta = 0.0;
+    for (std::size_t kk = 0; kk < nn; ++kk) {
+      if (kk == jj) {
+        continue;
+      }
+      const NeighborEntry &nb_k = ai.neighbors[kk];
+      const Vec3 &d2 = nb_k.dist;
+      const double r2 = d2.norm();
+      if (r2 < 1e-14) {
+        continue;
+      }
+      const TersoffParams &p_ik = params[ai.type, nb_k.neighbor->type];
+      const double fc_ik = fc_val(r2, p_ik.R, p_ik.S);
+      if (fc_ik == 0.0) {
+        continue;
+      }
+      const double cos_theta = bond.d1.dot(d2) / (bond.r1 * r2);
+      zeta += p_ik.omega * fc_ik * g_val(cos_theta, *bond.p);
+    }
+    bond.zeta = zeta;
+    return std::move(bond);
+  };
+}
+
+// Stage 3 — bond order b_ij from ζ_ij.
+Bond add_bond_order(Bond &&bond) {
+  bond.b = bond_order(bond.zeta, *bond.p);
+  return std::move(bond);
+}
+
+// Stage 4 — accumulate energy and the (b fixed) pair force / virial.
+auto accumulate_pair(Atom &ai, std::size_t jj, Configuration &cfg) {
+  return [&ai, jj, &cfg](Bond &&bond) -> Bond {
+    Atom &aj = const_cast<Atom &>(*ai.neighbors[jj].neighbor);
+
+    // Energy: (1/2) f_c [VR − b VA].
+    cfg.calc_energy += 0.5 * bond.fc * (bond.VR - bond.b * bond.VA);
+
+    // F_i += (1/2)[f_c'(VR − b VA) + f_c(VR' − b VA')] d1 / r1.
+    const double pair_coeff = 0.5 *
+                              (bond.dfc * (bond.VR - bond.b * bond.VA) +
+                               bond.fc * (bond.VRp - bond.b * bond.VAp)) /
+                              bond.r1;
+    const Vec3 F_pair = pair_coeff * bond.d1;
+
+    ai.calc_force += F_pair;
+    aj.calc_force -= F_pair;
+    cfg.calc_stress += 0.5 * bond.d1 * (-F_pair).transpose();
+    return std::move(bond);
+  };
+}
+
+// Stage 5 — three-body force from ∂b_ij/∂ζ × ∂ζ/∂r_n. Empty when ζ = 0.
+//   E = (1/2) f_c [VR − b VA] ⇒ ∂E/∂b = −(1/2) f_c VA, so
+//   F_n = −∂E/∂b × db/dζ × ∂ζ/∂r_n = (1/2) f_c VA (db/dζ) ∂ζ/∂r_n ≡ P ∂ζ/∂r_n.
+auto accumulate_three_body(Atom &ai, std::size_t jj, Configuration &cfg,
+                           const SymmetricMatrix<TersoffParams> &params) {
+  return [&ai, jj, &cfg, &params](Bond &&bond) -> std::optional<Bond> {
+    if (bond.zeta == 0.0) {
+      return std::nullopt;
+    }
+    Atom &aj = const_cast<Atom &>(*ai.neighbors[jj].neighbor);
+    const double P = 0.5 * bond.fc * bond.VA * dbond_dzeta(bond.zeta, *bond.p);
+
+    const Vec3 &d1 = bond.d1;
+    const double inv_r1 = 1.0 / bond.r1;
+    const std::size_t nn = ai.neighbors.size();
+    for (std::size_t kk = 0; kk < nn; ++kk) {
+      if (kk == jj) {
+        continue;
+      }
+      const NeighborEntry &nb_k = ai.neighbors[kk];
+      Atom &ak = const_cast<Atom &>(*nb_k.neighbor);
+      const Vec3 &d2 = nb_k.dist;
+      const double r2 = d2.norm();
+      if (r2 < 1e-14) {
+        continue;
+      }
+      const TersoffParams &p_ik = params[ai.type, nb_k.neighbor->type];
+      const double fc_ik = fc_val(r2, p_ik.R, p_ik.S);
+      const double dfc_ik = dfc_val(r2, p_ik.R, p_ik.S);
+      if (fc_ik == 0.0 && dfc_ik == 0.0) {
+        continue;
+      }
+
+      const double inv_r2 = 1.0 / r2;
+      const double cos_theta = d1.dot(d2) * inv_r1 * inv_r2;
+      const double gv = g_val(cos_theta, *bond.p);
+      const double dgv = dg_val(cos_theta, *bond.p);
+
+      // Gradient of cos θ w.r.t. each atom position:
+      //   ∂c/∂r_i = Ac d1 + Bc d2   ∂c/∂r_j = d2/(r1 r2) − c d1/r1²
+      //   ∂c/∂r_k = d1/(r1 r2) − c d2/r2²
+      const double Ac = cos_theta * inv_r1 * inv_r1 - inv_r1 * inv_r2;
+      const double Bc = cos_theta * inv_r2 * inv_r2 - inv_r1 * inv_r2;
+
+      // Mixing weight ω for the i–k pair carries through every ζ-gradient term.
+      const double w_ik = p_ik.omega;
+
+      const Vec3 dz_dri = w_ik * (-dfc_ik * inv_r2 * gv * d2 +
+                                  fc_ik * dgv * (Ac * d1 + Bc * d2));
+      const Vec3 dz_drj =
+          w_ik * fc_ik * dgv *
+          (inv_r1 * inv_r2 * d2 - cos_theta * inv_r1 * inv_r1 * d1);
+      const Vec3 dz_drk =
+          w_ik *
+          (dfc_ik * inv_r2 * gv * d2 +
+           fc_ik * dgv *
+               (inv_r1 * inv_r2 * d1 - cos_theta * inv_r2 * inv_r2 * d2));
+
+      const Vec3 Fi_3b = P * dz_dri;
+      const Vec3 Fj_3b = P * dz_drj;
+      const Vec3 Fk_3b = P * dz_drk;
+
+      ai.calc_force += Fi_3b;
+      aj.calc_force += Fj_3b;
+      ak.calc_force += Fk_3b;
+
+      // Virial: bond ⊗ force-on-partner (the 0.5 already lives in P).
+      cfg.calc_stress += d1 * Fj_3b.transpose() + d2 * Fk_3b.transpose();
+    }
+    return std::move(bond);
+  };
 }
 
 } // anonymous namespace
@@ -126,151 +281,24 @@ void TersoffForceCalculator::eval_forces(Configuration &cfg) const {
   std::for_each(cfg.atoms.begin(), cfg.atoms.end(),
                 [](auto &a) { a.calc_force = Vec3::Zero(); });
 
-  const std::size_t natoms = cfg.atoms.size();
-  for (std::size_t ii = 0; ii < natoms; ++ii) {
-    Atom &ai = cfg.atoms[ii];
+  // For each i–j bond, run the pipeline:
+  //   pair terms → ζ → bond order → energy + pair force → 3-body force
+  // std::optional short-circuits bonds outside the cutoff (make_bond) or with
+  // no angular neighbours (ζ = 0, accumulate_three_body), so each step reads as
+  // one clear stage rather than a deeply nested loop body.
+  for (Atom &ai : cfg.atoms) {
     const std::size_t ti = ai.type;
     const std::size_t nn = ai.neighbors.size();
-
     for (std::size_t jj = 0; jj < nn; ++jj) {
       const NeighborEntry &nb_j = ai.neighbors[jj];
-      Atom &aj = const_cast<Atom &>(*nb_j.neighbor);
       const Vec3 &d1 = nb_j.dist; // pos_j − pos_i
-      const double r1 = d1.norm();
-      if (r1 < 1e-14)
-        continue;
+      const TersoffParams &p = params[ti, nb_j.neighbor->type];
 
-      const std::size_t tj = aj.type;
-      const TersoffParams &p = params[ti, tj];
-
-      const double fc_ij = fc_val(r1, p.R, p.S);
-      const double dfc_ij = dfc_val(r1, p.R, p.S);
-      if (fc_ij == 0.0 && dfc_ij == 0.0) {
-        continue;
-      }
-
-      const double VR = p.A * std::exp(-p.lambda * r1);
-      const double VA = p.B * std::exp(-p.mu * r1);
-      const double VRp = -p.lambda * VR; // dVR/dr
-      const double VAp = -p.mu * VA;     // dVA/dr
-
-      // ── Compute ζ_ij ─────────────────────────────────────────────────
-      double zeta = 0.0;
-      for (std::size_t kk = 0; kk < nn; ++kk) {
-        if (kk == jj)
-          continue;
-        const NeighborEntry &nb_k = ai.neighbors[kk];
-        const Vec3 &d2 = nb_k.dist;
-        const double r2 = d2.norm();
-        if (r2 < 1e-14) {
-          continue;
-        }
-
-        const std::size_t tk = nb_k.neighbor->type;
-        const TersoffParams &p_ik = params[ti, tk];
-        const double fc_ik = fc_val(r2, p_ik.R, p_ik.S);
-        if (fc_ik == 0.0) {
-          continue;
-        }
-
-        const double cos_theta = d1.dot(d2) / (r1 * r2);
-        zeta += p_ik.omega * fc_ik * g_val(cos_theta, p);
-      }
-
-      const double b_ij = bond_order(zeta, p);
-
-      // ── Energy: (1/2) f_c [VR − b_ij VA] ────────────────────────────
-      cfg.calc_energy += 0.5 * fc_ij * (VR - b_ij * VA);
-
-      // ── Pair forces (b_ij treated as fixed) ──────────────────────────
-      // F_i += (1/2)[f_c'(VR − b VA) + f_c(VR' − b VA')] r̂_ij
-      //      = (1/2)[...] / r1 × d1
-      const double pair_coeff =
-          0.5 * (dfc_ij * (VR - b_ij * VA) + fc_ij * (VRp - b_ij * VAp)) / r1;
-      const Vec3 F_pair = pair_coeff * d1;
-
-      ai.calc_force += F_pair;
-      aj.calc_force -= F_pair;
-      cfg.calc_stress += 0.5 * d1 * (-F_pair).transpose();
-
-      // ── 3-body forces from ∂b_ij/∂ζ × ∂ζ/∂r_n ──────────────────────
-      // F_n (3b) = P × ∂ζ/∂r_n   where P = 0.5 f_c VA db/dζ
-      //
-      // Note: E = (1/2) f_c [VR − b VA] so ∂E/∂b = −(1/2) f_c VA
-      //       F_n = −∂E/∂b × db/dζ × ∂ζ/∂r_n = (1/2) f_c VA db/dζ × ∂ζ/∂r_n
-      if (zeta == 0.0) {
-        continue;
-      }
-
-      const double db_dz = dbond_dzeta(zeta, p);
-      const double P = 0.5 * fc_ij * VA * db_dz; // < 0 (db/dz < 0, VA > 0)
-
-      const double inv_r1 = 1.0 / r1;
-      for (std::size_t kk = 0; kk < nn; ++kk) {
-        if (kk == jj) {
-          continue;
-        }
-        const NeighborEntry &nb_k = ai.neighbors[kk];
-        Atom &ak = const_cast<Atom &>(*nb_k.neighbor);
-        const Vec3 &d2 = nb_k.dist;
-        const double r2 = d2.norm();
-        if (r2 < 1e-14) {
-          continue;
-        }
-
-        const std::size_t tk = nb_k.neighbor->type;
-        const TersoffParams &p_ik = params[ti, tk];
-        const double fc_ik = fc_val(r2, p_ik.R, p_ik.S);
-        const double dfc_ik = dfc_val(r2, p_ik.R, p_ik.S);
-        if (fc_ik == 0.0 && dfc_ik == 0.0) {
-          continue;
-        }
-
-        const double inv_r2 = 1.0 / r2;
-        const double cos_theta = d1.dot(d2) * inv_r1 * inv_r2;
-        const double gv = g_val(cos_theta, p);
-        const double dgv = dg_val(cos_theta, p);
-
-        // Gradient of cos θ w.r.t. each atom position:
-        //   ∂c/∂r_i = A d1 + B d2   (A = c/r1² − 1/(r1 r2), same for B)
-        //   ∂c/∂r_j = d2/(r1 r2) − c d1/r1²
-        //   ∂c/∂r_k = d1/(r1 r2) − c d2/r2²
-        const double Ac = cos_theta * inv_r1 * inv_r1 - inv_r1 * inv_r2;
-        const double Bc = cos_theta * inv_r2 * inv_r2 - inv_r1 * inv_r2;
-
-        // Mixing weight ω for the i–k pair carries through every ζ-gradient
-        // term (matches potfit's omega[col_k] on both the f_c and g parts).
-        const double w_ik = p_ik.omega;
-
-        // ∂ζ/∂r_i = g × dfc_ik × (−d2/r2) + fc_ik × dgv × (Ac d1 + Bc d2)
-        const Vec3 dz_dri =
-            w_ik * (-dfc_ik * inv_r2 * gv * d2 + fc_ik * dgv * (Ac * d1 + Bc * d2));
-
-        // ∂ζ/∂r_j = fc_ik × dgv × (d2/(r1 r2) − c d1/r1²)
-        const Vec3 dz_drj =
-            w_ik * fc_ik * dgv *
-            (inv_r1 * inv_r2 * d2 - cos_theta * inv_r1 * inv_r1 * d1);
-
-        // ∂ζ/∂r_k = g × dfc_ik × (d2/r2) + fc_ik × dgv × (d1/(r1 r2) − c
-        // d2/r2²)
-        const Vec3 dz_drk =
-            w_ik * (dfc_ik * inv_r2 * gv * d2 +
-                    fc_ik * dgv *
-                        (inv_r1 * inv_r2 * d1 - cos_theta * inv_r2 * inv_r2 * d2));
-
-        const Vec3 Fi_3b = P * dz_dri;
-        const Vec3 Fj_3b = P * dz_drj;
-        const Vec3 Fk_3b = P * dz_drk;
-
-        ai.calc_force += Fi_3b;
-        aj.calc_force += Fj_3b;
-        ak.calc_force += Fk_3b;
-
-        // Virial: bond ⊗ force-on-partner. Fj_3b/Fk_3b are the forces applied
-        // to atoms j, k; no extra 0.5 (the 0.5 already lives in P, matching the
-        // way the forces themselves are applied).
-        cfg.calc_stress += d1 * Fj_3b.transpose() + d2 * Fk_3b.transpose();
-      }
+      make_bond(p, d1, d1.norm())
+          .and_then(add_zeta(ai, jj, params))
+          .transform(add_bond_order)
+          .transform(accumulate_pair(ai, jj, cfg))
+          .and_then(accumulate_three_body(ai, jj, cfg, params));
     }
   }
 

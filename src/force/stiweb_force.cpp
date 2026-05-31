@@ -116,9 +116,8 @@ void StiwebForceCalculator::eval_forces(Configuration &cfg) const {
 
   cfg.calc_energy = 0.0;
   cfg.calc_stress = SymTens::Zero();
-  std::ranges::for_each(cfg.atoms, [](auto& a) {
-      a.calc_force = Vec3::Zero();
-  });
+  std::ranges::for_each(cfg.atoms,
+                        [](auto &a) { a.calc_force = Vec3::Zero(); });
 
   // ── 2-body loop ──────────────────────────────────────────────────────────
   // Full neighbor list: each pair counted twice, factor 0.5 per entry.
@@ -190,7 +189,7 @@ void StiwebForceCalculator::eval_forces(Configuration &cfg) const {
         const double inv_r2 = 1.0 / r2;
 
         const double c = d1.dot(d2) * inv_r1 * inv_r2;
-        const double cp13 = c + 1.0 / 3.0; // c + 1/3
+        const double cp13 = c + 1.0 / 3.0;        // c + 1/3
         const double lam = lambda_at(ti, tj, tk); // per-triplet λ[i][j][k]
         const double w = lam * cp13 * cp13;
         const double dw = 2.0 * lam * cp13;

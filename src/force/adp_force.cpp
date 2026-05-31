@@ -5,8 +5,96 @@
 #include <algorithm>
 #include <cmath>
 #include <numeric>
+#include <optional>
+#include <utility>
 
 namespace potfit {
+namespace {
+
+// Helpers for quadrupole force terms (see header for derivation reference).
+// nu(M, d) = d^T M d - r²/3 × tr(M)
+FORCE_INLINE double quad_nu(const SymTens &M, const Vec3 &d) {
+  return d.dot(M * d) - d.squaredNorm() / 3.0 * M.trace();
+}
+// xi(M, d) = M d - tr(M)/3 × d
+FORCE_INLINE Vec3 quad_xi(const SymTens &M, const Vec3 &d) {
+  return M * d - (M.trace() / 3.0) * d;
+}
+
+// ── i–j pair threaded through the force pipeline ────────────────────────────
+// Each stage adds one physical contribution to `force` (the force on atom i)
+// and passes the pair on. An empty std::optional means the two atoms are
+// coincident and contribute nothing, so the chain's .transform short-circuits.
+// Stage 1 — geometry. Empty for coincident atoms.
+std::optional<PairForce> make_pair_force(const Atom &ai,
+                                         const NeighborEntry &nb) {
+  const Vec3 &d = nb.dist;
+  const double r = d.norm();
+  if (r < 1e-14) {
+    return std::nullopt;
+  }
+  return PairForce{&ai, nb.neighbor, d, r, 1.0 / r};
+}
+
+// Stage 2 — EAM pair + embedding-gradient force (same as EAMForceCalculator):
+//   F_eam = [dφ/dr + gradF_i×dg_{t(j)}/dr + gradF_j×dg_{t(i)}/dr] × r̂
+auto add_eam_force(const PotentialPair &pair, const PotentialArray &density) {
+  return [&pair, &density](PairForce &&pf) -> PairForce {
+    const Atom &ai = *pf.ai;
+    const Atom &aj = *pf.aj;
+    pf.phi = pair[ai, aj].eval(pf.r);
+    const double dphi = pair[ai, aj].deriv(pf.r);
+    const double drho_j = density[aj].deriv(pf.r);
+    const double drho_i = density[ai].deriv(pf.r);
+    pf.force +=
+        (dphi + ai.gradF * drho_j + aj.gradF * drho_i) * pf.inv_r * pf.d;
+    return std::move(pf);
+  };
+}
+
+// Stage 3 — dipole force (Mishin 2005, derived via ∂E_dip/∂r_i):
+//   F_dip = du/r × (μ_i·d − μ_j·d) × d + u × (μ_i − μ_j)
+auto add_dipole_force(const PotentialPair &dipole) {
+  return [&dipole](PairForce &&pf) -> PairForce {
+    const Atom &ai = *pf.ai;
+    const Atom &aj = *pf.aj;
+    const double u = dipole[ai, aj].eval(pf.r);
+    const double du = dipole[ai, aj].deriv(pf.r);
+    const double dot_i = ai.mu.dot(pf.d);
+    const double dot_j = aj.mu.dot(pf.d);
+    pf.force += (du * pf.inv_r * (dot_i - dot_j)) * pf.d + u * (ai.mu - aj.mu);
+    return std::move(pf);
+  };
+}
+
+// Stage 4 — quadrupole force (Mishin 2005, derived via ∂E_quad/∂r_i):
+//   F_quad = dw/r × [ν(λ_i,d) + ν(λ_j,d)] × d + 2w × [ξ(λ_i,d) + ξ(λ_j,d)]
+//   where ν(M,d)=d^T M d − r²/3 tr(M),  ξ(M,d)=Md − tr(M)/3 d
+auto add_quadrupole_force(const PotentialPair &quadrupole) {
+  return [&quadrupole](PairForce &&pf) -> PairForce {
+    const Atom &ai = *pf.ai;
+    const Atom &aj = *pf.aj;
+    const double w = quadrupole[ai, aj].eval(pf.r);
+    const double dw = quadrupole[ai, aj].deriv(pf.r);
+    const double nu = quad_nu(ai.lambda, pf.d) + quad_nu(aj.lambda, pf.d);
+    const Vec3 xi = quad_xi(ai.lambda, pf.d) + quad_xi(aj.lambda, pf.d);
+    pf.force += (dw * pf.inv_r * nu) * pf.d + 2.0 * w * xi;
+    return std::move(pf);
+  };
+}
+
+// Stage 5 — commit the pair's energy, force and virial to the configuration.
+auto accumulate(Atom &ai, Configuration &cfg) {
+  return [&ai, &cfg](PairForce &&pf) -> PairForce {
+    ai.calc_force += pf.force;
+    cfg.calc_energy += 0.5 * pf.phi;
+    // Virial: bond ⊗ force-on-partner = d ⊗ (−fvec); 0.5 for the full list.
+    cfg.calc_stress -= 0.5 * pf.d * pf.force.transpose();
+    return std::move(pf);
+  };
+}
+
+} // anonymous namespace
 
 std::size_t ADPForceCalculator::param_count() const {
   auto count_range = [](const auto &range) {
@@ -51,16 +139,6 @@ double ADPForceCalculator::max_cutoff() const {
                    max_cutoff(quadrupole)});
 }
 
-// Helpers for quadrupole force terms (see header for derivation reference).
-// nu(M, d) = d^T M d - r²/3 × tr(M)
-static FORCE_INLINE double quad_nu(const SymTens &M, const Vec3 &d) {
-  return d.dot(M * d) - d.squaredNorm() / 3.0 * M.trace();
-}
-// xi(M, d) = M d - tr(M)/3 × d
-static FORCE_INLINE Vec3 quad_xi(const SymTens &M, const Vec3 &d) {
-  return M * d - (M.trace() / 3.0) * d;
-}
-
 void ADPForceCalculator::eval_forces(Configuration &cfg) const {
   build_neighbor_list(cfg, max_cutoff());
 
@@ -72,8 +150,12 @@ void ADPForceCalculator::eval_forces(Configuration &cfg) const {
     atom.ZeroScratch();
   }
 
-  // ── Pass 1: accumulate ρ_i, μ_i, λ_i ────────────────────────────────────
-  for (auto &ai : cfg.atoms) {
+  // ── Pass 1: accumulate per-atom moments ρ_i, μ_i, λ_i ────────────────────
+  std::ranges::for_each(cfg.atoms, [&](auto &ai) {
+    double rho = 0.0;
+    Vec3 mu = Vec3::Zero();
+    SymTens lambda = SymTens::Zero();
+
     for (const auto &nb : ai.neighbors) {
       const auto &aj = *nb.neighbor;
       const double r = nb.dist.norm();
@@ -81,70 +163,45 @@ void ADPForceCalculator::eval_forces(Configuration &cfg) const {
         continue;
       }
 
-      ai.rho += density[aj].eval(r);
-      ai.mu += dipole[ai, aj].eval(r) * nb.dist;
-      ai.lambda += quadrupole[ai, aj].eval(r) * (nb.dist * nb.dist.transpose());
+      rho += density[aj].eval(r);
+      mu += dipole[ai, aj].eval(r) * nb.dist;
+      lambda += quadrupole[ai, aj].eval(r) * (nb.dist * nb.dist.transpose());
     }
-  }
 
-  // ── After pass 1: embedding + ADP self-energies ──────────────────────────
-  for (auto &ai : cfg.atoms) {
-    cfg.calc_energy += embedding[ai].eval(ai.rho);
-    ai.gradF = embedding[ai].deriv(ai.rho);
-    cfg.calc_energy += 0.5 * ai.mu.squaredNorm();
-    const double tr_lam = ai.lambda.trace();
-    cfg.calc_energy += 0.5 * (ai.lambda.squaredNorm() - tr_lam * tr_lam / 3.0);
-  }
+    ai.rho += rho;
+    ai.mu += mu;
+    ai.lambda += lambda;
+  });
+
+  // ── After pass 1: embedding + ADP self-energies, cache gradF_i ───────────
+  const double energy = std::transform_reduce(
+      cfg.atoms.begin(), cfg.atoms.end(), 0.0, std::plus<>{}, [&](auto &ai) {
+        const auto &emb = embedding[ai];
+        ai.gradF = emb.deriv(ai.rho);
+
+        double e = emb.eval(ai.rho);
+        e += 0.5 * ai.mu.squaredNorm();
+
+        const double tr_lam = ai.lambda.trace();
+        e += 0.5 * (ai.lambda.squaredNorm() - tr_lam * tr_lam / 3.0);
+
+        return e;
+      });
+
+  cfg.calc_energy += energy;
 
   // ── Pass 2: forces ───────────────────────────────────────────────────────
-  // Per-neighbor-pair force on atom i:
-  //
-  //   F = F_eam + F_dip + F_quad
-  //
-  // EAM pair + embedding-gradient (same as EAMForceCalculator):
-  //   F_eam = [dφ/dr + gradF_i×dg_{t(j)}/dr + gradF_j×dg_{t(i)}/dr] × r̂
-  //
-  // Dipole (Mishin 2005, derived via ∂E_dip/∂r_i):
-  //   F_dip = du/r × [(μ_i·d − μ_j·d)] × d + u × (μ_i − μ_j)
-  //
-  // Quadrupole (Mishin 2005, derived via ∂E_quad/∂r_i):
-  //   F_quad = dw/r × [ν(λ_i,d) + ν(λ_j,d)] × d + 2w × [ξ(λ_i,d) + ξ(λ_j,d)]
-  //   where ν(M,d)=d^T M d − r²/3 tr(M),  ξ(M,d)=Md − tr(M)/3 d
-  for (auto &ai : cfg.atoms) {
-    for (const auto &nb : ai.neighbors) {
-      const auto &aj = *nb.neighbor;
-      const Vec3 &d = nb.dist;
-      const double r = d.norm();
-      if (r < 1e-14) {
-        continue;
-      }
-      const double inv_r = 1.0 / r;
-
-      // EAM pair + embedding terms
-      const double phi = pair[ai, aj].eval(r);
-      const double dphi = pair[ai, aj].deriv(r);
-      const double drho_j = density[aj].deriv(r);
-      const double drho_i = density[ai].deriv(r);
-      Vec3 fvec = (dphi + ai.gradF * drho_j + aj.gradF * drho_i) * inv_r * d;
-
-      // Dipole force terms
-      const double u = dipole[ai, aj].eval(r);
-      const double du = dipole[ai, aj].deriv(r);
-      const double dot_i = ai.mu.dot(d);
-      const double dot_j = aj.mu.dot(d);
-      fvec += (du * inv_r * (dot_i - dot_j)) * d + u * (ai.mu - aj.mu);
-
-      // Quadrupole force terms
-      const double w = quadrupole[ai, aj].eval(r);
-      const double dw = quadrupole[ai, aj].deriv(r);
-      const double nu = quad_nu(ai.lambda, d) + quad_nu(aj.lambda, d);
-      const Vec3 xi = quad_xi(ai.lambda, d) + quad_xi(aj.lambda, d);
-      fvec += (dw * inv_r * nu) * d + 2.0 * w * xi;
-
-      ai.calc_force += fvec;
-      cfg.calc_energy += 0.5 * phi;
-      // Virial: bond ⊗ force-on-partner = d ⊗ (−fvec); 0.5 for the full list.
-      cfg.calc_stress -= 0.5 * d * fvec.transpose();
+  // Run each i–j bond through the pipeline:
+  //   geometry → EAM force → dipole force → quadrupole force → commit
+  // std::optional short-circuits coincident atoms (make_pair_force), so each
+  // step reads as one clear stage rather than a deeply nested loop body.
+  for (Atom &ai : cfg.atoms) {
+    for (const NeighborEntry &nb : ai.neighbors) {
+      make_pair_force(ai, nb)
+          .transform(add_eam_force(pair, density))
+          .transform(add_dipole_force(dipole))
+          .transform(add_quadrupole_force(quadrupole))
+          .transform(accumulate(ai, cfg));
     }
   }
 
