@@ -83,7 +83,6 @@ constexpr double dbond_dzeta(double zeta, const TersoffParams &p) noexcept {
 // empty std::optional means "this bond contributes nothing" (outside the cutoff
 // shell, or no angular neighbours), so the chain's .and_then short-circuits.
 
-
 // Stage 1 — pair terms. Empty unless i–j lies inside the cutoff shell.
 std::optional<Bond> make_bond(const TersoffParams &p, const Vec3 &d1,
                               double r1) {
@@ -233,15 +232,12 @@ auto accumulate_three_body(Atom &ai, std::size_t jj, Configuration &cfg,
 } // anonymous namespace
 
 std::size_t TersoffForceCalculator::param_count() const {
-  std::size_t count = 0;
-  for (const auto &p : params) {
-    for (const Param *f : tersoff_fields(p)) {
-      if (!f->fixed) {
-        ++count;
-      }
-    }
-  }
-  return count;
+  return std::transform_reduce(params.begin(), params.end(), std::size_t{0},
+                               std::plus<>{}, [](const auto &p) {
+                                 return std::ranges::count_if(
+                                     tersoff_fields(p),
+                                     [](const Param *f) { return !f->fixed; });
+                               });
 }
 
 void TersoffForceCalculator::gather_params(Eigen::VectorXd &dst,
@@ -286,12 +282,13 @@ void TersoffForceCalculator::eval_forces(Configuration &cfg) const {
   // std::optional short-circuits bonds outside the cutoff (make_bond) or with
   // no angular neighbours (ζ = 0, accumulate_three_body), so each step reads as
   // one clear stage rather than a deeply nested loop body.
-  for (Atom &ai : cfg.atoms) {
+  std::ranges::for_each(cfg.atoms, [&](Atom &ai) {
     const std::size_t ti = ai.type;
     const std::size_t nn = ai.neighbors.size();
+
     for (std::size_t jj = 0; jj < nn; ++jj) {
       const NeighborEntry &nb_j = ai.neighbors[jj];
-      const Vec3 &d1 = nb_j.dist; // pos_j − pos_i
+      const Vec3 &d1 = nb_j.dist;
       const TersoffParams &p = params[ti, nb_j.neighbor->type];
 
       make_bond(p, d1, d1.norm())
@@ -300,7 +297,7 @@ void TersoffForceCalculator::eval_forces(Configuration &cfg) const {
           .transform(accumulate_pair(ai, jj, cfg))
           .and_then(accumulate_three_body(ai, jj, cfg, params));
     }
-  }
+  });
 
   cfg.calc_stress /= bc_volume(cfg.bc); // virial → stress (per unit volume)
   events::on_force_eval(events::ForceEvalStats{conf_index, force_rms(cfg)});

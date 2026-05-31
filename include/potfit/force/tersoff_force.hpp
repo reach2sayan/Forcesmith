@@ -22,17 +22,17 @@
 namespace potfit {
 
 struct TersoffParams {
-  Param A      = 1.0; // repulsive pre-factor (eV)
-  Param B      = 1.0; // attractive pre-factor (eV)
+  Param A = 1.0;      // repulsive pre-factor (eV)
+  Param B = 1.0;      // attractive pre-factor (eV)
   Param lambda = 1.0; // repulsive decay (1/Å)
-  Param mu     = 1.0; // attractive decay (1/Å)
-  Param beta   = 1.0; // coordination weight
-  Param n      = 1.0; // bond-order exponent
-  Param c      = 1.0; // angular function numerator width
-  Param d      = 1.0; // angular function denominator width
-  Param h      = 0.0; // angular function shift
-  Param R      = 2.5; // inner cutoff (Å)
-  Param S      = 3.0; // outer cutoff (Å)
+  Param mu = 1.0;     // attractive decay (1/Å)
+  Param beta = 1.0;   // coordination weight
+  Param n = 1.0;      // bond-order exponent
+  Param c = 1.0;      // angular function numerator width
+  Param d = 1.0;      // angular function denominator width
+  Param h = 0.0;      // angular function shift
+  Param R = 2.5;      // inner cutoff (Å)
+  Param S = 3.0;      // outer cutoff (Å)
   // Bond-order mixing weight ω for the i–k pair in the ζ sum (potfit's omega).
   // Defaults to 1.0 and fixed, matching potfit's diagonal (same-type) pairs;
   // the reader frees it for cross-type pairs that supply an explicit value.
@@ -58,9 +58,9 @@ struct TersoffForceCalculator : ForceCalculatorBase<TersoffForceCalculator> {
   void eval_forces(Configuration &cfg) const;
 
   std::size_t param_count() const;
-  void        gather_params(Eigen::VectorXd& dst, std::size_t off) const;
-  void        scatter_params(const Eigen::VectorXd& src, std::size_t off);
-  double      max_cutoff() const;
+  void gather_params(Eigen::VectorXd &dst, std::size_t off) const;
+  void scatter_params(const Eigen::VectorXd &src, std::size_t off);
+  double max_cutoff() const;
 };
 
 static_assert(ForceCalculatorModel<TersoffForceCalculator>);

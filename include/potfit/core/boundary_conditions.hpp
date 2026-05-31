@@ -61,8 +61,18 @@ private:
 
 using BoundaryConditions = std::variant<PeriodicBC, InfiniteBC>;
 
-[[nodiscard]] Vec3 bc_wrap(const BoundaryConditions &bc, const Vec3 &r);
-[[nodiscard]] Vec3 bc_min_image(const BoundaryConditions &bc, const Vec3 &d);
-[[nodiscard]] double bc_volume(const BoundaryConditions &bc);
+[[nodiscard]] FORCE_INLINE Vec3 bc_wrap(const BoundaryConditions &bc,
+                                        const Vec3 &r) {
+  return std::visit([&](const auto &b) { return b.wrap(r); }, bc);
+}
+
+[[nodiscard]] FORCE_INLINE Vec3 bc_min_image(const BoundaryConditions &bc,
+                                             const Vec3 &d) {
+  return std::visit([&](const auto &b) { return b.min_image(d); }, bc);
+}
+
+[[nodiscard]] FORCE_INLINE double bc_volume(const BoundaryConditions &bc) {
+  return std::visit([](const auto &b) { return b.volume(); }, bc);
+}
 
 } // namespace potfit

@@ -80,8 +80,7 @@ target_link_options(potfit_warnings INTERFACE
 # ── Implementation library (linked by both executable and tests) ──────────────
 
 set(POTFIT_LIB_SOURCES
-    src/core/boundary_conditions.cpp
-    src/core/checkpoint.cpp
+        src/core/checkpoint.cpp
     src/core/elements.cpp
     src/core/neighbor_list.cpp
     src/core/rescale.cpp
