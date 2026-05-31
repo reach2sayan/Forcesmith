@@ -1,4 +1,5 @@
 #include "potfit/core/checkpoint.hpp"
+#include "potfit/force/pair_force.hpp"
 #include "potfit/io/config_reader.hpp"
 #include "potfit/io/output_writer.hpp"
 #include "potfit/io/potential_reader.hpp"
@@ -61,7 +62,7 @@ int main(int argc, char* argv[]) {
     leaf::try_handle_all(
         [&]() -> leaf::result<void> {
             std::vector<potfit::Configuration> configs_vec;
-            std::vector<potfit::Potential>     potentials;
+            potfit::ForceCalculator model = potfit::PairForceCalculator{};
 
             const bool has_checkpoint = vm.count("checkpoint") > 0;
             const std::string ckpt_prefix = has_checkpoint
@@ -70,9 +71,11 @@ int main(int argc, char* argv[]) {
             // ── Resume from checkpoint if it exists ──────────────────────────
             bool resumed = false;
             if (has_checkpoint) {
+                std::vector<potfit::Potential> pots;
                 auto r = potfit::CheckpointReader(ckpt_prefix)
-                             .read(configs_vec, potentials);
+                             .read(configs_vec, pots);
                 if (r) {
+                    model = potfit::make_pair_force_calculator(std::move(pots));
                     std::cout << "resumed from checkpoint " << ckpt_prefix << "\n";
                     resumed = true;
                 }
@@ -90,14 +93,14 @@ int main(int argc, char* argv[]) {
                 const std::string pot_text = read_file(vm["startpot"].as<std::string>());
                 auto r_pot = potfit::io::parse_potential(pot_text);
                 if (!r_pot) return r_pot.error();
-                potentials = std::move(*r_pot);
+                model = potfit::make_pair_force_calculator(std::move(*r_pot));
             }
 
             if (configs_vec.empty()) {
                 std::cerr << "error: no configurations loaded\n";
                 ret = 1; return {};
             }
-            if (potentials.empty()) {
+            if (std::visit([](const auto& m){ return m.param_count(); }, model) == 0) {
                 std::cerr << "error: no potentials loaded\n";
                 ret = 1; return {};
             }
@@ -108,14 +111,19 @@ int main(int argc, char* argv[]) {
             opts.energy_weight = vm["eweight"].as<double>();
             opts.stress_weight = vm["stress-weight"].as<double>();
 
-            const int status = potfit::run_optimizer(configs_vec, potentials, opts);
+            const int status = potfit::run_optimizer(configs_vec, model, opts);
             std::cout << "optimizer finished with status " << status << "\n";
+
+            // Extract flat potentials for I/O and checkpointing.
+            const auto& pair_calc = std::get<potfit::PairForceCalculator>(model);
+            std::vector<potfit::Potential> result_pots(
+                pair_calc.pair.begin(), pair_calc.pair.end());
 
             // ── Save checkpoint ───────────────────────────────────────────────
             if (has_checkpoint) {
                 if (auto r = potfit::CheckpointWriter(ckpt_prefix)
                                  .configs(configs_vec)
-                                 .potentials(potentials)
+                                 .potentials(result_pots)
                                  .write(); !r)
                     return r.error();
                 std::cout << "checkpoint saved to " << ckpt_prefix << "\n";
@@ -126,11 +134,11 @@ int main(int argc, char* argv[]) {
             const std::string outp = vm["endpot"].as<std::string>();
 
             if (fmt == "lammps")
-                potfit::io::write_lammps(outp, potentials);
+                potfit::io::write_lammps(outp, result_pots);
             else if (fmt == "imd")
-                potfit::io::write_imd(outp, potentials);
+                potfit::io::write_imd(outp, result_pots);
             else
-                potfit::io::write_native(outp, potentials);
+                potfit::io::write_native(outp, result_pots);
 
             std::cout << "wrote " << fmt << " potential to " << outp << "\n";
             return {};

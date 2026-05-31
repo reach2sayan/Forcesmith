@@ -330,15 +330,17 @@ TEST(Integration, OptimizerLJ_ConvergesFromWrongParams) {
         [&]() -> leaf::result<void> {
             BOOST_LEAF_AUTO(configs, parse_config(cfg_json));
             BOOST_LEAF_AUTO(pots, parse_potential(pot_json));
+            ForceCalculator model = make_pair_force_calculator(std::move(pots));
 
             OptimizerOptions opts;
             opts.max_iter = 500;
             opts.energy_weight = 1.0;
 
-            run_optimizer(configs, pots, opts);
+            run_optimizer(configs, model, opts);
 
-            Eigen::VectorXd x(pots[0].param_count());
-            pots[0].gather_params(x, 0);
+            const auto& pair_calc = std::get<PairForceCalculator>(model);
+            Eigen::VectorXd x(pair_calc.pair[std::size_t{0}, std::size_t{0}].param_count());
+            pair_calc.pair[std::size_t{0}, std::size_t{0}].gather_params(x, 0);
             eps_final = x[0]; // epsilon
             sig_final = x[1]; // sigma
             return {};

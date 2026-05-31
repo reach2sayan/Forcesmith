@@ -1,9 +1,7 @@
 #include "potfit/optimization/potfit_functor.hpp"
 
 #include "potfit/events/signals.hpp"
-#include "potfit/force/pair_force.hpp"
 
-#include <cmath>
 #include <ranges>
 
 namespace potfit {
@@ -19,18 +17,6 @@ int count_residuals(std::span<Configuration> configs, double stress_weight) {
   return n;
 }
 
-// Build a PairForceCalculator that owns a copy of the given potentials.
-// ntypes is inferred from paircol = ntypes*(ntypes+1)/2.
-PairForceCalculator make_pair_calc(std::span<Potential> potentials) {
-  const std::size_t n_pots = potentials.size();
-  const std::size_t ntypes = static_cast<std::size_t>(
-      std::lround((-1.0 + std::sqrt(1.0 + 8.0 * static_cast<double>(n_pots))) / 2.0));
-  PairForceCalculator calc;
-  calc.pair.reserve(ntypes);
-  for (const auto& p : potentials) calc.pair.emplace_back(p);
-  return calc;
-}
-
 } // namespace
 
 PotfitFunctor::PotfitFunctor(std::span<Configuration> configs,
@@ -42,13 +28,6 @@ PotfitFunctor::PotfitFunctor(std::span<Configuration> configs,
       stress_weight_(stress_weight),
       inputs_{static_cast<int>(std::visit([](const auto& m){ return m.param_count(); }, model_))},
       values_{count_residuals(configs, stress_weight)} {}
-
-PotfitFunctor::PotfitFunctor(std::span<Configuration> configs,
-                             std::span<Potential> potentials,
-                             double energy_weight, double stress_weight)
-    : PotfitFunctor(configs,
-                    ForceCalculator{make_pair_calc(potentials)},
-                    energy_weight, stress_weight) {}
 
 int PotfitFunctor::operator()(const Eigen::VectorXd &x,
                               Eigen::VectorXd &fvec) const {

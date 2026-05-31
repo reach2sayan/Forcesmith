@@ -20,16 +20,8 @@ struct PotfitFunctor {
   using ValueType = Eigen::VectorXd;
   using JacobianType = Eigen::MatrixXd;
 
-  // Generic constructor: works with any ForceCalculator (pair, EAM, Tersoff…).
   PotfitFunctor(std::span<Configuration> configs,
                 ForceCalculator model,
-                double energy_weight = 1.0,
-                double stress_weight = 0.0);
-
-  // Backward-compatible constructor for pair-only models.
-  // Wraps potentials in a PairForceCalculator internally.
-  PotfitFunctor(std::span<Configuration> configs,
-                std::span<Potential> potentials,
                 double energy_weight = 1.0,
                 double stress_weight = 0.0);
 

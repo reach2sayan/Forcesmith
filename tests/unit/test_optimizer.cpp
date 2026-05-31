@@ -1,3 +1,4 @@
+#include "potfit/force/pair_force.hpp"
 #include "potfit/optimization/optimizer.hpp"
 #include "potfit/optimization/potfit_functor.hpp"
 #include "potfit/potentials/analytic_potential.hpp"
@@ -31,14 +32,13 @@ static Configuration make_lj_dimer(double eps, double sigma, double r) {
     return cfg;
 }
 
-// Evaluate the functor residual squared norm at the current param values in pots.
+// Evaluate the functor residual squared norm at the current param values in model.
 static double eval_residual(std::vector<Configuration>& configs,
-                             std::vector<Potential>&     pots,
+                             ForceCalculator&            model,
                              double                      energy_weight) {
-    PotfitFunctor functor(configs, pots, energy_weight);
+    PotfitFunctor functor(configs, model, energy_weight);
     Eigen::VectorXd x(functor.inputs());
-    int off = 0;
-    for (const auto& p : pots) { p.gather_params(x, off); off += p.param_count(); }
+    std::visit([&](const auto& m){ m.gather_params(x, std::size_t{0}); }, model);
 
     Eigen::VectorXd fvec(functor.values());
     functor(x, fvec);
@@ -56,8 +56,9 @@ TEST(Optimizer, ZeroResidualAtGroundTruth) {
 
     std::vector<Potential> pots;
     pots.emplace_back(LennardJones(eps, sigma, sigma * 0.5, sigma * 5.0));
+    ForceCalculator model = make_pair_force_calculator(std::move(pots));
 
-    const double res = eval_residual(configs, pots, 1.0);
+    const double res = eval_residual(configs, model, 1.0);
     EXPECT_LT(res, 1e-20)
         << "Residual at ground truth should be ~0, got " << res;
 }
@@ -72,6 +73,7 @@ TEST(Optimizer, ConvergesFromPerturbedEpsilon) {
     // Start from eps = 0.5 (significantly perturbed).
     std::vector<Potential> pots;
     pots.emplace_back(LennardJones(0.5, sigma, sigma * 0.5, sigma * 5.0));
+    ForceCalculator model = make_pair_force_calculator(std::move(pots));
 
     // With energy_weight = 1.0 we have 2 force + 1 energy equation for 2 unknowns (ε, σ).
     OptimizerOptions opts;
@@ -80,15 +82,15 @@ TEST(Optimizer, ConvergesFromPerturbedEpsilon) {
     opts.ftol          = 1e-10;
     opts.energy_weight = 1.0;
 
-    const double res_before = eval_residual(configs, pots, opts.energy_weight);
+    const double res_before = eval_residual(configs, model, opts.energy_weight);
     EXPECT_GT(res_before, 1e-4) << "residual should be large before optimization";
 
-    int status = run_optimizer(configs, pots, opts);
+    int status = run_optimizer(configs, model, opts);
 
     // LM success codes: 1=RelErr, 2=FuncEps, 3=XtolReached, 4=GradEps.
     EXPECT_GE(status, 1) << "LM returned failure code " << status;
 
-    const double res_after = eval_residual(configs, pots, opts.energy_weight);
+    const double res_after = eval_residual(configs, model, opts.energy_weight);
     EXPECT_LT(res_after, 1e-6)
         << "Residual after optimization = " << res_after;
 }
@@ -102,15 +104,16 @@ TEST(Optimizer, ResidualDecreasesOrStays) {
 
     std::vector<Potential> pots;
     pots.emplace_back(LennardJones(0.7, sigma * 1.05, sigma * 0.5, sigma * 6.0));
+    ForceCalculator model = make_pair_force_calculator(std::move(pots));
 
-    const double res_before = eval_residual(configs, pots, 1.0);
+    const double res_before = eval_residual(configs, model, 1.0);
 
     OptimizerOptions opts;
     opts.max_iter      = 5;  // just a few iterations
     opts.energy_weight = 1.0;
-    run_optimizer(configs, pots, opts);
+    run_optimizer(configs, model, opts);
 
-    const double res_after = eval_residual(configs, pots, 1.0);
+    const double res_after = eval_residual(configs, model, 1.0);
     EXPECT_LE(res_after, res_before * 1.01)  // allow 1% tolerance for numerical noise
         << "Residual increased after optimization: " << res_before << " -> " << res_after;
 }

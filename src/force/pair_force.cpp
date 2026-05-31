@@ -64,4 +64,14 @@ void PairForceCalculator::eval_forces(Configuration &cfg) const {
   events::on_force_eval(events::ForceEvalStats{conf_index, rms});
 }
 
+PairForceCalculator make_pair_force_calculator(std::vector<Potential> potentials) {
+  const std::size_t n = potentials.size();
+  const std::size_t ntypes = static_cast<std::size_t>(
+      std::lround((-1.0 + std::sqrt(1.0 + 8.0 * static_cast<double>(n))) / 2.0));
+  PairForceCalculator calc;
+  calc.pair.reserve(ntypes);
+  for (auto &p : potentials) calc.pair.emplace_back(std::move(p));
+  return calc;
+}
+
 } // namespace potfit

@@ -3,6 +3,7 @@
 #include "potfit/force/force_calculator_concept.hpp"
 #include "potfit/force/potential_table.hpp"
 #include <Eigen/Core>
+#include <vector>
 
 namespace potfit {
 
@@ -20,5 +21,9 @@ struct PairForceCalculator {
 };
 
 static_assert(ForceCalculatorModel<PairForceCalculator>);
+
+// Build a PairForceCalculator that owns the given flat potential list.
+// ntypes is inferred from paircol = ntypes*(ntypes+1)/2.
+PairForceCalculator make_pair_force_calculator(std::vector<Potential> potentials);
 
 } // namespace potfit
