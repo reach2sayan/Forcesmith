@@ -48,14 +48,18 @@ TEST(SplinePotential, DerivConsistentWithEval) {
     }
 }
 
-TEST(SplinePotential, BoundaryClampBelow) {
+// Out of range, eval extrapolates linearly with the boundary slope (matching
+// potfit's splint), not clamping. Boundary slope here is (3-5)/(2-1) = -2.
+TEST(SplinePotential, BoundaryExtrapolateBelow) {
     SplinePotential sp({1.0, 2.0, 3.0}, {5.0, 3.0, 1.0});
-    EXPECT_NEAR(sp.eval(0.0), 5.0, 1e-15);  // clamped to y[0]
+    EXPECT_NEAR(sp.eval(0.0), 7.0, 1e-15);   // 5 + (-2)(0-1)
+    EXPECT_NEAR(sp.deriv(0.0), -2.0, 1e-15);
 }
 
-TEST(SplinePotential, BoundaryClampAbove) {
+TEST(SplinePotential, BoundaryExtrapolateAbove) {
     SplinePotential sp({1.0, 2.0, 3.0}, {5.0, 3.0, 1.0});
-    EXPECT_NEAR(sp.eval(4.0), 1.0, 1e-15);  // clamped to y[n-1]
+    EXPECT_NEAR(sp.eval(4.0), -1.0, 1e-15);  // 1 + (-2)(4-3)
+    EXPECT_NEAR(sp.deriv(4.0), -2.0, 1e-15);
 }
 
 TEST(SplinePotential, SpanReturnsKnotExtents) {
