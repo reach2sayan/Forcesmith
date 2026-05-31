@@ -20,19 +20,20 @@ namespace potfit {
 //   pair    — φ_{ij}(r)      pair repulsion,              paircol entries
 //   radial  — f_{ij}(r)      radial three-body modulation, paircol entries
 //   angular — g_i(cos θ)     angular function, indexed by the *central* atom
-//                             type i (matches potfit's col = 2*paircol + typ_i),
+//                             type i (matches potfit's col = 2*paircol +
+//                             typ_i),
 //                                                          ntypes entries
 struct AngularForceCalculator : ForceCalculatorBase<AngularForceCalculator> {
-  PotentialPair  pair;
-  PotentialPair  radial;
+  PotentialPair pair;
+  PotentialPair radial;
   PotentialArray angular;
 
   void eval_forces(Configuration &cfg) const;
 
   std::size_t param_count() const;
-  void        gather_params(Eigen::VectorXd& dst, std::size_t off) const;
-  void        scatter_params(const Eigen::VectorXd& src, std::size_t off);
-  double      max_cutoff() const;
+  void gather_params(Eigen::VectorXd &dst, std::size_t off) const;
+  void scatter_params(const Eigen::VectorXd &src, std::size_t off);
+  double max_cutoff() const;
 };
 
 static_assert(ForceCalculatorModel<AngularForceCalculator>);

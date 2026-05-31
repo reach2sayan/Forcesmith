@@ -2,11 +2,12 @@
 
 // Curvature (smoothness) regularization, force-calculator level.
 //
-// Sums the per-potential curvature residuals (see potfit/potentials/curvature.hpp)
-// over every tabulated potential a calculator owns. The default reports zero
-// (calculators with no tabulated potentials — e.g. Tersoff/Stiweb, which are
-// purely analytic — contribute nothing). Calculators built from `Potential`
-// tables overload the two entry points below by iterating their public tables.
+// Sums the per-potential curvature residuals (see
+// potfit/potentials/curvature.hpp) over every tabulated potential a calculator
+// owns. The default reports zero (calculators with no tabulated potentials —
+// e.g. Tersoff/Stiweb, which are purely analytic — contribute nothing).
+// Calculators built from `Potential` tables overload the two entry points below
+// by iterating their public tables.
 
 #include "potfit/force/force_calculator.hpp"
 #include "potfit/force/force_calculator_concept.hpp"
@@ -18,8 +19,7 @@
 namespace potfit {
 
 // Defaults: a calculator contributes no curvature residuals.
-template <typename M>
-std::size_t model_smoothness_count(const M &) {
+template <typename M> std::size_t model_smoothness_count(const M &) {
   return 0;
 }
 template <typename M>

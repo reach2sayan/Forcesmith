@@ -24,17 +24,17 @@ struct PairBond {
 struct PairForceCalculator {
   std::size_t ntypes = 1;
   std::uint64_t conf_index = 0;
-  PotentialPair pair; // owned pair potentials; eval_forces uses these directly
-  std::vector<GlobalParam> globals; // shared params (e.g. smooth-cutoff h)
+  PotentialPair pair;
+  std::vector<GlobalParam> globals;
 
   void eval_forces(Configuration &cfg) const;
 
   std::size_t param_count() const;
-  void        gather_params(Eigen::VectorXd &dst, std::size_t off) const;
-  void        scatter_params(const Eigen::VectorXd &src, std::size_t off);
-  double      max_cutoff() const;
-  void        broadcast_globals();  // see EAMForceCalculator::broadcast_globals
-  void        finalize_globals();   // see EAMForceCalculator::finalize_globals
+  void gather_params(Eigen::VectorXd &dst, std::size_t off) const;
+  void scatter_params(const Eigen::VectorXd &src, std::size_t off);
+  double max_cutoff() const;
+  void broadcast_globals();
+  void finalize_globals();
 
 private:
   // ── per-bond pipeline stages (see eval_forces) ────────────────────────────
@@ -53,6 +53,7 @@ static_assert(ForceCalculatorModel<PairForceCalculator>);
 
 // Build a PairForceCalculator that owns the given flat potential list.
 // ntypes is inferred from paircol = ntypes*(ntypes+1)/2.
-PairForceCalculator make_pair_force_calculator(std::vector<Potential> potentials);
+PairForceCalculator
+make_pair_force_calculator(std::vector<Potential> potentials);
 
 } // namespace potfit

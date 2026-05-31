@@ -38,14 +38,14 @@
 namespace potfit {
 
 struct SWParams {
-  Param A     = 1.0; // 2-body repulsive amplitude (eV)
-  Param B     = 1.0; // 2-body attractive amplitude (eV)
-  Param p     = 4.0; // repulsive exponent
-  Param q     = 0.0; // attractive exponent
+  Param A = 1.0;     // 2-body repulsive amplitude (eV)
+  Param B = 1.0;     // 2-body attractive amplitude (eV)
+  Param p = 4.0;     // repulsive exponent
+  Param q = 0.0;     // attractive exponent
   Param delta = 1.0; // 2-body exponential coefficient
-  Param a1    = 1.8; // 2-body cutoff
+  Param a1 = 1.8;    // 2-body cutoff
   Param gamma = 1.0; // 3-body exponential coefficient
-  Param a2    = 1.8; // 3-body cutoff
+  Param a2 = 1.8;    // 3-body cutoff
 };
 
 // params — one SWParams per unique pair type (paircol = ntypes*(ntypes+1)/2),
@@ -54,7 +54,7 @@ struct SWParams {
 // a flat vector of ntypes·paircol entries, indexed i·paircol + pair_slot(j,k).
 struct StiwebForceCalculator : ForceCalculatorBase<StiwebForceCalculator> {
   SymmetricMatrix<SWParams> params;
-  std::vector<Param>        lambda;
+  std::vector<Param> lambda;
 
   // Upper-triangular slot for an unordered (j,k) pair, identical to
   // SymmetricMatrix::slot — keeps λ indexing consistent with `params`.
@@ -76,9 +76,9 @@ struct StiwebForceCalculator : ForceCalculatorBase<StiwebForceCalculator> {
   void eval_forces(Configuration &cfg) const;
 
   std::size_t param_count() const;
-  void        gather_params(Eigen::VectorXd& dst, std::size_t off) const;
-  void        scatter_params(const Eigen::VectorXd& src, std::size_t off);
-  double      max_cutoff() const;
+  void gather_params(Eigen::VectorXd &dst, std::size_t off) const;
+  void scatter_params(const Eigen::VectorXd &src, std::size_t off);
+  double max_cutoff() const;
 };
 
 static_assert(ForceCalculatorModel<StiwebForceCalculator>);

@@ -22,7 +22,8 @@ namespace potfit::io {
 // Parse a model-aware JSON potential file.
 // The "ntypes" key (default 1) sets the number of element types.
 //
-// "pair"    — requires top-level "format" and "potentials" (same as parse_potential).
+// "pair"    — requires top-level "format" and "potentials" (same as
+// parse_potential).
 //             Returns paircol = ntypes*(ntypes+1)/2 potentials.
 //
 // "eam"     — requires "pair", "density", "embedding" sub-objects,
@@ -37,7 +38,6 @@ namespace potfit::io {
 //
 // "stiweb"  — requires "potentials" array of paircol objects with
 //             fields: A, B, p, q, a, sigma, lambda, gamma.
-boost::leaf::result<ForceCalculator>
-parse_force_model(std::string_view input);
+boost::leaf::result<ForceCalculator> parse_force_model(std::string_view input);
 
 } // namespace potfit::io

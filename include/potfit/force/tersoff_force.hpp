@@ -79,7 +79,6 @@ private:
   static double bond_order(double zeta, const TersoffParams &p) noexcept;
   static double dbond_dzeta(double zeta, const TersoffParams &p) noexcept;
 
-  // ── per-bond evaluation pipeline stages (see eval_forces) ─────────────────
   // Each stage takes a Bond, performs one conceptual step, and passes it on. An
   // empty std::optional means "this bond contributes nothing" (outside the
   // cutoff shell, or no angular neighbours), so the chain short-circuits.

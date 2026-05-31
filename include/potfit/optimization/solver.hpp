@@ -10,19 +10,18 @@
 
 namespace potfit {
 
-// Residual map x ↦ F(x) and the (optional) Jacobian map (x, J) ↦ ∂F/∂x. An empty
-// JacobianFn means "no analytic/parallel Jacobian supplied" — solvers that need
-// a Jacobian fall back to their own finite differences.
+// Residual map x ↦ F(x) and the (optional) Jacobian map (x, J) ↦ ∂F/∂x. An
+// empty JacobianFn means "no analytic/parallel Jacobian supplied" — solvers
+// that need a Jacobian fall back to their own finite differences.
 using ResidualFn = std::function<Eigen::VectorXd(const Eigen::VectorXd &)>;
 using JacobianFn =
     std::function<void(const Eigen::VectorXd &, Eigen::MatrixXd &)>;
 
 template <typename T>
-concept SolverImpl =
-    requires(const T &s, Eigen::VectorXd &x, ResidualFn f, JacobianFn jac,
-             int n_vals) {
-      { s.minimize(x, f, jac, n_vals) } -> std::convertible_to<int>;
-    };
+concept SolverImpl = requires(const T &s, Eigen::VectorXd &x, ResidualFn f,
+                              JacobianFn jac, int n_vals) {
+  { s.minimize(x, f, jac, n_vals) } -> std::convertible_to<int>;
+};
 
 namespace detail {
 struct SolverConcept {
@@ -35,9 +34,9 @@ struct SolverConcept {
 class Solver : private detail::ErasedMoveOnly<detail::SolverConcept> {
   template <typename T> struct Model final : detail::SolverConcept {
     T impl_;
-    explicit Model(T t) : impl_(std::move(t)) {}
-    int minimize(Eigen::VectorXd &x, ResidualFn f, JacobianFn jac,
-                 int n_vals) const override {
+    constexpr explicit Model(T t) : impl_(std::move(t)) {}
+    constexpr int minimize(Eigen::VectorXd &x, ResidualFn f, JacobianFn jac,
+                           int n_vals) const override {
       return impl_.minimize(x, std::move(f), std::move(jac), n_vals);
     }
   };
@@ -47,15 +46,16 @@ class Solver : private detail::ErasedMoveOnly<detail::SolverConcept> {
 public:
   template <SolverImpl T>
     requires(!std::same_as<std::decay_t<T>, Solver>)
-  explicit Solver(T impl) : Base(std::make_unique<Model<T>>(std::move(impl))) {}
+  constexpr explicit Solver(T impl)
+      : Base(std::make_unique<Model<T>>(std::move(impl))) {}
 
-  Solver(Solver &&) = default;
-  Solver &operator=(Solver &&) = default;
+  constexpr Solver(Solver &&) = default;
+  constexpr Solver &operator=(Solver &&) = default;
   Solver(const Solver &) = delete;
   Solver &operator=(const Solver &) = delete;
 
-  int minimize(Eigen::VectorXd &x, ResidualFn f, JacobianFn jac,
-               int n_vals) const {
+  constexpr int minimize(Eigen::VectorXd &x, ResidualFn f, JacobianFn jac,
+                         int n_vals) const {
     return self_->minimize(x, std::move(f), std::move(jac), n_vals);
   }
 };

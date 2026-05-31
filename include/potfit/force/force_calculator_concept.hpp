@@ -18,18 +18,13 @@ namespace potfit {
 struct GlobalParam {
   Param value;
   struct Link {
-    int region;          // calculator sub-table: 0=pair, 1=density, 2=embedding
-    std::size_t index;   // flat position within that table (gather/scatter order)
-    std::size_t param;   // parameter slot inside that potential
+    int region;        // calculator sub-table: 0=pair, 1=density, 2=embedding
+    std::size_t index; // flat position within that table (gather/scatter order)
+    std::size_t param; // parameter slot inside that potential
   };
   std::vector<Link> links;
 };
 
-// NOTE: GCC 13's -Wdangling-reference is a false positive in these loops. The
-// ranges are always lvalue member containers and their iterators' operator*
-// returns a real T& into the underlying storage, so the loop reference never
-// dangles. See GCC PR#107532. Suppressed locally rather than weakening the
-// warning project-wide.
 #if defined(__GNUC__) && !defined(__clang__)
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wdangling-reference"
