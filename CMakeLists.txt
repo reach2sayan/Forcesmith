@@ -89,6 +89,7 @@ set(POTFIT_LIB_SOURCES
     src/force/eam_force.cpp
     src/force/stiweb_force.cpp
     src/force/tersoff_force.cpp
+    src/force/evaluate.cpp
     src/io/config_reader.cpp
     src/io/force_model_reader.cpp
     src/io/output_writer.cpp
