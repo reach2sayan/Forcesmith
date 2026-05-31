@@ -2,29 +2,40 @@
 
 #include "potfit/core/atom.hpp"
 #include <Eigen/Core>
-#include <boost/hof/lambda.hpp>
 #include <concepts>
 #include <cstdint>
 
 namespace potfit {
 
-BOOST_HOF_STATIC_LAMBDA_FUNCTION(gather_range) = [](const auto &range,
-                                                     Eigen::VectorXd &dst,
-                                                     std::size_t &off) {
+// NOTE: GCC 13's -Wdangling-reference is a false positive in these loops. The
+// ranges are always lvalue member containers and their iterators' operator*
+// returns a real T& into the underlying storage, so the loop reference never
+// dangles. See GCC PR#107532. Suppressed locally rather than weakening the
+// warning project-wide.
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdangling-reference"
+#endif
+
+template <typename Range>
+void gather_range(const Range &range, Eigen::VectorXd &dst, std::size_t &off) {
   for (const auto &p : range) {
     p.gather_params(dst, off);
     off += p.param_count();
   }
-};
+}
 
-BOOST_HOF_STATIC_LAMBDA_FUNCTION(scatter_range) = [](auto &range,
-                                                      const Eigen::VectorXd &src,
-                                                      std::size_t &off) {
+template <typename Range>
+void scatter_range(Range &range, const Eigen::VectorXd &src, std::size_t &off) {
   for (auto &p : range) {
     p.scatter_params(src, off);
     off += p.param_count();
   }
-};
+}
+
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC diagnostic pop
+#endif
 
 template <typename T>
 concept ForceCalculatorModel =

@@ -57,15 +57,7 @@ void PairForceCalculator::eval_forces(Configuration &cfg) const {
     }
   }
 
-  double rms2 = std::transform_reduce(
-      cfg.atoms.begin(), cfg.atoms.end(), 0.0, std::plus<>{},
-      [](const auto &atom) { return atom.calc_force.squaredNorm(); });
-  const double rms =
-      cfg.atoms.empty()
-          ? 0.0
-          : std::sqrt(rms2 / static_cast<double>(cfg.atoms.size()));
-
-  events::on_force_eval(events::ForceEvalStats{conf_index, rms});
+  events::on_force_eval(events::ForceEvalStats{conf_index, force_rms(cfg)});
 }
 
 PairForceCalculator

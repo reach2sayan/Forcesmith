@@ -10,10 +10,30 @@ namespace potfit::io {
 
 using json = nlohmann::json;
 
-// Sample each potential on a uniform grid and write JSON tabulated format.
-// Works correctly for both SplinePotential and analytic types (LJ, Morse,
-// etc.).
-static constexpr int kDefaultKnots = 500;
+// Sample one potential on a uniform grid over its span → {rmin,rmax,knots}.
+static json sample_one(const Potential &p, int nknots) {
+  auto [lo, hi] = p.span();
+  const double step = (hi - lo) / (nknots - 1);
+  json pot;
+  pot["rmin"] = lo;
+  pot["rmax"] = hi;
+  pot["knots"] = json::array();
+  for (int k : std::views::iota(0, nknots))
+    pot["knots"].push_back(p.eval(lo + k * step));
+  return pot;
+}
+
+// Build a {format:"tabulated", potentials:[...]} section from a range of
+// Potentials (works for the flat vector and for PotentialPair/PotentialArray).
+template <typename Range>
+static json sample_section(const Range &pots, int nknots) {
+  json sec;
+  sec["format"] = "tabulated";
+  sec["potentials"] = json::array();
+  for (const auto &p : pots)
+    sec["potentials"].push_back(sample_one(p, nknots));
+  return sec;
+}
 
 void write_native(const std::filesystem::path &path,
                   const std::vector<Potential> &potentials, int nknots) {
@@ -21,29 +41,26 @@ void write_native(const std::filesystem::path &path,
   if (!f)
     throw std::runtime_error("cannot open " + path.string());
 
-  json j;
-  j["format"] = "tabulated";
-  j["potentials"] = json::array();
-
-  for (const auto &p : potentials) {
-    auto [lo, hi] = p.span();
-    const double step = (hi - lo) / (nknots - 1);
-    json pot;
-    pot["rmin"] = lo;
-    pot["rmax"] = hi;
-    pot["knots"] = json::array();
-    for (int k : std::views::iota(0, nknots)) {
-      pot["knots"].push_back(p.eval(lo + k * step));
-    }
-    j["potentials"].push_back(std::move(pot));
-  }
-
+  json j = sample_section(potentials, nknots);
   f << j.dump(2) << "\n";
 }
 
-void write_native(const std::filesystem::path &path,
-                  const std::vector<Potential> &potentials) {
-  write_native(path, potentials, kDefaultKnots);
+void write_native_eam(const std::filesystem::path &path,
+                      const EAMForceCalculator &eam, int nknots) {
+  std::ofstream f(path);
+  if (!f)
+    throw std::runtime_error("cannot open " + path.string());
+
+  // ADP/angular/tersoff/stiweb can reuse sample_section the same way when their
+  // output is added; only EAM is supported here.
+  json j;
+  j["model"] = "eam";
+  j["ntypes"] = eam.density.size();
+  j["pair"] = sample_section(eam.pair, nknots);
+  j["density"] = sample_section(eam.density, nknots);
+  j["embedding"] = sample_section(eam.embedding, nknots);
+
+  f << j.dump(2) << "\n";
 }
 
 void write_lammps(const std::filesystem::path &path,

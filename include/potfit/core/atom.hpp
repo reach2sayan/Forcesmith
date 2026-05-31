@@ -5,6 +5,9 @@
 #include "potfit/core/types.hpp"
 
 #include <boost/serialization/vector.hpp>
+#include <cmath>
+#include <functional>
+#include <numeric>
 #include <vector>
 
 namespace potfit {
@@ -43,6 +46,17 @@ struct Configuration : Serializable<Configuration> {
   double calc_energy = 0.0;
   SymTens calc_stress = SymTens::Zero();
 };
+
+// Root-mean-square of the per-atom calculated forces over a configuration.
+// Returns 0 for an empty configuration.
+inline double force_rms(const Configuration &cfg) {
+  const double sq = std::transform_reduce(
+      cfg.atoms.begin(), cfg.atoms.end(), 0.0, std::plus<>{},
+      [](const Atom &a) { return a.calc_force.squaredNorm(); });
+  return cfg.atoms.empty()
+             ? 0.0
+             : std::sqrt(sq / static_cast<double>(cfg.atoms.size()));
+}
 
 template <> struct Serializer<NeighborEntry> {
   template <class Archive>

@@ -14,6 +14,7 @@ private:
     frac = frac.array() - round(frac.array());
     return box_ * frac;
   }
+
 public:
   explicit PeriodicBC(const Mat3 &box) { set_box(box); }
   void set_box(const Mat3 &box) {

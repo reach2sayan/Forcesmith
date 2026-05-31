@@ -128,7 +128,13 @@ leaf::result<std::vector<Potential>> parse_potential(std::string_view input) {
           x[k] = rmin + static_cast<double>(k) * h;
           y[k] = knot.get<double>();
         }
-        potentials.emplace_back(SplinePotential(std::move(x), std::move(y)));
+        SplinePotential sp(std::move(x), std::move(y));
+        // Optional "fixed": true freezes every knot, so this potential
+        // contributes no free parameters to the optimizer (held constant).
+        if (p.value("fixed", false))
+          for (std::size_t k = 0; k < static_cast<std::size_t>(n); ++k)
+            sp.set_fixed(k, true);
+        potentials.emplace_back(std::move(sp));
       }
       return potentials;
     }

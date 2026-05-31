@@ -40,8 +40,8 @@ leaf::result<std::vector<Potential>> parse_pot_list(const json &sub,
 
 // Load paircol potentials from sub into a PotentialPair
 // (SymmetricMatrix<Potential>).
-leaf::result<void> fill_pair(PotentialPair &mat, const json &sub, std::size_t ntypes,
-                             std::string_view label) {
+leaf::result<void> fill_pair(PotentialPair &mat, const json &sub,
+                             std::size_t ntypes, std::string_view label) {
   auto fail = [&](std::string msg) -> leaf::result<void> {
     return leaf::new_error(
         ParseError{std::string(label) + ": " + std::move(msg), 0});
@@ -65,8 +65,8 @@ leaf::result<void> fill_pair(PotentialPair &mat, const json &sub, std::size_t nt
 }
 
 // Load ntypes potentials from sub into a PotentialArray (TypeArray<Potential>).
-leaf::result<void> fill_arr(PotentialArray &arr, const json &sub, std::size_t ntypes,
-                            std::string_view label) {
+leaf::result<void> fill_arr(PotentialArray &arr, const json &sub,
+                            std::size_t ntypes, std::string_view label) {
   auto fail = [&](std::string msg) -> leaf::result<void> {
     return leaf::new_error(
         ParseError{std::string(label) + ": " + std::move(msg), 0});
@@ -124,7 +124,7 @@ leaf::result<ForceCalculator> parse_force_model(std::string_view input) {
       auto r = parse_potential(input);
       if (!r)
         return r.error();
-      auto& pots = *r;
+      auto &pots = *r;
       const std::size_t paircol = ntypes * (ntypes + 1) / 2;
       if (pots.size() != paircol)
         return fail("pair: expected " + std::to_string(paircol) +
@@ -133,7 +133,8 @@ leaf::result<ForceCalculator> parse_force_model(std::string_view input) {
       PairForceCalculator calc;
       calc.ntypes = ntypes;
       calc.pair.reserve(ntypes);
-      for (auto& p : pots) calc.pair.emplace_back(std::move(p));
+      for (auto &p : pots)
+        calc.pair.emplace_back(std::move(p));
       return ForceCalculator{std::move(calc)};
     }
 
@@ -231,17 +232,17 @@ leaf::result<ForceCalculator> parse_force_model(std::string_view input) {
 
       for (const auto &p : pots_arr) {
         TersoffParams tp;
-        tp.A      = p.at("A").get<double>();
-        tp.B      = p.at("B").get<double>();
+        tp.A = p.at("A").get<double>();
+        tp.B = p.at("B").get<double>();
         tp.lambda = p.at("lambda").get<double>();
-        tp.mu     = p.at("mu").get<double>();
-        tp.beta   = p.at("beta").get<double>();
-        tp.n      = p.at("n").get<double>();
-        tp.c      = p.at("c").get<double>();
-        tp.d      = p.at("d").get<double>();
-        tp.h      = p.at("h").get<double>();
-        tp.R      = p.at("R").get<double>();
-        tp.S      = p.at("S").get<double>();
+        tp.mu = p.at("mu").get<double>();
+        tp.beta = p.at("beta").get<double>();
+        tp.n = p.at("n").get<double>();
+        tp.c = p.at("c").get<double>();
+        tp.d = p.at("d").get<double>();
+        tp.h = p.at("h").get<double>();
+        tp.R = p.at("R").get<double>();
+        tp.S = p.at("S").get<double>();
         calc.params.emplace_back(tp);
       }
 
@@ -265,14 +266,14 @@ leaf::result<ForceCalculator> parse_force_model(std::string_view input) {
 
       for (const auto &p : pots_arr) {
         SWParams sp;
-        sp.A      = p.at("A").get<double>();
-        sp.B      = p.at("B").get<double>();
-        sp.p      = p.at("p").get<double>();
-        sp.q      = p.at("q").get<double>();
-        sp.a      = p.at("a").get<double>();
-        sp.sigma  = p.at("sigma").get<double>();
+        sp.A = p.at("A").get<double>();
+        sp.B = p.at("B").get<double>();
+        sp.p = p.at("p").get<double>();
+        sp.q = p.at("q").get<double>();
+        sp.a = p.at("a").get<double>();
+        sp.sigma = p.at("sigma").get<double>();
         sp.lambda = p.at("lambda").get<double>();
-        sp.gamma  = p.at("gamma").get<double>();
+        sp.gamma = p.at("gamma").get<double>();
         calc.params.emplace_back(sp);
       }
 

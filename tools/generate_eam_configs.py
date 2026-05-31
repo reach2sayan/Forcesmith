@@ -226,6 +226,46 @@ def to_tabulated_json(pot, n_knots=200):
     }
 
 
+def make_tabulated_start(pot, n_knots, pair_scale, pair_rmin):
+    """Build a *coarse* tabulated EAM start from the NIST potential.
+
+    Fitting all three EAM functions freely is ill-posed: the EAM gauge freedoms
+    (density scaling, pair/embedding linear shift) plus sparse sampling of
+    intermediate r let the optimizer drive the functions wild while still
+    matching forces along a flat direction.  So we set up a *well-posed*
+    recovery:
+
+      * Freeze density and embedding at their NIST values — fit the pair only,
+        which removes the gauge freedom.
+      * Put the pair knots only over [pair_rmin, cutoff], the range the FCC
+        training data actually probes.  Knots below the nearest-neighbor
+        distance (~2.5 Å) are never sampled, so leaving them free makes the
+        Jacobian rank-deficient and the optimizer dumps garbage (huge spikes)
+        into that null space.  The repulsive wall cannot be fit from
+        equilibrium-FCC data anyway.
+
+    The pair knots are scaled by ``pair_scale`` so the optimizer starts off the
+    minimum and has a genuine target to recover.
+    """
+    start = to_tabulated_json(pot, n_knots=n_knots)
+
+    # Rebuild the pair section over the probed range [pair_rmin, cutoff].
+    _, _, phi_cs = build_splines(pot)
+    cutoff = pot["cutoff"]
+    x_phi = np.linspace(pair_rmin, cutoff, n_knots)
+    y_phi = np.nan_to_num(phi_cs(x_phi)) * pair_scale
+    start["pair"]["potentials"][0] = {
+        "rmin": float(pair_rmin),
+        "rmax": float(cutoff),
+        "knots": [float(v) for v in y_phi],
+    }
+
+    # Freeze density and embedding (fit pair only).
+    start["density"]["potentials"][0]["fixed"] = True
+    start["embedding"]["potentials"][0]["fixed"] = True
+    return start
+
+
 # ── EAM force engine (NumPy + scipy) ─────────────────────────────────────────
 #
 # Uses a proper image-cell search so the minimum-image convention is not
@@ -342,6 +382,25 @@ def generate_configs(element, F_cs, rho_at_cs, phi_cs, cutoff, rng, n_disp=5):
     return records
 
 
+def min_interatomic_distance(records):
+    """Smallest interatomic distance (incl. nearest periodic images) over all
+    configs.  Pair knots below this are never sampled by the data."""
+    mind = float("inf")
+    for a, pos, _e, _f in records:
+        n = len(pos)
+        for i in range(n):
+            for j in range(n):
+                for sx in (-1, 0, 1):
+                    for sy in (-1, 0, 1):
+                        for sz in (-1, 0, 1):
+                            if i == j and sx == sy == sz == 0:
+                                continue
+                            d = np.linalg.norm(
+                                pos[j] - pos[i] + np.array([sx, sy, sz]) * a)
+                            mind = min(mind, d)
+    return mind
+
+
 def to_config_json(records, element):
     """Convert list of (a, positions, energy, forces) to potfit config JSON."""
     configs = []
@@ -373,10 +432,13 @@ def download_cached(url, cache_path):
         return
     print(f"  Downloading {url} ...")
     try:
-        urllib.request.urlretrieve(url, cache_path)
+        # NIST returns 403 to bare urllib (no User-Agent); send a browser-like one.
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(req) as resp, open(cache_path, "wb") as out:
+            out.write(resp.read())
     except Exception as exc:
         sys.exit(f"ERROR: Download failed: {exc}\n"
-                 f"       Try manually:  wget -O {cache_path} '{url}'")
+                 f"       Try manually:  curl -L -o {cache_path} '{url}'")
     print(f"  Saved to {cache_path}")
 
 
@@ -387,6 +449,30 @@ def main():
                         help="Directory for output files (default: data/)")
     parser.add_argument("--potfit", default="./build/potfit",
                         help="Path to the potfit binary for run_fitting.sh")
+    parser.add_argument("--start", choices=["analytic", "tabulated"],
+                        default="tabulated",
+                        help="Starting potential form (default: tabulated). "
+                             "'tabulated' starts from a coarse, slightly "
+                             "perturbed copy of the NIST potential, which the "
+                             "fit can recover closely. 'analytic' uses a rigid "
+                             "exp_decay+sqrt form whose embedding F=A√(ρ+B) has "
+                             "no additive constant, so it cannot match the "
+                             "absolute cohesive energy (expect an E(a) offset).")
+    parser.add_argument("--start-knots", type=int, default=15,
+                        help="Knots per function for a tabulated start "
+                             "(default: 15)")
+    parser.add_argument("--start-perturb", type=float, default=1.15,
+                        help="Pair-knot scale factor for a tabulated start, so "
+                             "the optimizer starts off the minimum "
+                             "(default: 1.15)")
+    parser.add_argument("--pair-rmin", type=float, default=None,
+                        help="Inner cutoff for tabulated-start pair knots (Å). "
+                             "Default: auto — the minimum interatomic distance "
+                             "actually present in the training configs, so no "
+                             "knot sits in an unprobed (unconstrained) range.")
+    parser.add_argument("--eweight", type=float, default=1.0,
+                        help="Energy residual weight passed to potfit --eweight "
+                             "(default: 1.0)")
     args = parser.parse_args()
 
     outdir = Path(args.output_dir)
@@ -420,13 +506,8 @@ def main():
         true_path.write_text(json.dumps(nist_json, indent=2))
         print(f"  Wrote {true_path}")
 
-        # Write analytic starting potential
-        start_json = ANALYTIC_START[element]
-        start_path = outdir / f"{element.lower()}_eam_start.json"
-        start_path.write_text(json.dumps(start_json, indent=2))
-        print(f"  Wrote {start_path}")
-
-        # Generate training configs
+        # Generate training configs (needed first so a tabulated start can set
+        # its pair inner-cutoff from the distances actually present in the data)
         print(f"  Generating FCC training configs (cutoff={pot['cutoff']:.2f} Å) ...")
         records = generate_configs(element, F_cs, rho_at_cs, phi_cs,
                                    pot["cutoff"], rng, n_disp=5)
@@ -434,6 +515,25 @@ def main():
         train_path = outdir / f"{element.lower()}_training.json"
         train_path.write_text(json.dumps(configs, indent=2))
         print(f"  Wrote {train_path}  ({len(configs)} configs)")
+
+        # Write starting potential (analytic rigid form, or coarse tabulated
+        # copy of NIST that the fit can recover closely)
+        if args.start == "tabulated":
+            # Default pair inner-cutoff = min interatomic distance in the data,
+            # so every pair knot is constrained (no unprobed null space).
+            pair_rmin = (args.pair_rmin if args.pair_rmin is not None
+                         else min_interatomic_distance(records))
+            start_json = make_tabulated_start(pot, args.start_knots,
+                                              args.start_perturb, pair_rmin)
+            print(f"  Start: tabulated (pair: {args.start_knots} knots over "
+                  f"[{pair_rmin:.3f}, {pot['cutoff']:.2f}] ×{args.start_perturb}; "
+                  f"ρ,F frozen at NIST)")
+        else:
+            start_json = ANALYTIC_START[element]
+            print("  Start: analytic")
+        start_path = outdir / f"{element.lower()}_eam_start.json"
+        start_path.write_text(json.dumps(start_json, indent=2))
+        print(f"  Wrote {start_path}")
 
         # Shell-script lines for this element
         elt = element.lower()
@@ -443,7 +543,7 @@ def main():
             f"  -c {outdir}/{elt}_training.json \\",
             f"  -s {outdir}/{elt}_eam_start.json \\",
             f"  -e {outdir}/{elt}_eam_fit.json \\",
-            f"  --algorithm lm --maxiter 500",
+            f"  --algorithm lm --maxiter 500 --eweight {args.eweight}",
             f"echo '{element} done: output in {outdir}/{elt}_eam_fit.json'",
             "",
         ]
@@ -460,7 +560,7 @@ def main():
         elt = element.lower()
         print(f"  {args.potfit} -c {outdir}/{elt}_training.json "
               f"-s {outdir}/{elt}_eam_start.json -e {outdir}/{elt}_eam_fit.json "
-              "--algorithm lm --maxiter 500")
+              f"--algorithm lm --maxiter 500 --eweight {args.eweight}")
 
 
 if __name__ == "__main__":

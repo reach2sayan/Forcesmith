@@ -86,7 +86,7 @@ void AngularForceCalculator::eval_forces(Configuration &cfg) const {
   // Forces on j and k are written via const_cast: cfg is non-const and the
   // pointers come from cfg.atoms, so this is well-defined.
 
-  for (auto &ai : cfg.atoms) {
+  std::ranges::for_each(cfg.atoms, [&](auto &ai) {
     const auto &nbs = ai.neighbors;
     const std::size_t nn = nbs.size();
 
@@ -147,17 +147,9 @@ void AngularForceCalculator::eval_forces(Configuration &cfg) const {
         cfg.calc_stress += d2 * (-fk).transpose();
       }
     }
-  }
+  });
 
-  const double rms2 = std::transform_reduce(
-      cfg.atoms.begin(), cfg.atoms.end(), 0.0, std::plus<>{},
-      [](const auto &a) { return a.calc_force.squaredNorm(); });
-  const double rms =
-      cfg.atoms.empty()
-          ? 0.0
-          : std::sqrt(rms2 / static_cast<double>(cfg.atoms.size()));
-
-  events::on_force_eval(events::ForceEvalStats{conf_index, rms});
+  events::on_force_eval(events::ForceEvalStats{conf_index, force_rms(cfg)});
 }
 
 } // namespace potfit

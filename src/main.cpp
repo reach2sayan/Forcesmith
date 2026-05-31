@@ -162,17 +162,31 @@ int main(int argc, char* argv[]) {
             const std::string fmt  = vm["format"].as<std::string>();
             const std::string outp = vm["endpot"].as<std::string>();
 
-            if (result_pots.empty()) {
-                std::cout << "non-pair potential output not yet implemented; "
-                             "skipping endpot write\n";
-            } else if (fmt == "lammps")
-                potfit::io::write_lammps(outp, result_pots);
-            else if (fmt == "imd")
-                potfit::io::write_imd(outp, result_pots);
-            else
-                potfit::io::write_native(outp, result_pots);
+            const bool wrote = std::visit([&](const auto &calc) -> bool {
+                using T = std::decay_t<decltype(calc)>;
+                if constexpr (std::is_same_v<T, potfit::PairForceCalculator>) {
+                    const std::vector<potfit::Potential> pots(calc.pair.begin(),
+                                                              calc.pair.end());
+                    if (fmt == "lammps")    potfit::io::write_lammps(outp, pots);
+                    else if (fmt == "imd")  potfit::io::write_imd(outp, pots);
+                    else                    potfit::io::write_native(outp, pots);
+                    return true;
+                } else if constexpr (std::is_same_v<T, potfit::EAMForceCalculator>) {
+                    if (fmt != "native")
+                        std::cerr << "warning: '" << fmt
+                                  << "' output unsupported for EAM; writing native JSON\n";
+                    potfit::io::write_native_eam(outp, calc);
+                    return true;
+                } else {
+                    return false;  // ADP/angular/tersoff/stiweb output not yet added
+                }
+            }, model);
 
-            std::cout << "wrote " << fmt << " potential to " << outp << "\n";
+            if (wrote)
+                std::cout << "wrote potential to " << outp << "\n";
+            else
+                std::cout << "output not yet implemented for this model; "
+                             "skipping endpot write\n";
             return {};
         },
         [&](const potfit::io::ParseError& e) {

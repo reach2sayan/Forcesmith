@@ -26,11 +26,11 @@ void build_impl(Configuration &cfg, double rcut, const PotentialPair *pots) {
                               aj.type < pots->ntypes())
                             pot = &(*pots)[ai.type, aj.type];
 
-                          ai.neighbors.push_back(NeighborEntry{
-                              .neighbor = &aj,
-                              .pot = pot,
-                              .dist = d,
-                          });
+                          NeighborEntry entry;
+                          entry.neighbor = &aj;
+                          entry.pot = pot;
+                          entry.dist = d;
+                          ai.neighbors.push_back(entry);
                         });
 }
 

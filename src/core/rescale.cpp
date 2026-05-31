@@ -67,7 +67,7 @@ std::vector<double> compute_rho_ref(EAMForceCalculator &calc,
   std::vector<std::size_t> count(n, 0);
   for (const auto &cfg : configs) {
     for (const auto &a : cfg.atoms) {
-      if (a.type >= 0 && a.type < n) {
+      if (a.type < n) {
         rho_sum[a.type] += a.rho;
         ++count[a.type];
       }
