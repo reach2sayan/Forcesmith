@@ -15,29 +15,48 @@ std::size_t ADPForceCalculator::param_count() const {
        + count_range(dipole) + count_range(quadrupole);
 }
 
-void ADPForceCalculator::gather_params(Eigen::VectorXd &dst, std::size_t off) const {
-  for (const auto &p : pair)       { p.gather_params(dst, off); off += p.param_count(); }
-  for (const auto &p : density)    { p.gather_params(dst, off); off += p.param_count(); }
-  for (const auto &p : embedding)  { p.gather_params(dst, off); off += p.param_count(); }
-  for (const auto &p : dipole)     { p.gather_params(dst, off); off += p.param_count(); }
-  for (const auto &p : quadrupole) { p.gather_params(dst, off); off += p.param_count(); }
+void ADPForceCalculator::gather_params(Eigen::VectorXd &dst,
+                                       std::size_t off) const {
+  auto gather = [&](const auto &range) {
+    for (const auto &p : range) {
+      p.gather_params(dst, off);
+      off += p.param_count();
+    }
+  };
+
+  gather(pair);
+  gather(density);
+  gather(embedding);
+  gather(dipole);
+  gather(quadrupole);
 }
 
-void ADPForceCalculator::scatter_params(const Eigen::VectorXd &src, std::size_t off) {
-  for (auto &p : pair)       { p.scatter_params(src, off); off += p.param_count(); }
-  for (auto &p : density)    { p.scatter_params(src, off); off += p.param_count(); }
-  for (auto &p : embedding)  { p.scatter_params(src, off); off += p.param_count(); }
-  for (auto &p : dipole)     { p.scatter_params(src, off); off += p.param_count(); }
-  for (auto &p : quadrupole) { p.scatter_params(src, off); off += p.param_count(); }
+
+void ADPForceCalculator::scatter_params(const Eigen::VectorXd &src,
+                                        std::size_t off) {
+  auto scatter_range = [&](auto &range) {
+    for (auto &p : range) {
+      p.scatter_params(src, off);
+      off += p.param_count();
+    }
+  };
+
+  scatter_range(pair);
+  scatter_range(density);
+  scatter_range(embedding);
+  scatter_range(dipole);
+  scatter_range(quadrupole);
 }
 
 double ADPForceCalculator::max_cutoff() const {
-  double rcut = 0.0;
-  for (const auto &p : pair)
-    rcut = std::max(rcut, p.span().second);
-  for (const auto &p : density)
-    rcut = std::max(rcut, p.span().second);
-  return rcut;
+  auto max_cutoff = [](const auto &range) {
+    return std::transform_reduce(
+        range.begin(), range.end(), 0.0,
+        [](double a, double b) { return std::max(a, b); },
+        [](const auto &p) { return p.span().second; });
+  };
+
+  return std::max(max_cutoff(pair), max_cutoff(density));
 }
 
 // Helpers for quadrupole force terms (see header for derivation reference).

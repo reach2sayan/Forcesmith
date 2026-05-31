@@ -14,10 +14,14 @@ double pw_linear_eval(const std::vector<double> &x,
                       const std::vector<double> &y, double r) {
   BOOST_ASSERT_MSG(std::ranges::is_sorted(x), "Expected sorted x values");
   const std::size_t n = x.size();
-  std::size_t i =
-      static_cast<std::size_t>(std::upper_bound(x.begin(), x.end(), r) - x.begin());
-  if (i > 0) --i;
-  if (i > n - 2) i = n - 2;
+  std::size_t i = static_cast<std::size_t>(
+      std::upper_bound(x.begin(), x.end(), r) - x.begin());
+  if (i > 0) {
+    --i;
+  }
+  if (i > n - 2) {
+    i = n - 2;
+  }
   const double t = (r - x[i]) / (x[i + 1] - x[i]);
   return y[i] + t * (y[i + 1] - y[i]);
 }
@@ -26,10 +30,14 @@ double pw_linear_deriv(const std::vector<double> &x,
                        const std::vector<double> &y, double r) {
   BOOST_ASSERT_MSG(std::ranges::is_sorted(x), "Expected sorted x values");
   const std::size_t n = x.size();
-  std::size_t i =
-      static_cast<std::size_t>(std::upper_bound(x.begin(), x.end(), r) - x.begin());
-  if (i > 0) --i;
-  if (i > n - 2) i = n - 2;
+  std::size_t i = static_cast<std::size_t>(
+      std::upper_bound(x.begin(), x.end(), r) - x.begin());
+  if (i > 0) {
+    --i;
+  }
+  if (i > n - 2) {
+    i = n - 2;
+  }
   return (y[i + 1] - y[i]) / (x[i + 1] - x[i]);
 }
 
@@ -49,11 +57,8 @@ void SplinePotential::rebuild_interp_() {
   }
 }
 
-std::size_t SplinePotential::param_count() const {
-  return static_cast<std::size_t>(std::ranges::count(fixed_, false));
-}
-
-void SplinePotential::gather_params(Eigen::VectorXd &dst, std::size_t offset) const {
+void SplinePotential::gather_params(Eigen::VectorXd &dst,
+                                    std::size_t offset) const {
   for (auto [y, fixed] : std::views::zip(y_, fixed_)) {
     if (!fixed) {
       dst[offset++] = y;
@@ -61,7 +66,8 @@ void SplinePotential::gather_params(Eigen::VectorXd &dst, std::size_t offset) co
   }
 }
 
-void SplinePotential::scatter_params(const Eigen::VectorXd &src, std::size_t offset) {
+void SplinePotential::scatter_params(const Eigen::VectorXd &src,
+                                     std::size_t offset) {
   for (auto &&[y, fixed] : std::views::zip(y_, fixed_)) {
     if (!fixed) {
       y = src[offset++];
@@ -78,7 +84,7 @@ double SplinePotential::eval(double r) const {
   } else if (!interp_) {
     return pw_linear_eval(x_, y_, r);
   }
-  return (*interp_)(r);
+  return std::invoke(*interp_, r);
 }
 
 double SplinePotential::deriv(double r) const {

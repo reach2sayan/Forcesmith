@@ -15,10 +15,12 @@ public:
   double deriv(double r) const;
   std::pair<double, double> span() const { return {x_.front(), x_.back()}; }
 
-  void set_fixed(std::size_t i, bool f) { fixed_[i] = f; }
-  bool is_fixed(std::size_t i) const { return fixed_[i]; }
+  constexpr void set_fixed(std::size_t i, bool f) { fixed_[i] = f; }
+  constexpr bool is_fixed(std::size_t i) const { return fixed_[i]; }
 
-  std::size_t param_count() const;
+  constexpr std::size_t param_count() const {
+    return static_cast<std::size_t>(std::ranges::count(fixed_, false));
+  }
   void gather_params(Eigen::VectorXd &dst, std::size_t offset) const;
   void scatter_params(const Eigen::VectorXd &src, std::size_t offset);
 

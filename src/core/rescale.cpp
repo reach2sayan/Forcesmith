@@ -18,7 +18,7 @@ struct LinearAdjustedPotential {
   double eval(double x) const { return base.eval(x) - slope * x - intercept; }
   double deriv(double x) const { return base.deriv(x) - slope; }
   std::pair<double, double> span() const { return base.span(); }
-  int param_count() const { return base.param_count(); }
+  std::size_t param_count() const { return base.param_count(); }
   void gather_params(Eigen::VectorXd &v, int off) const {
     base.gather_params(v, off);
   }
@@ -93,10 +93,10 @@ void embed_shift(EAMForceCalculator &calc, std::span<const double> rho_ref) {
     s = emb.deriv(rho);
 
   // Shift embedding: F_t(ρ) → F_t(ρ) − slope_t × ρ
-  for (auto [t, s] :
-       std::views::enumerate(slope) | std::views::filter([](const auto &p) {
-         return std::abs(std::get<1>(p)) >= 1e-14;
-       })) {
+  for (auto [t, s] : std::views::enumerate(slope)) {
+    if (std::abs(s) < 1e-14) {
+      continue;
+    }
     auto &emb = calc.embedding[static_cast<int>(t)];
     emb = Potential(LinearAdjustedPotential{std::move(emb), s, 0.0});
   }
@@ -122,18 +122,18 @@ void rescale_eam(EAMForceCalculator &calc, std::span<Configuration> configs) {
   // embed_shift does not modify density functions, so rho_ref is stable across
   // both steps.
   const auto rho_ref = compute_rho_ref(calc, configs);
-
   // Step 1: gauge-invariant linear shift → F_t′(rho_ref) = 0
   embed_shift(calc, rho_ref);
 
   // Step 2: constant zero-shift → F_t(rho_ref) = 0
-  for (auto [emb, rho] : std::views::zip(calc.embedding, rho_ref) |
-                             std::views::filter([](const auto &p) {
-                               return std::get<1>(p) > 0.0;
-                             })) {
-    const double F0 = emb.eval(rho);
-    if (std::abs(F0) < 1e-14)
+  for (auto [emb, rho] : std::views::zip(calc.embedding, rho_ref)) {
+    if (rho <= 0.0) {
       continue;
+    }
+    const double F0 = emb.eval(rho);
+    if (std::abs(F0) < 1e-14) {
+      continue;
+    }
     emb = Potential(LinearAdjustedPotential{std::move(emb), 0.0, F0});
   }
 }
