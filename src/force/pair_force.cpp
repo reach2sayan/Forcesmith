@@ -10,15 +10,18 @@
 namespace potfit {
 
 std::size_t PairForceCalculator::param_count() const {
-  return std::transform_reduce(pair.begin(), pair.end(), std::size_t{0}, std::plus<>{},
+  return std::transform_reduce(pair.begin(), pair.end(), std::size_t{0},
+                               std::plus<>{},
                                [](const auto &p) { return p.param_count(); });
 }
 
-void PairForceCalculator::gather_params(Eigen::VectorXd &dst, std::size_t off) const {
+void PairForceCalculator::gather_params(Eigen::VectorXd &dst,
+                                        std::size_t off) const {
   gather_range(pair, dst, off);
 }
 
-void PairForceCalculator::scatter_params(const Eigen::VectorXd &src, std::size_t off) {
+void PairForceCalculator::scatter_params(const Eigen::VectorXd &src,
+                                         std::size_t off) {
   scatter_range(pair, src, off);
 }
 
@@ -40,8 +43,9 @@ void PairForceCalculator::eval_forces(Configuration &cfg) const {
   for (auto &atom : cfg.atoms) {
     for (const auto &nb : atom.neighbors) {
       const double r = nb.dist.norm();
-      if (r < 1e-14) continue;
-      const Potential& pot = pair[atom, *nb.neighbor];
+      if (r < 1e-14)
+        continue;
+      const Potential &pot = pair[atom, *nb.neighbor];
       const double inv_r = 1.0 / r;
       const double phi = pot.eval(r);
       const double dphi = pot.deriv(r);
@@ -64,13 +68,16 @@ void PairForceCalculator::eval_forces(Configuration &cfg) const {
   events::on_force_eval(events::ForceEvalStats{conf_index, rms});
 }
 
-PairForceCalculator make_pair_force_calculator(std::vector<Potential> potentials) {
+PairForceCalculator
+make_pair_force_calculator(std::vector<Potential> potentials) {
   const std::size_t n = potentials.size();
-  const std::size_t ntypes = static_cast<std::size_t>(
-      std::lround((-1.0 + std::sqrt(1.0 + 8.0 * static_cast<double>(n))) / 2.0));
+  const std::size_t ntypes = static_cast<std::size_t>(std::lround(
+      (-1.0 + std::sqrt(1.0 + 8.0 * static_cast<double>(n))) / 2.0));
   PairForceCalculator calc;
   calc.pair.reserve(ntypes);
-  for (auto &p : potentials) calc.pair.emplace_back(std::move(p));
+  for (auto &p : potentials) {
+    calc.pair.emplace_back(std::move(p));
+  }
   return calc;
 }
 

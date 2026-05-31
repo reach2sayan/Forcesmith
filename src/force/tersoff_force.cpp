@@ -1,4 +1,5 @@
 #include "potfit/force/tersoff_force.hpp"
+#include "potfit/core/neighbor_list.hpp"
 #include "potfit/events/signals.hpp"
 
 #include <cmath>
@@ -8,13 +9,14 @@
 namespace potfit {
 namespace {
 
-auto tersoff_fields(TersoffParams& p) {
-  return std::array<Param*, 11>{&p.A, &p.B, &p.lambda, &p.mu, &p.beta,
-                                 &p.n, &p.c, &p.d,      &p.h, &p.R, &p.S};
+auto tersoff_fields(TersoffParams &p) {
+  return std::array<Param *, 11>{&p.A, &p.B, &p.lambda, &p.mu, &p.beta, &p.n,
+                                 &p.c, &p.d, &p.h,      &p.R,  &p.S};
 }
-auto tersoff_fields(const TersoffParams& p) {
-  return std::array<const Param*, 11>{&p.A, &p.B, &p.lambda, &p.mu, &p.beta,
-                                       &p.n, &p.c, &p.d,      &p.h, &p.R, &p.S};
+auto tersoff_fields(const TersoffParams &p) {
+  return std::array<const Param *, 11>{&p.A,    &p.B, &p.lambda, &p.mu,
+                                       &p.beta, &p.n, &p.c,      &p.d,
+                                       &p.h,    &p.R, &p.S};
 }
 
 constexpr double fc_val(double r, double R, double S) noexcept {
@@ -77,32 +79,48 @@ constexpr double dbond_dzeta(double zeta, const TersoffParams &p) noexcept {
 
 std::size_t TersoffForceCalculator::param_count() const {
   std::size_t count = 0;
-  for (const auto& p : params)
-    for (const Param* f : tersoff_fields(p))
-      if (!f->fixed) ++count;
+  for (const auto &p : params) {
+    for (const Param *f : tersoff_fields(p)) {
+      if (!f->fixed) {
+        ++count;
+      }
+    }
+  }
   return count;
 }
 
-void TersoffForceCalculator::gather_params(Eigen::VectorXd& dst, std::size_t off) const {
-  for (const auto& p : params)
-    for (const Param* f : tersoff_fields(p))
-      if (!f->fixed) dst[off++] = f->value;
+void TersoffForceCalculator::gather_params(Eigen::VectorXd &dst,
+                                           std::size_t off) const {
+  for (const auto &p : params) {
+    for (const Param *f : tersoff_fields(p)) {
+      if (!f->fixed) {
+        dst[off++] = f->value;
+      }
+    }
+  }
 }
 
-void TersoffForceCalculator::scatter_params(const Eigen::VectorXd& src, std::size_t off) {
-  for (auto& p : params)
-    for (Param* f : tersoff_fields(p))
-      if (!f->fixed) f->value = src[off++];
+void TersoffForceCalculator::scatter_params(const Eigen::VectorXd &src,
+                                            std::size_t off) {
+  for (auto &p : params) {
+    for (Param *f : tersoff_fields(p)) {
+      if (!f->fixed) {
+        f->value = src[off++];
+      }
+    }
+  }
 }
 
 double TersoffForceCalculator::max_cutoff() const {
   double rcut = 0.0;
-  for (const auto& p : params)
+  for (const auto &p : params)
     rcut = std::max(rcut, p.S.value);
   return rcut;
 }
 
 void TersoffForceCalculator::eval_forces(Configuration &cfg) const {
+  build_neighbor_list(cfg, max_cutoff());
+
   cfg.calc_energy = 0.0;
   cfg.calc_stress = SymTens::Zero();
   std::for_each(cfg.atoms.begin(), cfg.atoms.end(),

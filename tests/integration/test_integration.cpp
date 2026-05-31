@@ -282,6 +282,28 @@ TEST(Integration, StiwebSi_TetAngleMinimizesEnergy) {
         << " should be less than 90-degree energy " << e_90;
 }
 
+// ── Helper: 5-atom tetrahedral cluster (central + 4 at tet positions) ────────
+
+static Configuration make_tetrahedron(double r, double box = 100.0) {
+    Configuration cfg;
+    cfg.bc = PeriodicBC(box * Mat3::Identity());
+    // Tetrahedral unit vectors: body diagonals of a cube, normalised.
+    const std::array<Vec3, 4> dirs = {{
+        Vec3( 1.0,  1.0,  1.0).normalized(),
+        Vec3( 1.0, -1.0, -1.0).normalized(),
+        Vec3(-1.0,  1.0, -1.0).normalized(),
+        Vec3(-1.0, -1.0,  1.0).normalized(),
+    }};
+    Atom center;
+    center.type = 0; center.pos = Vec3::Zero();
+    cfg.atoms.push_back(center);
+    for (const auto &d : dirs) {
+        Atom a; a.type = 0; a.pos = r * d;
+        cfg.atoms.push_back(a);
+    }
+    return cfg;
+}
+
 // ── Test 7: LJ optimizer convergence ─────────────────────────────────────────
 
 TEST(Integration, OptimizerLJ_ConvergesFromWrongParams) {
@@ -351,4 +373,253 @@ TEST(Integration, OptimizerLJ_ConvergesFromWrongParams) {
     ASSERT_TRUE(err.empty()) << err;
     EXPECT_NEAR(eps_final, 1.0, 0.1) << "epsilon should converge to 1.0";
     EXPECT_NEAR(sig_final, 1.0, 0.1) << "sigma should converge to 1.0";
+}
+
+// ── Test 8: EAM dimer force/energy FD consistency ─────────────────────────────
+
+TEST(Integration, EAMDimer_ForceConsistency) {
+    std::string err;
+    double fx_calc = 0.0, fx_fd = 0.0;
+    leaf::try_handle_all(
+        [&]() -> leaf::result<void> {
+            BOOST_LEAF_AUTO(fm, parse_force_model(R"({
+              "model":"eam","ntypes":1,
+              "pair":    {"format":"tabulated","potentials":[
+                           {"rmin":1.5,"rmax":6.0,
+                            "knots":[2.0,1.5,1.0,0.5,0.1,0.0]}]},
+              "density": {"format":"tabulated","potentials":[
+                           {"rmin":1.5,"rmax":6.0,
+                            "knots":[1.0,0.8,0.5,0.2,0.05,0.0]}]},
+              "embedding":{"format":"analytic","potentials":[
+                           {"type":"sqrt","rmin":0.0,"rmax":5.0,
+                            "A":-1.0,"B":0.0}]}
+            })"));
+            auto &eam = std::get<EAMForceCalculator>(fm);
+
+            const double h = 1e-5;
+            auto energy_at = [&](double x0) {
+                auto cfg = make_dimer({x0, 0.0, 0.0}, {2.5, 0.0, 0.0});
+                eam.eval_forces(cfg);
+                return cfg.calc_energy;
+            };
+            fx_fd = -(energy_at(h / 2.0) - energy_at(-h / 2.0)) / h;
+
+            auto cfg = make_dimer({0.0, 0.0, 0.0}, {2.5, 0.0, 0.0});
+            eam.eval_forces(cfg);
+            fx_calc = cfg.atoms[0].calc_force[0];
+            return {};
+        },
+        [&](const ParseError &e) { err = e.message; },
+        [&]() { err = "unknown error"; }
+    );
+    ASSERT_TRUE(err.empty()) << err;
+    EXPECT_NEAR(fx_calc, fx_fd, 1e-5 * std::abs(fx_calc) + 1e-8);
+}
+
+// ── Test 9: EAM 3-atom config — Newton's 3rd law ──────────────────────────────
+
+TEST(Integration, EAM_ThreeAtom_NewtonThirdLaw) {
+    std::string err;
+    Vec3 sum_force = Vec3::Zero();
+    leaf::try_handle_all(
+        [&]() -> leaf::result<void> {
+            BOOST_LEAF_AUTO(fm, parse_force_model(R"({
+              "model":"eam","ntypes":1,
+              "pair":    {"format":"tabulated","potentials":[
+                           {"rmin":1.5,"rmax":6.0,
+                            "knots":[2.0,1.5,1.0,0.5,0.1,0.0]}]},
+              "density": {"format":"tabulated","potentials":[
+                           {"rmin":1.5,"rmax":6.0,
+                            "knots":[1.0,0.8,0.5,0.2,0.05,0.0]}]},
+              "embedding":{"format":"analytic","potentials":[
+                           {"type":"sqrt","rmin":0.0,"rmax":5.0,
+                            "A":-1.0,"B":0.0}]}
+            })"));
+            auto &eam = std::get<EAMForceCalculator>(fm);
+
+            // 3 distinct pairwise distances — embedding gradient couples all atoms
+            auto cfg = make_trimer({0.0,0.0,0.0}, {2.0,0.0,0.0}, {0.0,2.5,0.0});
+            eam.eval_forces(cfg);
+            for (const auto &a : cfg.atoms)
+                sum_force += a.calc_force;
+            return {};
+        },
+        [&](const ParseError &e) { err = e.message; },
+        [&]() { err = "unknown error"; }
+    );
+    ASSERT_TRUE(err.empty()) << err;
+    EXPECT_NEAR(sum_force.norm(), 0.0, 1e-10);
+}
+
+// ── Test 10: Tersoff Si — tetrahedral cluster more bound than dimer ────────────
+
+TEST(Integration, TersoffSi_TetCluster_MoreBoundThanDimer) {
+    std::string err;
+    double e_dimer_per_atom = 0.0, e_tet_per_atom = 0.0;
+    leaf::try_handle_all(
+        [&]() -> leaf::result<void> {
+            BOOST_LEAF_AUTO(fm, parse_force_model(R"({
+              "model": "tersoff",
+              "ntypes": 1,
+              "potentials": [{
+                "A":1830.8,"B":471.18,
+                "lambda":2.4799,"mu":1.7322,
+                "beta":1.1e-6,"n":0.78734,
+                "c":100390.0,"d":16.218,"h":-0.59825,
+                "R":2.7,"S":3.0
+              }]
+            })"));
+            auto &tc = std::get<TersoffForceCalculator>(fm);
+            const double r = 2.35;
+
+            auto cfg_dimer = make_dimer({0.0,0.0,0.0}, {r,0.0,0.0});
+            tc.eval_forces(cfg_dimer);
+            e_dimer_per_atom = cfg_dimer.calc_energy
+                               / static_cast<double>(cfg_dimer.atoms.size());
+
+            auto cfg_tet = make_tetrahedron(r);
+            tc.eval_forces(cfg_tet);
+            e_tet_per_atom = cfg_tet.calc_energy
+                             / static_cast<double>(cfg_tet.atoms.size());
+            return {};
+        },
+        [&](const ParseError &e) { err = e.message; },
+        [&]() { err = "unknown error"; }
+    );
+    ASSERT_TRUE(err.empty()) << err;
+    EXPECT_LT(e_tet_per_atom, e_dimer_per_atom)
+        << "tet E/atom=" << e_tet_per_atom
+        << " should be < dimer E/atom=" << e_dimer_per_atom;
+}
+
+// ── Test 11: EAM optimizer convergence from wrong embedding parameter ──────────
+
+TEST(Integration, OptimizerEAM_ConvergesFromWrongParams) {
+    // True model: power_decay pair + exp_decay density + sqrt embedding
+    static constexpr const char* kEAMTrue = R"({
+      "model":"eam","ntypes":1,
+      "pair":    {"format":"analytic","potentials":[
+                   {"type":"power_decay","rmin":1.5,"rmax":6.0,"A":100.0,"n":12.0}]},
+      "density": {"format":"analytic","potentials":[
+                   {"type":"exp_decay","rmin":1.5,"rmax":6.0,"A":1.0,"B":1.0}]},
+      "embedding":{"format":"analytic","potentials":[
+                   {"type":"sqrt","rmin":0.0,"rmax":5.0,"A":-1.0,"B":0.0}]}
+    })";
+    static constexpr const char* kEAMPert = R"({
+      "model":"eam","ntypes":1,
+      "pair":    {"format":"analytic","potentials":[
+                   {"type":"power_decay","rmin":1.5,"rmax":6.0,"A":100.0,"n":12.0}]},
+      "density": {"format":"analytic","potentials":[
+                   {"type":"exp_decay","rmin":1.5,"rmax":6.0,"A":1.0,"B":1.0}]},
+      "embedding":{"format":"analytic","potentials":[
+                   {"type":"sqrt","rmin":0.0,"rmax":5.0,"A":-1.4,"B":0.0}]}
+    })";
+
+    std::string err;
+    double fx_ref = 0.0, e_ref = 0.0;
+    double fx_opt = 0.0, e_opt = 0.0;
+    leaf::try_handle_all(
+        [&]() -> leaf::result<void> {
+            // Build reference data from true model
+            BOOST_LEAF_AUTO(fm_true, parse_force_model(kEAMTrue));
+            auto &eam_true = std::get<EAMForceCalculator>(fm_true);
+
+            std::vector<Configuration> configs = {
+                make_dimer({0.0,0.0,0.0}, {2.0,0.0,0.0}),
+                make_dimer({0.0,0.0,0.0}, {2.5,0.0,0.0}),
+                make_dimer({0.0,0.0,0.0}, {3.0,0.0,0.0}),
+            };
+            for (auto &cfg : configs) {
+                eam_true.eval_forces(cfg);
+                for (auto &a : cfg.atoms) a.force = a.calc_force;
+                cfg.energy = cfg.calc_energy;
+            }
+
+            // Reference at r=2.5 for comparison
+            {
+                auto cfg = make_dimer({0.0,0.0,0.0}, {2.5,0.0,0.0});
+                eam_true.eval_forces(cfg);
+                fx_ref = cfg.atoms[0].calc_force[0];
+                e_ref  = cfg.calc_energy;
+            }
+
+            // Optimise the perturbed model
+            BOOST_LEAF_AUTO(fm_pert, parse_force_model(kEAMPert));
+            OptimizerOptions opts;
+            opts.max_iter      = 300;
+            opts.energy_weight = 1.0;
+            run_optimizer(configs, fm_pert, opts);
+
+            // Evaluate with optimised params
+            auto &eam_opt = std::get<EAMForceCalculator>(fm_pert);
+            auto cfg_opt = make_dimer({0.0,0.0,0.0}, {2.5,0.0,0.0});
+            eam_opt.eval_forces(cfg_opt);
+            fx_opt = cfg_opt.atoms[0].calc_force[0];
+            e_opt  = cfg_opt.calc_energy;
+            return {};
+        },
+        [&](const ParseError &e) { err = e.message; },
+        [&]() { err = "unknown error"; }
+    );
+    ASSERT_TRUE(err.empty()) << err;
+    EXPECT_NEAR(fx_opt, fx_ref, 0.1 * std::abs(fx_ref) + 1e-6)
+        << "optimised force should match reference";
+    EXPECT_NEAR(e_opt, e_ref, 0.1 * std::abs(e_ref) + 1e-6)
+        << "optimised energy should match reference";
+}
+
+// ── Test 12: Tersoff Si optimizer — recover A and B with others fixed ──────────
+
+TEST(Integration, OptimizerTersoff_ConvergesFromWrongParams) {
+    // Helper: build a Si 1988 TersoffForceCalculator with A and B free,
+    // all other params optionally fixed.
+    auto make_si_calc = [](double A, double B, bool fix_others) {
+        TersoffParams p;
+        p.A      = {A,        false};
+        p.B      = {B,        false};
+        p.lambda = {2.4799,   fix_others};
+        p.mu     = {1.7322,   fix_others};
+        p.beta   = {1.1e-6,   fix_others};
+        p.n      = {0.78734,  fix_others};
+        p.c      = {100390.0, fix_others};
+        p.d      = {16.218,   fix_others};
+        p.h      = {-0.59825, fix_others};
+        p.R      = {2.7,      fix_others};
+        p.S      = {3.0,      fix_others};
+        TersoffForceCalculator tc;
+        tc.params.reserve(1);
+        tc.params.emplace_back(std::move(p));
+        return tc;
+    };
+
+    // Reference: true Si params, nothing fixed
+    auto tc_true = make_si_calc(1830.8, 471.18, false);
+
+    std::vector<Configuration> configs = {
+        make_dimer({0.0,0.0,0.0}, {2.35,0.0,0.0}),
+        make_dimer({0.0,0.0,0.0}, {2.5, 0.0,0.0}),
+    };
+    for (auto &cfg : configs) {
+        tc_true.eval_forces(cfg);
+        for (auto &a : cfg.atoms) a.force = a.calc_force;
+        cfg.energy = cfg.calc_energy;
+    }
+
+    // Perturbed: A=2100, B=580; all other 9 params fixed
+    ForceCalculator fc = make_si_calc(2100.0, 580.0, true);
+    // param_count() == 2: only A and B are free
+
+    OptimizerOptions opts;
+    opts.max_iter      = 400;
+    opts.energy_weight = 1.0;
+    run_optimizer(configs, fc, opts);
+
+    // Recover A and B
+    Eigen::VectorXd x(2);
+    std::visit([&](const auto &m) { m.gather_params(x, std::size_t{0}); }, fc);
+    const double A_rec = x[0];
+    const double B_rec = x[1];
+
+    EXPECT_NEAR(A_rec, 1830.8, 200.0) << "recovered A should be near 1830.8";
+    EXPECT_NEAR(B_rec, 471.18,  60.0) << "recovered B should be near 471.18";
 }

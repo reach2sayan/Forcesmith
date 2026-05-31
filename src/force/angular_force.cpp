@@ -1,4 +1,5 @@
 #include "potfit/force/angular_force.hpp"
+#include "potfit/core/neighbor_list.hpp"
 #include "potfit/events/signals.hpp"
 
 #include <cmath>
@@ -32,14 +33,17 @@ void AngularForceCalculator::scatter_params(const Eigen::VectorXd &src,
 
 double AngularForceCalculator::max_cutoff() const {
   auto max_range = [](const auto &range) {
-    return std::transform_reduce(range.begin(), range.end(), 0.0,
-                                 [](double a, double b) { return std::max(a, b); },
-                                 [](const auto &p) { return p.span().second; });
+    return std::transform_reduce(
+        range.begin(), range.end(), 0.0,
+        [](double a, double b) { return std::max(a, b); },
+        [](const auto &p) { return p.span().second; });
   };
   return std::max(max_range(pair), max_range(radial));
 }
 
 void AngularForceCalculator::eval_forces(Configuration &cfg) const {
+  build_neighbor_list(cfg, max_cutoff());
+
   // ── Zero output ──────────────────────────────────────────────────────────
   cfg.calc_energy = 0.0;
   cfg.calc_stress = SymTens::Zero();

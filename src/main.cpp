@@ -1,8 +1,8 @@
 #include "potfit/core/checkpoint.hpp"
 #include "potfit/force/pair_force.hpp"
 #include "potfit/io/config_reader.hpp"
+#include "potfit/io/force_model_reader.hpp"
 #include "potfit/io/output_writer.hpp"
-#include "potfit/io/potential_reader.hpp"
 #include "potfit/optimization/optimizer.hpp"
 #include "potfit/events/signals.hpp"
 
@@ -36,6 +36,18 @@ int main(int argc, char* argv[]) {
         ("maxiter",       po::value<int>()->default_value(500),    "max optimizer iterations")
         ("eweight",       po::value<double>()->default_value(1.0), "energy residual weight")
         ("stress-weight", po::value<double>()->default_value(0.0), "stress tensor residual weight (0 = disabled)")
+        ("algorithm,a",   po::value<std::string>()->default_value("lm"),
+                              "optimization algorithm: lm | powell | de")
+        ("seed",          po::value<unsigned>()->default_value(0),
+                              "RNG seed for DE (0 = random_device)")
+        ("de-F",          po::value<double>()->default_value(0.65),
+                              "DE mutation factor F ∈ (0,1)")
+        ("de-CR",         po::value<double>()->default_value(0.5),
+                              "DE crossover probability CR ∈ (0,1)")
+        ("de-np",         po::value<int>()->default_value(15),
+                              "DE population factor: NP = de-np × D")
+        ("de-gen",        po::value<int>()->default_value(1000),
+                              "DE maximum number of generations")
     ;
 
     po::variables_map vm;
@@ -91,9 +103,9 @@ int main(int argc, char* argv[]) {
 
                 // ── Parse startpot ───────────────────────────────────────────
                 const std::string pot_text = read_file(vm["startpot"].as<std::string>());
-                auto r_pot = potfit::io::parse_potential(pot_text);
+                auto r_pot = potfit::io::parse_force_model(pot_text);
                 if (!r_pot) return r_pot.error();
-                model = potfit::make_pair_force_calculator(std::move(*r_pot));
+                model = std::move(*r_pot);
             }
 
             if (configs_vec.empty()) {
@@ -110,14 +122,31 @@ int main(int argc, char* argv[]) {
             opts.max_iter      = vm["maxiter"].as<int>();
             opts.energy_weight = vm["eweight"].as<double>();
             opts.stress_weight = vm["stress-weight"].as<double>();
+            opts.seed          = vm["seed"].as<unsigned>();
+            opts.de.mutation_factor       = vm["de-F"].as<double>();
+            opts.de.crossover_probability = vm["de-CR"].as<double>();
+            opts.de.NP_factor             = static_cast<std::size_t>(vm["de-np"].as<int>());
+            opts.de.max_generations       = static_cast<std::size_t>(vm["de-gen"].as<int>());
+
+            const std::string alg = vm["algorithm"].as<std::string>();
+            if      (alg == "powell") opts.algorithm = potfit::Algorithm::Powell;
+            else if (alg == "de")     opts.algorithm = potfit::Algorithm::DE;
+            else if (alg != "lm") {
+                std::cerr << "unknown algorithm '" << alg
+                          << "'; choose: lm | powell | de\n";
+                ret = 1; return {};
+            }
 
             const int status = potfit::run_optimizer(configs_vec, model, opts);
             std::cout << "optimizer finished with status " << status << "\n";
 
-            // Extract flat potentials for I/O and checkpointing.
-            const auto& pair_calc = std::get<potfit::PairForceCalculator>(model);
-            std::vector<potfit::Potential> result_pots(
-                pair_calc.pair.begin(), pair_calc.pair.end());
+            // Extract flat potentials for I/O and checkpointing (pair model only).
+            std::vector<potfit::Potential> result_pots;
+            std::visit([&](const auto &calc) {
+                using T = std::decay_t<decltype(calc)>;
+                if constexpr (std::is_same_v<T, potfit::PairForceCalculator>)
+                    result_pots.assign(calc.pair.begin(), calc.pair.end());
+            }, model);
 
             // ── Save checkpoint ───────────────────────────────────────────────
             if (has_checkpoint) {
@@ -133,7 +162,10 @@ int main(int argc, char* argv[]) {
             const std::string fmt  = vm["format"].as<std::string>();
             const std::string outp = vm["endpot"].as<std::string>();
 
-            if (fmt == "lammps")
+            if (result_pots.empty()) {
+                std::cout << "non-pair potential output not yet implemented; "
+                             "skipping endpot write\n";
+            } else if (fmt == "lammps")
                 potfit::io::write_lammps(outp, result_pots);
             else if (fmt == "imd")
                 potfit::io::write_imd(outp, result_pots);

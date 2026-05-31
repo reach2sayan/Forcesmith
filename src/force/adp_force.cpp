@@ -1,4 +1,5 @@
 #include "potfit/force/adp_force.hpp"
+#include "potfit/core/neighbor_list.hpp"
 #include "potfit/events/signals.hpp"
 
 #include <cmath>
@@ -8,11 +9,12 @@ namespace potfit {
 
 std::size_t ADPForceCalculator::param_count() const {
   auto count_range = [](const auto &range) {
-    return std::transform_reduce(range.begin(), range.end(), std::size_t{0}, std::plus<>{},
+    return std::transform_reduce(range.begin(), range.end(), std::size_t{0},
+                                 std::plus<>{},
                                  [](const auto &p) { return p.param_count(); });
   };
-  return count_range(pair) + count_range(density) + count_range(embedding)
-       + count_range(dipole) + count_range(quadrupole);
+  return count_range(pair) + count_range(density) + count_range(embedding) +
+         count_range(dipole) + count_range(quadrupole);
 }
 
 void ADPForceCalculator::gather_params(Eigen::VectorXd &dst,
@@ -55,6 +57,8 @@ static FORCE_INLINE Vec3 quad_xi(const SymTens &M, const Vec3 &d) {
 }
 
 void ADPForceCalculator::eval_forces(Configuration &cfg) const {
+  build_neighbor_list(cfg, max_cutoff());
+
   // ── Zero scratch + output ────────────────────────────────────────────────
   cfg.calc_energy = 0.0;
   cfg.calc_stress = SymTens::Zero();

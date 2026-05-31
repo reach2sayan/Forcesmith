@@ -1,4 +1,5 @@
 #include "potfit/force/stiweb_force.hpp"
+#include "potfit/core/neighbor_list.hpp"
 #include "potfit/events/signals.hpp"
 
 #include <cmath>
@@ -7,12 +8,12 @@
 namespace potfit {
 namespace {
 
-auto sw_fields(SWParams& p) {
-  return std::array<Param*, 8>{&p.A, &p.B, &p.p, &p.q,
+auto sw_fields(SWParams &p) {
+  return std::array<Param *, 8>{&p.A, &p.B,     &p.p,      &p.q,
                                 &p.a, &p.sigma, &p.lambda, &p.gamma};
 }
-auto sw_fields(const SWParams& p) {
-  return std::array<const Param*, 8>{&p.A, &p.B, &p.p, &p.q,
+auto sw_fields(const SWParams &p) {
+  return std::array<const Param *, 8>{&p.A, &p.B,     &p.p,      &p.q,
                                       &p.a, &p.sigma, &p.lambda, &p.gamma};
 }
 
@@ -59,32 +60,48 @@ constexpr std::pair<double, double> h_dh(double r, const SWParams &p) noexcept {
 
 std::size_t StiwebForceCalculator::param_count() const {
   std::size_t count = 0;
-  for (const auto& p : params)
-    for (const Param* f : sw_fields(p))
-      if (!f->fixed) ++count;
+  for (const auto &p : params) {
+    for (const Param *f : sw_fields(p)) {
+      if (!f->fixed) {
+        ++count;
+      }
+    }
+  }
   return count;
 }
 
-void StiwebForceCalculator::gather_params(Eigen::VectorXd& dst, std::size_t off) const {
-  for (const auto& p : params)
-    for (const Param* f : sw_fields(p))
-      if (!f->fixed) dst[off++] = f->value;
+void StiwebForceCalculator::gather_params(Eigen::VectorXd &dst,
+                                          std::size_t off) const {
+  for (const auto &p : params) {
+    for (const Param *f : sw_fields(p)) {
+      if (!f->fixed) {
+        dst[off++] = f->value;
+      }
+    }
+  }
 }
 
-void StiwebForceCalculator::scatter_params(const Eigen::VectorXd& src, std::size_t off) {
-  for (auto& p : params)
-    for (Param* f : sw_fields(p))
-      if (!f->fixed) f->value = src[off++];
+void StiwebForceCalculator::scatter_params(const Eigen::VectorXd &src,
+                                           std::size_t off) {
+  for (auto &p : params) {
+    for (Param *f : sw_fields(p)) {
+      if (!f->fixed) {
+        f->value = src[off++];
+      }
+    }
+  }
 }
 
 double StiwebForceCalculator::max_cutoff() const {
-  double rcut = 0.0;
-  for (const auto& p : params)
-    rcut = std::max(rcut, p.sigma.value * p.a.value);
-  return rcut;
+  return std::transform_reduce(
+      params.begin(), params.end(), 0.0,
+      [](double a, double b) { return std::max(a, b); },
+      [](const auto &p) { return p.sigma.value * p.a.value; });
 }
 
 void StiwebForceCalculator::eval_forces(Configuration &cfg) const {
+  build_neighbor_list(cfg, max_cutoff());
+
   cfg.calc_energy = 0.0;
   cfg.calc_stress = SymTens::Zero();
   for (auto &a : cfg.atoms) {

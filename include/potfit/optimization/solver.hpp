@@ -4,6 +4,7 @@
 #include <Eigen/Core>
 #include <functional>
 #include <memory>
+#include <vector>
 
 namespace potfit {
 
@@ -65,6 +66,36 @@ struct EigenLMSolver {
 };
 
 static_assert(SolverImpl<EigenLMSolver>);
+
+// Powell's dogleg via Eigen::HybridNonLinearSolver.
+// Minimises ||F||² by finding zeros of g(x)[j] = Fᵀ ∂F/∂xⱼ (central FD).
+struct EigenHybridSolver {
+    int    max_iter = 500;
+    double xtol     = 1e-7;
+    int minimize(Eigen::VectorXd &x,
+                 std::function<Eigen::VectorXd(const Eigen::VectorXd &)> f,
+                 int n_vals) const;
+};
+
+static_assert(SolverImpl<EigenHybridSolver>);
+
+// Differential evolution via boost::math::optimization::differential_evolution.
+// mutation_factor (F) must be in (0, 1); values ≥ 1.0 throw std::domain_error.
+struct BoostDESolver {
+    std::vector<double> lower_bounds;         // per-param; empty → auto from current x
+    std::vector<double> upper_bounds;
+    double      mutation_factor       = 0.65; // F ∈ (0, 1)
+    double      crossover_probability = 0.5;
+    std::size_t NP_factor             = 15;   // NP = NP_factor × D
+    std::size_t max_generations       = 1000;
+    unsigned    threads               = 0;    // 0 → hardware_concurrency
+    unsigned    seed                  = 0;    // 0 → std::random_device
+    int minimize(Eigen::VectorXd &x,
+                 std::function<Eigen::VectorXd(const Eigen::VectorXd &)> f,
+                 int n_vals) const;
+};
+
+static_assert(SolverImpl<BoostDESolver>);
 
 // Factory for the default solver (used by run_optimizer when none is supplied).
 Solver make_default_solver(int max_iter = 500, double xtol = 1e-7,

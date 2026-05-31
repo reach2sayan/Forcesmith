@@ -27,13 +27,32 @@ int run_with_solver(std::span<Configuration> configs, ForceCalculator &model,
   return status;
 }
 
+Solver make_solver(const OptimizerOptions &opts) {
+  switch (opts.algorithm) {
+    case Algorithm::Powell:
+      return Solver{EigenHybridSolver{opts.max_iter, opts.xtol}};
+    case Algorithm::DE: {
+      BoostDESolver s;
+      s.mutation_factor       = opts.de.mutation_factor;
+      s.crossover_probability = opts.de.crossover_probability;
+      s.NP_factor             = opts.de.NP_factor;
+      s.max_generations       = opts.de.max_generations;
+      s.threads               = opts.de.threads;
+      s.seed                  = opts.seed;
+      s.lower_bounds          = opts.de.lower_bounds;
+      s.upper_bounds          = opts.de.upper_bounds;
+      return Solver{std::move(s)};
+    }
+    default: // Algorithm::LM
+      return make_default_solver(opts.max_iter, opts.xtol, opts.ftol);
+  }
+}
+
 } // namespace
 
 int run_optimizer(std::span<Configuration> configs, ForceCalculator &model,
                   const OptimizerOptions &opts) {
-  return run_optimizer(
-      configs, model, opts,
-      make_default_solver(opts.max_iter, opts.xtol, opts.ftol));
+  return run_with_solver(configs, model, opts, make_solver(opts));
 }
 
 int run_optimizer(std::span<Configuration> configs, ForceCalculator &model,

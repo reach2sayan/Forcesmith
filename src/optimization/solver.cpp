@@ -1,8 +1,12 @@
 #include "potfit/optimization/solver.hpp"
 
+#include <boost/math/optimization/differential_evolution.hpp>
 #include <unsupported/Eigen/NonLinearOptimization>
 
+#include <algorithm>
+#include <random>
 #include <ranges>
+#include <thread>
 
 namespace potfit {
 
@@ -55,6 +59,92 @@ int EigenLMSolver::minimize(
   lm.parameters.xtol = xtol;
   lm.parameters.ftol = ftol;
   return static_cast<int>(lm.minimize(x));
+}
+
+int EigenHybridSolver::minimize(
+    Eigen::VectorXd &x,
+    std::function<Eigen::VectorXd(const Eigen::VectorXd &)> f,
+    int /*n_vals*/) const {
+  const int D = static_cast<int>(x.size());
+
+  // Gradient functor: g(x)[j] = Fᵀ ∂F/∂xⱼ  (central FD, δ=1e-5)
+  struct GradFunctor {
+    std::function<Eigen::VectorXd(const Eigen::VectorXd &)> fn;
+    int D;
+
+    int operator()(const Eigen::VectorXd &xv, Eigen::VectorXd &grad) const {
+      constexpr double delta = 1e-5;
+      const Eigen::VectorXd f0 = fn(xv);
+      grad.resize(D);
+      Eigen::VectorXd xp = xv;
+      for (int j = 0; j < D; ++j) {
+        xp[j] += delta;
+        const Eigen::VectorXd fp = fn(xp);
+        xp[j] -= 2.0 * delta;
+        const Eigen::VectorXd fm = fn(xp);
+        xp[j] += delta;
+        grad[j] = f0.dot((fp - fm) / (2.0 * delta));
+      }
+      return 0;
+    }
+
+    constexpr int inputs() const { return D; }
+    constexpr int values() const { return D; } // square system
+  };
+
+  GradFunctor gf{std::move(f), D};
+  Eigen::HybridNonLinearSolver<GradFunctor> solver(gf);
+  solver.parameters.maxfev = max_iter * D;
+  solver.parameters.xtol = xtol;
+  return static_cast<int>(solver.solveNumericalDiff(x));
+}
+
+int BoostDESolver::minimize(
+    Eigen::VectorXd &x,
+    std::function<Eigen::VectorXd(const Eigen::VectorXd &)> f,
+    int /*n_vals*/) const {
+  const int D = static_cast<int>(x.size());
+
+  // Build per-parameter bounds; auto-derive from current x if not provided.
+  std::vector<double> lb = lower_bounds;
+  std::vector<double> ub = upper_bounds;
+  if (lb.empty() || ub.empty()) {
+    lb.resize(D);
+    ub.resize(D);
+    for (int j = 0; j < D; ++j) {
+      const double v = x[j];
+      const double half = std::max(2.0 * std::abs(v), 5e-4);
+      lb[j] = v - half;
+      ub[j] = v + half;
+    }
+  }
+
+  using DEParams = boost::math::optimization::differential_evolution_parameters<
+      std::vector<double>>;
+  DEParams params;
+  params.lower_bounds = lb;
+  params.upper_bounds = ub;
+  params.mutation_factor = mutation_factor;
+  params.crossover_probability = crossover_probability;
+  params.NP = NP_factor * static_cast<std::size_t>(D);
+  params.max_generations = max_generations;
+  params.threads = threads > 0 ? threads : std::thread::hardware_concurrency();
+
+  std::vector<double> ig(x.data(), x.data() + D);
+  params.initial_guess = &ig;
+
+  auto cost = [&](const std::vector<double> &v) {
+    const Eigen::VectorXd ev = Eigen::Map<const Eigen::VectorXd>(v.data(), D);
+    return f(ev).squaredNorm();
+  };
+
+  std::mt19937_64 rng(seed > 0
+                          ? static_cast<std::uint64_t>(seed)
+                          : static_cast<std::uint64_t>(std::random_device{}()));
+  const auto best =
+      boost::math::optimization::differential_evolution(cost, params, rng);
+  x = Eigen::Map<const Eigen::VectorXd>(best.data(), D);
+  return 0;
 }
 
 Solver make_default_solver(int max_iter, double xtol, double ftol) {

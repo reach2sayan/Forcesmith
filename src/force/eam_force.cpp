@@ -1,4 +1,5 @@
 #include "potfit/force/eam_force.hpp"
+#include "potfit/core/neighbor_list.hpp"
 #include "potfit/events/signals.hpp"
 
 #include <cmath>
@@ -8,20 +9,22 @@ namespace potfit {
 
 std::size_t EAMForceCalculator::param_count() const {
   auto count_params = [](const auto &xs) {
-    return std::transform_reduce(
-        xs.begin(), xs.end(), std::size_t{0}, std::plus<>{},
-        [](const auto &p) { return p.param_count(); });
+    return std::transform_reduce(xs.begin(), xs.end(), std::size_t{0},
+                                 std::plus<>{},
+                                 [](const auto &p) { return p.param_count(); });
   };
   return count_params(pair) + count_params(density) + count_params(embedding);
 }
 
-void EAMForceCalculator::gather_params(Eigen::VectorXd &dst, std::size_t off) const {
+void EAMForceCalculator::gather_params(Eigen::VectorXd &dst,
+                                       std::size_t off) const {
   gather_range(pair, dst, off);
   gather_range(density, dst, off);
   gather_range(embedding, dst, off);
 }
 
-void EAMForceCalculator::scatter_params(const Eigen::VectorXd &src, std::size_t off) {
+void EAMForceCalculator::scatter_params(const Eigen::VectorXd &src,
+                                        std::size_t off) {
   scatter_range(pair, src, off);
   scatter_range(density, src, off);
   scatter_range(embedding, src, off);
@@ -38,6 +41,8 @@ double EAMForceCalculator::max_cutoff() const {
 }
 
 void EAMForceCalculator::eval_forces(Configuration &cfg) const {
+  build_neighbor_list(cfg, max_cutoff());
+
   // ── Zero all scratch and output fields ──────────────────────────────────
   cfg.calc_energy = 0.0;
   cfg.calc_stress = SymTens::Zero();
@@ -64,7 +69,8 @@ void EAMForceCalculator::eval_forces(Configuration &cfg) const {
 
   // ── Pass 2: pair + embedding-gradient forces ─────────────────────────────
   // Force on atom i from neighbor j:
-  //   F_ij = [dφ_{ij}/dr + gradF_i × dg_{t(j)}/dr + gradF_j × dg_{t(i)}/dr] × r̂_{ij}
+  //   F_ij = [dφ_{ij}/dr + gradF_i × dg_{t(j)}/dr + gradF_j × dg_{t(i)}/dr] ×
+  //   r̂_{ij}
   //
   // Using the full neighbor list each pair (i,j) appears twice, so:
   //   - pair energy:     add 0.5 × φ per entry
@@ -78,12 +84,13 @@ void EAMForceCalculator::eval_forces(Configuration &cfg) const {
         continue;
       const double inv_r = 1.0 / r;
 
-      const double phi    = pair[ai, aj].eval(r);
-      const double dphi   = pair[ai, aj].deriv(r);
+      const double phi = pair[ai, aj].eval(r);
+      const double dphi = pair[ai, aj].deriv(r);
       const double drho_j = density[aj].deriv(r);
       const double drho_i = density[ai].deriv(r);
 
-      const double fscale = (dphi + ai.gradF * drho_j + aj.gradF * drho_i) * inv_r;
+      const double fscale =
+          (dphi + ai.gradF * drho_j + aj.gradF * drho_i) * inv_r;
       const Vec3 fvec = fscale * nb.dist;
 
       ai.calc_force += fvec;

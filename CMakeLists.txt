@@ -47,6 +47,24 @@ FetchContent_Declare(nlohmann_json
 )
 FetchContent_MakeAvailable(nlohmann_json)
 
+# boost::math (header-only) — system Boost 1.83 lacks differential_evolution.hpp
+# which was added in 1.84.  Fetch just the math headers at 1.87.
+FetchContent_Declare(boost_math
+    GIT_REPOSITORY https://github.com/boostorg/math.git
+    GIT_TAG        boost-1.87.0
+    GIT_SHALLOW    TRUE
+)
+FetchContent_GetProperties(boost_math)
+if(NOT boost_math_POPULATED)
+    if(POLICY CMP0169)
+        cmake_policy(SET CMP0169 OLD)
+    endif()
+    FetchContent_Populate(boost_math)
+endif()
+add_library(boost_math INTERFACE)
+target_include_directories(boost_math SYSTEM INTERFACE "${boost_math_SOURCE_DIR}/include")
+target_link_libraries(boost_math INTERFACE Boost::boost)
+
 # ── Compiler options ──────────────────────────────────────────────────────────
 
 add_library(potfit_warnings INTERFACE)
@@ -93,6 +111,7 @@ target_link_libraries(potfit_lib PUBLIC
     Boost::serialization
     Boost::boost
     boost_parser
+    boost_math
     nlohmann_json::nlohmann_json
 )
 target_link_libraries(potfit_lib PRIVATE
