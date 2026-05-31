@@ -50,3 +50,7 @@ _deps/
 .DS_Store
 Thumbs.db
 reference/
+
+*.json
+*.png
+data/

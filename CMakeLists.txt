@@ -99,6 +99,7 @@ set(POTFIT_LIB_SOURCES
     src/optimization/optimizer.cpp
     src/optimization/potfit_functor.cpp
     src/optimization/solver.cpp
+        src/potentials/analytic_potential.cpp
         src/potentials/spline.cpp
 )
 
