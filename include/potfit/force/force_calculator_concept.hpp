@@ -18,7 +18,11 @@ namespace potfit {
 struct GlobalParam {
   Param value;
   struct Link {
-    int region;        // calculator sub-table: 0=pair, 1=density, 2=embedding
+    enum class LinkRegion {
+      PAIR,
+      DENSITY,
+      EMBEDDING
+    } region;          // which calculator sub-table the linked slot lives in
     std::size_t index; // flat position within that table (gather/scatter order)
     std::size_t param; // parameter slot inside that potential
   };

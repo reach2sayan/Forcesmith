@@ -41,8 +41,9 @@ template <class Stream>
                                              std::ios::openmode mode,
                                              std::string_view verb) {
   Stream f(path, mode);
-  if (!f)
+  if (!f) {
     return err("cannot open for " + std::string(verb) + ": " + path.string());
+  }
   return f;
 }
 

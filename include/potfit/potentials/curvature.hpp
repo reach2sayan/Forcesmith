@@ -4,9 +4,9 @@
 //
 // A tabulated potential fit from forces/energies alone is rank-deficient
 // wherever no training configuration probes that part of the function's domain
-// (e.g. pair-potential radii between neighbour shells). The optimizer is free to
-// dump arbitrary spikes into that null space. A small Tikhonov penalty on the
-// curvature (second difference) of the free knots removes the ambiguity.
+// (e.g. pair-potential radii between neighbour shells). The optimizer is free
+// to dump arbitrary spikes into that null space. A small Tikhonov penalty on
+// the curvature (second difference) of the free knots removes the ambiguity.
 //
 // This is a Sean-Parent-style customization point: the default reports that a
 // potential contributes no curvature residuals (analytic potentials are

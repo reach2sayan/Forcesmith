@@ -110,11 +110,13 @@ leaf::result<void> require_keys(const json &obj,
 // number-based potential parser sees a plain number. The caller assigns the
 // returned vector to calc.globals and calls finalize_globals().
 //
-// `regions` pairs each sub-object that owns a `"potentials"` array with its
-// region id (0=pair, 1=density, 2=embedding). Mutates `root` in place.
+// `regions` pairs each sub-object that owns a `"potentials"` array with the
+// calculator sub-table (LinkRegion) it belongs to. Mutates `root` in place.
 leaf::result<std::vector<GlobalParam>>
 build_globals(json &root,
-              std::initializer_list<std::pair<json *, int>> regions) {
+              std::initializer_list<
+                  std::pair<json *, GlobalParam::Link::LinkRegion>>
+                  regions) {
   auto fail = [](std::string msg) -> leaf::result<std::vector<GlobalParam>> {
     return leaf::new_error(ParseError{"globals: " + std::move(msg), 0});
   };
@@ -189,7 +191,7 @@ leaf::result<ForceCalculator> parse_force_model(std::string_view input) {
     if (model == "pair") {
       // Resolve globals in place (pair potentials live at top-level j), then
       // parse the mutated j (not the raw input string).
-      auto rg = build_globals(j, {{&j, 0}});
+      auto rg = build_globals(j, {{&j, GlobalParam::Link::LinkRegion::PAIR}});
       if (!rg)
         return rg.error();
       auto r = parse_potential(j.dump());
@@ -219,8 +221,10 @@ leaf::result<ForceCalculator> parse_force_model(std::string_view input) {
 
       // Resolve shared globals BEFORE filling so the potential parser sees plain
       // numbers; mutates j["pair"/"density"/"embedding"] in place.
-      auto rg = build_globals(
-          j, {{&j["pair"], 0}, {&j["density"], 1}, {&j["embedding"], 2}});
+      using enum GlobalParam::Link::LinkRegion;
+      auto rg = build_globals(j, {{&j["pair"], PAIR},
+                                  {&j["density"], DENSITY},
+                                  {&j["embedding"], EMBEDDING}});
       if (!rg)
         return rg.error();
 

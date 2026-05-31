@@ -32,9 +32,11 @@ void EAMForceCalculator::gather_params(Eigen::VectorXd &dst,
   gather_range(embedding, dst, off);
   // Globals follow the per-potential params; their linked slots are fixed and
   // therefore already excluded above.
-  for (const auto &g : globals)
-    if (!g.value.fixed)
+  std::ranges::for_each(globals, [&](const auto &g) {
+    if (!g.value.fixed) {
       dst[off++] = g.value.value;
+    }
+  });
 }
 
 void EAMForceCalculator::scatter_params(const Eigen::VectorXd &src,
@@ -42,15 +44,17 @@ void EAMForceCalculator::scatter_params(const Eigen::VectorXd &src,
   scatter_range(pair, src, off);
   scatter_range(density, src, off);
   scatter_range(embedding, src, off);
-  for (auto &g : globals)
-    if (!g.value.fixed)
+  std::ranges::for_each(globals, [&](auto &g) {
+    if (!g.value.fixed) {
       g.value.value = src[off++];
+    }
+  });
   broadcast_globals();
 }
 
 void EAMForceCalculator::broadcast_globals() {
-  // pair (SymmetricMatrix) and density/embedding (TypeArray) are distinct types,
-  // so select the table with a templated lambda rather than a ternary.
+  // pair (SymmetricMatrix) and density/embedding (TypeArray) are distinct
+  // types, so select the table with a templated lambda rather than a ternary.
   auto write = [](auto &tbl, std::size_t idx, std::size_t param, double v) {
     (*std::next(tbl.begin(), static_cast<std::ptrdiff_t>(idx)))
         .set_param(param, v);
@@ -58,12 +62,18 @@ void EAMForceCalculator::broadcast_globals() {
   for (const auto &g : globals)
     for (const auto &lk : g.links) {
       const double v = g.value.value;
-      if (lk.region == 0)
+      switch (lk.region) {
+        using enum potfit::GlobalParam::Link::LinkRegion;
+      case PAIR:
         write(pair, lk.index, lk.param, v);
-      else if (lk.region == 1)
+        break;
+      case DENSITY:
         write(density, lk.index, lk.param, v);
-      else
+        break;
+      case EMBEDDING:
         write(embedding, lk.index, lk.param, v);
+        break;
+      };
     }
 }
 
@@ -74,12 +84,18 @@ void EAMForceCalculator::finalize_globals() {
   };
   for (const auto &g : globals)
     for (const auto &lk : g.links) {
-      if (lk.region == 0)
+      switch (lk.region) {
+        using enum potfit::GlobalParam::Link::LinkRegion;
+      case PAIR:
         fix(pair, lk.index, lk.param);
-      else if (lk.region == 1)
+        break;
+      case DENSITY:
         fix(density, lk.index, lk.param);
-      else
+        break;
+      case EMBEDDING:
         fix(embedding, lk.index, lk.param);
+        break;
+      };
     }
   broadcast_globals();
 }
@@ -122,7 +138,8 @@ void EAMForceCalculator::eval_forces(Configuration &cfg) const {
   // ── After pass 1: embedding energy + gradF_i = dF_i/dρ_i ────────────────
   // Out-of-range ρ is clamped to the embedding table's [begin,end] and the
   // overshoot is punished via cfg.calc_limit (matches potfit's RESCALE branch,
-  // force_eam.c:334-358): F(ρ) is evaluated at the clamped ρ, never extrapolated.
+  // force_eam.c:334-358): F(ρ) is evaluated at the clamped ρ, never
+  // extrapolated.
   for (auto &ai : cfg.atoms) {
     const auto [rho_begin, rho_end] = embedding[ai].span();
     if (ai.rho > rho_end) {
@@ -179,7 +196,8 @@ void EAMForceCalculator::eval_forces(Configuration &cfg) const {
   }
 
   cfg.calc_stress /= bc_volume(cfg.bc); // virial → stress (per unit volume)
-  events::on_force_eval(events::ForceEvalStats{conf_index, force_rms(cfg), cfg});
+  events::on_force_eval(
+      events::ForceEvalStats{conf_index, force_rms(cfg), cfg});
 }
 
 } // namespace potfit

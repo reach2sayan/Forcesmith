@@ -124,7 +124,7 @@ double ADPForceCalculator::max_cutoff() const {
 void ADPForceCalculator::eval_forces(Configuration &cfg) const {
   build_neighbor_list(cfg, max_cutoff());
 
-  // ── Zero scratch + output ────────────────────────────────────────────────
+  // Zero scratch + output
   cfg.calc_energy = 0.0;
   cfg.calc_stress = SymTens::Zero();
   cfg.calc_limit = 0.0;
@@ -133,7 +133,7 @@ void ADPForceCalculator::eval_forces(Configuration &cfg) const {
     atom.ZeroScratch();
   }
 
-  // ── Pass 1: accumulate per-atom moments ρ_i, μ_i, λ_i ────────────────────
+  // Pass 1: accumulate per-atom moments ρ_i, μ_i, λ_i
   std::ranges::for_each(cfg.atoms, [&](auto &ai) {
     double rho = 0.0;
     Vec3 mu = Vec3::Zero();
@@ -168,7 +168,7 @@ void ADPForceCalculator::eval_forces(Configuration &cfg) const {
     ai.lambda += lambda;
   });
 
-  // ── After pass 1: embedding + ADP self-energies, cache gradF_i ───────────
+  // After pass 1: embedding + ADP self-energies, cache gradF_i
   const double energy = std::transform_reduce(
       cfg.atoms.begin(), cfg.atoms.end(), 0.0, std::plus<>{}, [&](auto &ai) {
         const auto &emb = embedding[ai];
@@ -200,7 +200,7 @@ void ADPForceCalculator::eval_forces(Configuration &cfg) const {
 
   cfg.calc_energy += energy;
 
-  // ── Pass 2: forces ───────────────────────────────────────────────────────
+  // Pass 2: forces
   // Run each i–j bond through the pipeline:
   //   geometry → EAM force → dipole force → quadrupole force → commit
   // std::optional short-circuits coincident atoms (make_pair_force), so each
