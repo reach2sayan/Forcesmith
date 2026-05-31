@@ -9,50 +9,47 @@ namespace potfit {
 namespace {
 
 auto sw_fields(SWParams &p) {
-  return std::array<Param *, 8>{&p.A, &p.B,     &p.p,      &p.q,
-                                &p.a, &p.sigma, &p.lambda, &p.gamma};
+  return std::array<Param *, 8>{&p.A,     &p.B,  &p.p,     &p.q,
+                                &p.delta, &p.a1, &p.gamma, &p.a2};
 }
 auto sw_fields(const SWParams &p) {
-  return std::array<const Param *, 8>{&p.A, &p.B,     &p.p,      &p.q,
-                                      &p.a, &p.sigma, &p.lambda, &p.gamma};
+  return std::array<const Param *, 8>{&p.A,     &p.B,  &p.p,     &p.q,
+                                      &p.delta, &p.a1, &p.gamma, &p.a2};
 }
 
-// ── SW 2-body: v2(r) = A [B(σ/r)^p − (σ/r)^q] exp(σ/(r − aσ)), r < aσ ──────
-// Returns {v2, dv2/dr}; both zero for r ≥ aσ.
-constexpr std::pair<double, double> v2_dv2(double r,
-                                           const SWParams &p) noexcept {
-  const double rcut = p.a * p.sigma;
-  if (r >= rcut) {
+// ── SW 2-body: v2(r) = (A·r^{−p} − B·r^{−q}) exp(δ/(r − a1)), r < a1 ─────────
+// Matches potfit stiweb_2_value. Returns {v2, dv2/dr}; both zero for r ≥ a1.
+std::pair<double, double> v2_dv2(double r, const SWParams &p) noexcept {
+  if (r >= p.a1) {
     return {0.0, 0.0};
   }
-  const double d = r - rcut; // d < 0
-  const double e = std::exp(p.sigma / d);
+  const double d = r - p.a1; // d < 0
+  const double e = std::exp(p.delta / d);
   if (e == 0.0) {
     return {0.0, 0.0}; // underflow guard
   }
-  const double sr = p.sigma / r;
-  const double srp = std::pow(sr, p.p);
-  const double srq = std::pow(sr, p.q);
-  const double phi = p.B * srp - srq;
-  const double dphi = (-p.p * p.B * srp + p.q * srq) / r;
-  const double v2 = p.A * phi * e;
-  const double dv2 = p.A * (dphi * e + phi * e * (-p.sigma / (d * d)));
+  const double rp = std::pow(r, -p.p);
+  const double rq = std::pow(r, -p.q);
+  const double poly = p.A * rp - p.B * rq;
+  const double dpoly = -p.A * p.p * std::pow(r, -p.p - 1.0) +
+                       p.B * p.q * std::pow(r, -p.q - 1.0);
+  const double v2 = poly * e;
+  const double dv2 = dpoly * e + poly * e * (-p.delta / (d * d));
   return {v2, dv2};
 }
 
-// ── SW 3-body radial: h(r) = exp(γσ/(r − aσ)), r < aσ ───────────────────────
-// Returns {h, dh/dr}; both zero for r ≥ aσ.
-constexpr std::pair<double, double> h_dh(double r, const SWParams &p) noexcept {
-  const double rcut = p.a * p.sigma;
-  if (r >= rcut) {
+// ── SW 3-body radial: h(r) = exp(γ/(r − a2)), r < a2 ────────────────────────
+// Matches potfit stiweb_3_value. Returns {h, dh/dr}; both zero for r ≥ a2.
+std::pair<double, double> h_dh(double r, const SWParams &p) noexcept {
+  if (r >= p.a2) {
     return {0.0, 0.0};
   }
-  const double d = r - rcut; // d < 0
-  const double h = std::exp(p.gamma * p.sigma / d);
+  const double d = r - p.a2; // d < 0
+  const double h = std::exp(p.gamma / d);
   if (h == 0.0) {
     return {0.0, 0.0}; // underflow guard
   }
-  const double dh = h * (-p.gamma * p.sigma / (d * d));
+  const double dh = h * (-p.gamma / (d * d));
   return {h, dh};
 }
 
@@ -67,6 +64,11 @@ std::size_t StiwebForceCalculator::param_count() const {
       }
     }
   }
+  for (const auto &l : lambda) {
+    if (!l.fixed) {
+      ++count;
+    }
+  }
   return count;
 }
 
@@ -77,6 +79,11 @@ void StiwebForceCalculator::gather_params(Eigen::VectorXd &dst,
       if (!f->fixed) {
         dst[off++] = f->value;
       }
+    }
+  }
+  for (const auto &l : lambda) {
+    if (!l.fixed) {
+      dst[off++] = l.value;
     }
   }
 }
@@ -90,13 +97,18 @@ void StiwebForceCalculator::scatter_params(const Eigen::VectorXd &src,
       }
     }
   }
+  for (auto &l : lambda) {
+    if (!l.fixed) {
+      l.value = src[off++];
+    }
+  }
 }
 
 double StiwebForceCalculator::max_cutoff() const {
   return std::transform_reduce(
       params.begin(), params.end(), 0.0,
       [](double a, double b) { return std::max(a, b); },
-      [](const auto &p) { return p.sigma.value * p.a.value; });
+      [](const auto &p) { return std::max(p.a1.value, p.a2.value); });
 }
 
 void StiwebForceCalculator::eval_forces(Configuration &cfg) const {
@@ -149,35 +161,39 @@ void StiwebForceCalculator::eval_forces(Configuration &cfg) const {
       const auto &nb_j = nbs[jj];
       const Vec3 &d1 = nb_j.dist;
       const double r1 = d1.norm();
-      if (r1 < 1e-14)
+      if (r1 < 1e-14) {
         continue;
+      }
 
       const std::size_t tj = nb_j.neighbor->type;
       const auto &p_ij = params[ti, tj];
       const auto [h1, dh1] = h_dh(r1, p_ij);
-      if (h1 == 0.0 && dh1 == 0.0)
+      if (h1 == 0.0 && dh1 == 0.0) {
         continue;
+      }
       const double inv_r1 = 1.0 / r1;
 
       for (std::size_t kk = jj + 1; kk < nn; ++kk) {
         const auto &nb_k = nbs[kk];
         const Vec3 &d2 = nb_k.dist;
         const double r2 = d2.norm();
-        if (r2 < 1e-14)
+        if (r2 < 1e-14) {
           continue;
+        }
 
         const std::size_t tk = nb_k.neighbor->type;
         const auto &p_ik = params[ti, tk];
         const auto [h2, dh2] = h_dh(r2, p_ik);
-        if (h2 == 0.0 && dh2 == 0.0)
+        if (h2 == 0.0 && dh2 == 0.0) {
           continue;
+        }
         const double inv_r2 = 1.0 / r2;
 
         const double c = d1.dot(d2) * inv_r1 * inv_r2;
         const double cp13 = c + 1.0 / 3.0; // c + 1/3
-        const double lambda = p_ij.lambda;
-        const double w = lambda * cp13 * cp13;
-        const double dw = 2.0 * lambda * cp13;
+        const double lam = lambda_at(ti, tj, tk); // per-triplet λ[i][j][k]
+        const double w = lam * cp13 * cp13;
+        const double dw = 2.0 * lam * cp13;
 
         cfg.calc_energy += h1 * h2 * w;
 

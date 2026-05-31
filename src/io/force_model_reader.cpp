@@ -274,12 +274,26 @@ leaf::result<ForceCalculator> parse_force_model(std::string_view input) {
         sp.B = p.at("B").get<double>();
         sp.p = p.at("p").get<double>();
         sp.q = p.at("q").get<double>();
-        sp.a = p.at("a").get<double>();
-        sp.sigma = p.at("sigma").get<double>();
-        sp.lambda = p.at("lambda").get<double>();
+        sp.delta = p.at("delta").get<double>();
+        sp.a1 = p.at("a1").get<double>();
         sp.gamma = p.at("gamma").get<double>();
+        sp.a2 = p.at("a2").get<double>();
         calc.params.emplace_back(sp);
       }
+
+      // Per-triplet 3-body strength λ[i][j][k] (symmetric in j,k): a flat array
+      // of ntypes·paircol entries in canonical order (i; pair_slot(j,k)).
+      if (!j.contains("lambda") || !j["lambda"].is_array())
+        return fail("stiweb: missing 'lambda' array (ntypes·paircol entries)");
+      const auto &lam_arr = j["lambda"];
+      const std::size_t lam_count = ntypes * paircol;
+      if (lam_arr.size() != lam_count)
+        return fail("stiweb: expected " + std::to_string(lam_count) +
+                    " lambda entries for ntypes=" + std::to_string(ntypes) +
+                    ", got " + std::to_string(lam_arr.size()));
+      calc.lambda.reserve(lam_count);
+      for (const auto &l : lam_arr)
+        calc.lambda.emplace_back(Param{l.get<double>()});
 
       return ForceCalculator{std::move(calc)};
     }

@@ -248,15 +248,19 @@ TEST(Integration, StiwebSi_TetAngleMinimizesEnergy) {
     double e_tet = 0.0, e_90 = 0.0;
     leaf::try_handle_all(
         [&]() -> leaf::result<void> {
+            // potfit SW form: textbook Si params converted to
+            //   A' = A·B·σ^p, B' = A·σ^q, delta = σ, a1 = a·σ,
+            //   gamma' = γ·σ, a2 = a·σ;  lambda per-triplet.
             BOOST_LEAF_AUTO(fm, parse_force_model(R"({
               "model": "stiweb",
               "ntypes": 1,
               "potentials": [{
-                "A":7.0496,"B":0.6022,
+                "A":81.795,"B":7.0496,
                 "p":4.0,"q":0.0,
-                "a":1.80,"sigma":2.0951,
-                "lambda":21.0,"gamma":1.20
-              }]
+                "delta":2.0951,"a1":3.77118,
+                "gamma":2.51412,"a2":3.77118
+              }],
+              "lambda":[21.0]
             })"));
 
             auto &sw = std::get<StiwebForceCalculator>(fm);

@@ -170,7 +170,8 @@ TEST(ForceModelReader, Tersoff_Si_SingleType) {
 // ── stiweb model ──────────────────────────────────────────────────────────────
 
 TEST(ForceModelReader, StiWeb_Si_SingleType) {
-    // Stillinger-Weber (1985) Si parameters
+    // potfit Stillinger-Weber parameterization: per-pair 2-/3-body params plus
+    // a per-triplet lambda array (ntypes·paircol = 1 entry for one type).
     auto r = run(R"({
       "model": "stiweb",
       "ntypes": 1,
@@ -178,20 +179,25 @@ TEST(ForceModelReader, StiWeb_Si_SingleType) {
         {
           "A": 7.0496, "B": 0.6022,
           "p": 4.0, "q": 0.0,
-          "a": 1.80, "sigma": 2.0951,
-          "lambda": 21.0, "gamma": 1.20
+          "delta": 2.0951, "a1": 3.7712,
+          "gamma": 2.5141, "a2": 3.7712
         }
-      ]
+      ],
+      "lambda": [45.534]
     })");
     ASSERT_TRUE(r.ok) << r.error.message;
     ASSERT_TRUE(std::holds_alternative<StiwebForceCalculator>(r.model));
     const auto& calc = std::get<StiwebForceCalculator>(r.model);
     EXPECT_EQ(calc.ntypes, 1);
     const auto& sp = calc.params[0, 0];
-    EXPECT_DOUBLE_EQ(sp.A,      7.0496);
-    EXPECT_DOUBLE_EQ(sp.B,      0.6022);
-    EXPECT_DOUBLE_EQ(sp.sigma,  2.0951);
-    EXPECT_DOUBLE_EQ(sp.lambda, 21.0);
+    EXPECT_DOUBLE_EQ(sp.A,     7.0496);
+    EXPECT_DOUBLE_EQ(sp.B,     0.6022);
+    EXPECT_DOUBLE_EQ(sp.delta, 2.0951);
+    EXPECT_DOUBLE_EQ(sp.a1,    3.7712);
+    EXPECT_DOUBLE_EQ(sp.gamma, 2.5141);
+    EXPECT_DOUBLE_EQ(sp.a2,    3.7712);
+    ASSERT_EQ(calc.lambda.size(), 1u);
+    EXPECT_DOUBLE_EQ(double(calc.lambda_at(0, 0, 0)), 45.534);
 }
 
 // ── angular model ─────────────────────────────────────────────────────────────

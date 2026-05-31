@@ -1,7 +1,9 @@
 #include "potfit/core/rescale.hpp"
 
 #include <Eigen/Core>
+#include <algorithm>
 #include <cmath>
+#include <limits>
 #include <ranges>
 
 namespace potfit {
@@ -18,6 +20,45 @@ struct LinearAdjustedPotential {
   double eval(double x) const { return base.eval(x) - slope * x - intercept; }
   double deriv(double x) const { return base.deriv(x) - slope; }
   std::pair<double, double> span() const { return base.span(); }
+  std::size_t param_count() const { return base.param_count(); }
+  void gather_params(Eigen::VectorXd &v, int off) const {
+    base.gather_params(v, off);
+  }
+  void scatter_params(const Eigen::VectorXd &v, int off) {
+    base.scatter_params(v, off);
+  }
+};
+
+// Wrapper: scales the OUTPUT by a — density g(r) → a·g(r). Used for the
+// rho-axis stretch. gather/scatter delegate to base (knot params unchanged).
+struct ScaledOutputPotential {
+  Potential base;
+  double a = 1.0;
+
+  double eval(double r) const { return a * base.eval(r); }
+  double deriv(double r) const { return a * base.deriv(r); }
+  std::pair<double, double> span() const { return base.span(); }
+  std::size_t param_count() const { return base.param_count(); }
+  void gather_params(Eigen::VectorXd &v, int off) const {
+    base.gather_params(v, off);
+  }
+  void scatter_params(const Eigen::VectorXd &v, int off) {
+    base.scatter_params(v, off);
+  }
+};
+
+// Wrapper: scales the ARGUMENT by 1/a — embedding F(ρ) → F(ρ/a), so the stretch
+// is energy-preserving (F_new(a·ρ_old) = F_old(ρ_old)). The span scales by a.
+struct ScaledArgPotential {
+  Potential base;
+  double a = 1.0;
+
+  double eval(double rho) const { return base.eval(rho / a); }
+  double deriv(double rho) const { return base.deriv(rho / a) / a; }
+  std::pair<double, double> span() const {
+    auto [lo, hi] = base.span();
+    return {a * lo, a * hi};
+  }
   std::size_t param_count() const { return base.param_count(); }
   void gather_params(Eigen::VectorXd &v, int off) const {
     base.gather_params(v, off);
@@ -81,6 +122,85 @@ std::vector<double> compute_rho_ref(EAMForceCalculator &calc,
   return rho_ref;
 }
 
+double rescale_rho_axis(EAMForceCalculator &calc,
+                        std::span<Configuration> configs) {
+  const std::size_t n = calc.ntypes;
+
+  // Density pass: fills each atom's a.rho via the EAM first pass.
+  std::for_each(configs.begin(), configs.end(),
+                [&](auto &cfg) { calc.eval_forces(cfg); });
+
+  // Per-type min/max sampled electron density across all configs.
+  constexpr double inf = std::numeric_limits<double>::infinity();
+  std::vector<double> maxrho(n, -inf), minrho(n, inf);
+  for (const auto &cfg : configs) {
+    for (const auto &a : cfg.atoms) {
+      if (a.type < n) {
+        maxrho[a.type] = std::max(maxrho[a.type], a.rho);
+        minrho[a.type] = std::min(minrho[a.type], a.rho);
+      }
+    }
+  }
+
+  // Dominant type: the one with the largest |ρ| extent. `sign_pos` selects
+  // whether the positive (max) or negative (min) side drives the scaling.
+  std::size_t dom = 0;
+  double best = -1.0;
+  bool sign_pos = true;
+  for (std::size_t t = 0; t < n; ++t) {
+    if (!std::isfinite(maxrho[t])) {
+      continue; // no atoms of this type
+    }
+    const double ext = std::max(std::abs(maxrho[t]), std::abs(minrho[t]));
+    if (ext > best) {
+      best = ext;
+      dom = t;
+      sign_pos = (maxrho[t] >= -minrho[t]);
+    }
+  }
+  if (best < 0.0) {
+    return 1.0; // no data
+  }
+
+  const auto [emb_lo, emb_hi] = calc.embedding[dom].span();
+  const double pad = 0.003 * (emb_hi - emb_lo); // ≈ potfit's 0.3·step padding
+  const double upper = sign_pos ? emb_hi : emb_lo;
+  const double right = sign_pos ? maxrho[dom] + pad : minrho[dom] - pad;
+  if (std::abs(right) < 1e-30) {
+    return 1.0;
+  }
+  const double a = upper / right;
+
+  // Domain violation: any sampled ρ falls outside its embedding span.
+  bool violation = false;
+  for (std::size_t t = 0; t < n; ++t) {
+    if (!std::isfinite(maxrho[t])) {
+      continue;
+    }
+    const auto [lo, hi] = calc.embedding[t].span();
+    if (minrho[t] < lo || maxrho[t] > hi) {
+      violation = true;
+    }
+  }
+
+  // potfit skip rule: only rescale when actually needed.
+  if (!std::isfinite(a) || std::abs(a) < 1e-30) {
+    return 1.0;
+  }
+  if (!violation && std::abs(a) >= 0.95 && std::abs(a) <= 1.05) {
+    return 1.0;
+  }
+
+  // Apply one global factor: density × a, embedding argument / a.
+  for (std::size_t t = 0; t < n; ++t) {
+    calc.density[static_cast<int>(t)] = Potential(
+        ScaledOutputPotential{std::move(calc.density[static_cast<int>(t)]), a});
+    calc.embedding[static_cast<int>(t)] = Potential(
+        ScaledArgPotential{std::move(calc.embedding[static_cast<int>(t)]), a});
+  }
+  return a;
+}
+
 void embed_shift(EAMForceCalculator &calc, std::span<const double> rho_ref) {
   const int n = calc.ntypes;
 
@@ -120,6 +240,10 @@ void embed_shift(EAMForceCalculator &calc, std::span<const double> rho_ref) {
 }
 
 void rescale_eam(EAMForceCalculator &calc, std::span<Configuration> configs) {
+  // Step 0: density-axis stretch so sampled ρ fills the embedding table. Runs
+  // first; compute_rho_ref below re-evaluates ρ on the stretched density.
+  rescale_rho_axis(calc, configs);
+
   // embed_shift does not modify density functions, so rho_ref is stable across
   // both steps.
   const auto rho_ref = compute_rho_ref(calc, configs);

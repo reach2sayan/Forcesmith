@@ -14,6 +14,17 @@ namespace potfit {
 std::vector<double> compute_rho_ref(EAMForceCalculator &calc,
                                     std::span<Configuration> configs);
 
+// Renormalize the density axis so the sampled electron density fills the
+// embedding table range (matches potfit rescale.c's rho-axis stretch).
+// Scans per-type min/max ρ, picks a single global factor a from the dominant
+// type (a = upper / right), and applies it energy-preservingly:
+//   g_t(r) → a·g_t(r)        (all types)
+//   F_t(ρ) → F_t(ρ / a)      (all types; span scaled by a)
+// A no-op unless |a| leaves [0.95, 1.05] or sampled ρ falls outside the span.
+// Returns the applied factor a (1.0 if no rescaling was needed).
+double rescale_rho_axis(EAMForceCalculator &calc,
+                        std::span<Configuration> configs);
+
 // Gauge-invariant linear shift of the EAM embedding functions.
 // For each type t:
 //   F_t(ρ) → F_t(ρ) − F_t′(rho_ref[t]) × ρ
