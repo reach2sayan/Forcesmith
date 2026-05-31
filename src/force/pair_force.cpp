@@ -55,32 +55,39 @@ std::size_t PairForceCalculator::param_count() const {
 void PairForceCalculator::gather_params(Eigen::VectorXd &dst,
                                         std::size_t off) const {
   gather_range(pair, dst, off);
-  for (const auto &g : globals)
+  std::ranges::for_each(globals, [&](const auto &g) {
     if (!g.value.fixed)
       dst[off++] = g.value.value;
+  });
 }
 
 void PairForceCalculator::scatter_params(const Eigen::VectorXd &src,
                                          std::size_t off) {
   scatter_range(pair, src, off);
-  for (auto &g : globals)
+  std::ranges::for_each(globals, [&](auto &g) {
     if (!g.value.fixed)
       g.value.value = src[off++];
+  });
   broadcast_globals();
 }
 
 void PairForceCalculator::broadcast_globals() {
-  for (const auto &g : globals)
-    for (const auto &lk : g.links) // pair calculator: region is always 0 (pair)
+  for (const auto &g : globals) {
+    for (const auto &lk : g.links) {
+      // pair calculator: region is always 0 (pair)
       (*std::next(pair.begin(), static_cast<std::ptrdiff_t>(lk.index)))
           .set_param(lk.param, g.value.value);
+    }
+  }
 }
 
 void PairForceCalculator::finalize_globals() {
-  for (const auto &g : globals)
-    for (const auto &lk : g.links)
+  for (const auto &g : globals) {
+    for (const auto &lk : g.links) {
       (*std::next(pair.begin(), static_cast<std::ptrdiff_t>(lk.index)))
           .set_fixed(lk.param, true);
+    }
+  }
   broadcast_globals();
 }
 
