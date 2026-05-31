@@ -7,8 +7,62 @@
 #include <cmath>
 #include <iterator>
 #include <numeric>
+#include <optional>
+#include <utility>
 
 namespace potfit {
+
+namespace {
+
+// ── 2-body pipeline ─────────────────────────────────────────────────────────
+// Each i–j bond is threaded through the stages; an empty std::optional (atoms
+// coincident, or r outside the potential's own range) short-circuits the chain,
+// mirroring adp/tersoff/stiweb.
+struct PairBond {
+  Atom            *ai;                  // central atom
+  const Potential *pot;                 // i–j pair potential φ
+  Vec3             d;                   // pos_j − pos_i
+  double           r, inv_r;            // |d| and 1/|d|
+  double           phi = 0.0;           // pair energy φ(r)
+  Vec3             force = Vec3::Zero(); // force on i
+};
+
+// Stage 1 — geometry + cutoff gate. The neighbor list is built with the global
+// max_cutoff(); gate each contribution on this potential's own range
+// [rmin, rmax). Empty for coincident atoms or out-of-range separations.
+std::optional<PairBond> make_pair_bond(Atom &ai, const NeighborEntry &nb,
+                                       const Potential &pot) {
+  const double r = nb.dist.norm();
+  if (r < 1e-14) {
+    return std::nullopt;
+  }
+  const auto [rmin, rmax] = pot.span();
+  if (r < rmin || r >= rmax) {
+    return std::nullopt;
+  }
+  return PairBond{&ai, &pot, nb.dist, r, 1.0 / r};
+}
+
+// Stage 2 — radial force φ′(r).
+PairBond add_pair_force(PairBond &&pb) {
+  pb.phi = pb.pot->eval(pb.r);
+  const double dphi = pb.pot->deriv(pb.r);
+  pb.force = (dphi * pb.inv_r) * pb.d;
+  return std::move(pb);
+}
+
+// Stage 3 — commit energy / force / virial (0.5 for the full neighbor list).
+auto accumulate_pair(Configuration &cfg) {
+  return [&cfg](PairBond &&pb) -> PairBond {
+    pb.ai->calc_force += pb.force;
+    cfg.calc_energy += 0.5 * pb.phi;
+    // Virial: bond ⊗ force-on-partner = dist ⊗ (−force); 0.5 for the full list.
+    cfg.calc_stress -= 0.5 * pb.d * pb.force.transpose();
+    return std::move(pb);
+  };
+}
+
+} // anonymous namespace
 
 std::size_t PairForceCalculator::param_count() const {
   return std::transform_reduce(pair.begin(), pair.end(), std::size_t{0},
@@ -41,29 +95,12 @@ void PairForceCalculator::eval_forces(Configuration &cfg) const {
   std::ranges::for_each(cfg.atoms,
                         [](auto &atom) { atom.calc_force = Vec3::Zero(); });
 
+  // Each i–j bond flows: geometry + cutoff gate → radial force → commit.
   for (auto &atom : cfg.atoms) {
     for (const auto &nb : atom.neighbors) {
-      const double r = nb.dist.norm();
-      if (r < 1e-14) {
-        continue;
-      }
-      const Potential &pot = pair[atom, *nb.neighbor];
-      // The neighbor list is built with the global max_cutoff(); gate each
-      // contribution on this specific pair potential's own range [rmin, rmax].
-      const auto [rmin, rmax] = pot.span();
-      if (r < rmin || r >= rmax) {
-        continue;
-      }
-      const double inv_r = 1.0 / r;
-      const double phi = pot.eval(r);
-      const double dphi = pot.deriv(r);
-      const Vec3 fvec = (dphi * inv_r) * nb.dist;
-
-      atom.calc_force += fvec;
-      cfg.calc_energy += 0.5 * phi;
-      // Virial: bond ⊗ force-on-partner = dist ⊗ (−fvec); 0.5 for the full
-      // list.
-      cfg.calc_stress -= 0.5 * nb.dist * fvec.transpose();
+      make_pair_bond(atom, nb, pair[atom, *nb.neighbor])
+          .transform(add_pair_force)
+          .transform(accumulate_pair(cfg));
     }
   }
 
