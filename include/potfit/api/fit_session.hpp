@@ -10,11 +10,11 @@
 //
 // Lifecycle is automatic. Structural mutators (add/remove atoms, configs,
 // elements, potentials) mark the session dirty; the expensive,
-// invariant-establishing build (freeze) runs lazily the first time a run/IO
-// method needs it. The user never has to call freeze() — it is exposed only as
-// an optional "build now / surface errors early" hook. Reference-value writes
-// (forces/energy/stress/weight) and per-parameter edits do NOT dirty the
-// session: they write straight through to the live data.
+// invariant-establishing build (freeze) runs lazily and internally the first
+// time a run/IO/lookup method needs it — it is not part of the public API, so
+// the user never calls it. Reference-value writes (forces/energy/stress/weight)
+// and per-parameter edits do NOT dirty the session: they write straight through
+// to the live data.
 //
 // Auto-grow species: atoms and potentials are held by element *identity*
 // (symbol); the compact dense-table slot (Species::index, Z-sorted rank) is
@@ -32,10 +32,12 @@
 #include "potfit/optimization/optimizer.hpp"
 
 #include <boost/leaf/result.hpp>
+#include <concepts>
 #include <cstddef>
 #include <filesystem>
 #include <map>
 #include <optional>
+#include <ranges>
 #include <span>
 #include <string>
 #include <string_view>
@@ -56,27 +58,66 @@ public:
   // Push a fully-built configuration (e.g. from Configuration::from_text). Its
   // atoms' element symbols join the model's element set at freeze.
   std::size_t add_configuration(Configuration cfg);
+  // Attach a whole range of pre-built configurations at once. Accepts any
+  // input_range of Configuration (vector, array, span, views...). Returns the
+  // index of the FIRST appended config; the batch occupies [first, first+N).
+  // Like the single-config overloads, marks the session dirty so the next
+  // operation re-freezes against the enlarged config set.
+  template <std::ranges::input_range R>
+    requires std::convertible_to<std::ranges::range_value_t<R>, Configuration>
+  std::size_t add_configurations(R &&cfgs) {
+    const std::size_t first = configs_.size();
+    if constexpr (std::ranges::sized_range<R>) {
+      configs_.reserve(configs_.size() + std::ranges::size(cfgs));
+    }
+    for (auto &&c : cfgs) {
+      configs_.emplace_back(std::forward<decltype(c)>(c));
+    }
+    dirty_ = true;
+    return first;
+  }
   boost::leaf::result<void> remove_configuration(std::size_t cfg);
   boost::leaf::result<void> set_cell(std::size_t cfg, const Mat3 &box);
   boost::leaf::result<void> set_infinite(std::size_t cfg, double volume = 1.0);
   [[nodiscard]] std::size_t config_count() const { return configs_.size(); }
 
+  [[nodiscard]] boost::leaf::result<std::size_t>
+  get_configuration_index(std::string_view name);
+
+  [[nodiscard]] boost::leaf::result<std::size_t>
+  get_configuration_index(const Configuration &cfg) const;
+
+  [[nodiscard]] boost::leaf::result<std::size_t> get_atom_index(const Atom &atom);
+
   boost::leaf::result<std::size_t>
   add_atom(std::size_t cfg, std::string_view element, const Vec3 &pos);
   boost::leaf::result<void> remove_atom(std::size_t cfg, std::size_t atom);
+
   boost::leaf::result<void> set_position(std::size_t cfg, std::size_t atom,
                                          const Vec3 &pos);
   boost::leaf::result<void> set_element(std::size_t cfg, std::size_t atom,
                                         std::string_view element);
+
   [[nodiscard]] boost::leaf::result<std::size_t>
   atom_count(std::size_t cfg) const;
 
-  // ── reference data (value writes; do NOT dirty) ────────────────────────────
-  boost::leaf::result<void> set_ref_force(std::size_t cfg, std::size_t atom,
+  boost::leaf::result<void> set_ref_force(const Atom &atom, const Vec3 &f);
+  boost::leaf::result<void> set_ref_force(std::string_view cfg, std::size_t atom,
                                           const Vec3 &f);
+
   boost::leaf::result<void> set_ref_energy(std::size_t cfg, double e);
+  boost::leaf::result<void> set_ref_energy(std::string_view cfg, double e);
+  boost::leaf::result<void> set_ref_energy(const Configuration &cfg, double e);
+
   boost::leaf::result<void> set_ref_stress(std::size_t cfg, const SymTens &s);
+  boost::leaf::result<void> set_ref_stress(std::string_view cfg,
+                                           const SymTens &s);
+  boost::leaf::result<void> set_ref_stress(const Configuration &cfg,
+                                           const SymTens &s);
+
   boost::leaf::result<void> set_weight(std::size_t cfg, double w);
+  boost::leaf::result<void> set_weight(std::string_view cfg, double w);
+  boost::leaf::result<void> set_weight(const Configuration &cfg, double w);
 
   // ── species (optional; lets an element with a potential but no atoms slot) ──
   boost::leaf::result<void> declare_element(std::string_view sym);
@@ -122,8 +163,6 @@ public:
   OptimizerOptions &options() { return opts_; }
   [[nodiscard]] const OptimizerOptions &options() const { return opts_; }
 
-  boost::leaf::result<void> freeze();
-
   boost::leaf::result<force::EvalResult> evaluate(std::size_t cfg);
   boost::leaf::result<int> optimize();
   boost::leaf::result<void> write(const std::filesystem::path &path,
@@ -136,7 +175,11 @@ public:
   boost::leaf::result<const ForceCalculator *> model();
 
 private:
+  // The lazy build ("freeze"); runs on first run/IO/lookup that needs it.
   boost::leaf::result<void> ensure_frozen();
+  // Fill empty config names with "config-<i>" and verify uniqueness. Cheap and
+  // idempotent; no neighbor-list build or model materialization.
+  boost::leaf::result<void> ensure_named();
   // Decompose a seeded (file-loaded) model into the editable symbol-keyed spec
   boost::leaf::result<void> detach_seeded(std::string_view action);
   boost::leaf::result<SpeciesRegistry> build_registry() const;
@@ -144,6 +187,10 @@ private:
   boost::leaf::result<void>
   decompose_seeded_into_spec(const SpeciesRegistry &model_reg); // pair / EAM
   [[nodiscard]] boost::leaf::result<Configuration *> config_at(std::size_t cfg);
+  // Bounds-checked per-atom force write; the public set_ref_force overloads
+  // resolve their handles to (cfg, atom) indices and funnel through here.
+  boost::leaf::result<void> write_ref_force(std::size_t cfg, std::size_t atom,
+                                            const Vec3 &f);
 
   static PairKey norm_key(std::string_view a, std::string_view b);
 

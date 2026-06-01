@@ -87,7 +87,10 @@ void build_infinite(Configuration &cfg, double rcut2,
 }
 
 void build_impl(Configuration &cfg, double rcut, const PotentialPair *pots) {
-  std::ranges::for_each(cfg.atoms, [](auto &a) { a.neighbors.clear(); });
+  std::ranges::for_each(cfg.atoms, [&cfg](auto &a) {
+    a.neighbors.clear();
+    a.parent = &cfg; // stamp owning config (transient; mirrors neighbor ptrs)
+  });
   const double rcut2 = rcut * rcut;
 
   if (const auto *pbc = std::get_if<PeriodicBC>(&cfg.bc)) {

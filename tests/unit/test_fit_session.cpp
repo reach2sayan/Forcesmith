@@ -8,8 +8,10 @@
 #include <boost/leaf/handle_errors.hpp>
 #include <gtest/gtest.h>
 
+#include <array>
 #include <string>
 #include <variant>
+#include <vector>
 
 namespace leaf = boost::leaf;
 using namespace potfit;
@@ -354,6 +356,270 @@ TEST(FitSession, ConfigurationFromText) {
     EXPECT_DOUBLE_EQ(cfg.ref.energy, -2.25);
     EXPECT_DOUBLE_EQ(cfg.atoms[0].ref.force.x(), 0.1);
     EXPECT_EQ(cfg.atoms[0].type.symbol, std::string_view{"Cu"});
+    return {};
+  });
+  EXPECT_EQ(err, "") << err;
+}
+
+// A single-Cu cubic cell at a given lattice constant, built via from_text.
+static Configuration cu_cell(double a) {
+  std::string box = std::to_string(a);
+  auto r = Configuration::from_text(R"({
+    "X": [)" + box + R"(, 0.0, 0.0],
+    "Y": [0.0, )" + box + R"(, 0.0],
+    "Z": [0.0, 0.0, )" + box + R"(],
+    "E": -1.0,
+    "atoms": [
+      {"element": "Cu", "position": [0.0, 0.0, 0.0]},
+      {"element": "Cu", "position": [2.0, 0.0, 0.0]}
+    ]
+  })");
+  return r.value(); // tests build clean input; surface any parse bug loudly
+}
+
+TEST(FitSession, AddConfigurationsBulk) {
+  // Batch-attach via a std::vector, then again via a std::array, and confirm the
+  // returned first-index, config_count growth, and that the lazy re-freeze picks
+  // the new configs up (atom slots stamped, neighbor lists built).
+  std::string err = run([&]() -> leaf::result<void> {
+    FitSession s;
+    BOOST_LEAF_CHECK(s.set_pair_potential("Cu", "Cu", morse_cu()));
+
+    // Pre-seed one config the single-arg way so the batch does not start at 0.
+    const std::size_t c0 = s.add_configuration(PeriodicBC(cubic(8.0)));
+    BOOST_LEAF_CHECK(s.add_atom(c0, "Cu", Vec3(0, 0, 0)));
+    EXPECT_EQ(s.config_count(), 1u);
+
+    // vector batch
+    std::vector<Configuration> vec;
+    vec.push_back(cu_cell(8.0));
+    vec.push_back(cu_cell(8.5));
+    const std::size_t first_vec = s.add_configurations(std::move(vec));
+    EXPECT_EQ(first_vec, 1u);            // appended after c0
+    EXPECT_EQ(s.config_count(), 3u);
+
+    // array batch (exercises the generic-range acceptance, not just vector)
+    std::array<Configuration, 2> arr{cu_cell(9.0), cu_cell(9.5)};
+    const std::size_t first_arr = s.add_configurations(std::move(arr));
+    EXPECT_EQ(first_arr, 3u);
+    EXPECT_EQ(s.config_count(), 5u);
+
+    // The re-freeze must see all five: evaluate one of the batched configs.
+    BOOST_LEAF_AUTO(r, s.evaluate(first_arr));
+    EXPECT_EQ(r.forces.size(), 2u);
+
+    BOOST_LEAF_AUTO(cfgs, s.configurations());
+    EXPECT_EQ(cfgs.size(), 5u);
+    // Every atom has had its compact type slot stamped at freeze.
+    for (const auto &cfg : cfgs) {
+      for (const auto &atom : cfg.atoms) {
+        EXPECT_EQ(atom.type.symbol, std::string_view{"Cu"});
+      }
+    }
+    return {};
+  });
+  EXPECT_EQ(err, "") << err;
+}
+
+TEST(FitSession, AddConfigurationsEquivalentToLoop) {
+  // One bulk call must yield the same config_count and per-config atom counts as
+  // N single add_configuration calls.
+  auto build = [](bool bulk) -> std::size_t {
+    FitSession s;
+    std::vector<Configuration> batch;
+    batch.push_back(cu_cell(8.0));
+    batch.push_back(cu_cell(8.5));
+    batch.push_back(cu_cell(9.0));
+    if (bulk) {
+      s.add_configurations(std::move(batch));
+    } else {
+      for (auto &c : batch) {
+        s.add_configuration(std::move(c));
+      }
+    }
+    return s.config_count();
+  };
+  EXPECT_EQ(build(true), build(false));
+  EXPECT_EQ(build(true), 3u);
+}
+
+// A single-Cu cubic cell carrying an explicit name, built via from_text.
+static Configuration named_cell(std::string_view name) {
+  auto r = Configuration::from_text(R"({
+    "name": ")" + std::string(name) + R"(",
+    "X": [8.0, 0.0, 0.0],
+    "Y": [0.0, 8.0, 0.0],
+    "Z": [0.0, 0.0, 8.0],
+    "E": -1.0,
+    "atoms": [
+      {"element": "Cu", "position": [0.0, 0.0, 0.0]},
+      {"element": "Cu", "position": [2.0, 0.0, 0.0]}
+    ]
+  })");
+  return r.value();
+}
+
+// index_of(name) resolves a user-supplied name to the index add_configuration
+// returned — with no explicit freeze() and without dirtying the session.
+TEST(FitSession, IndexOfByName) {
+  FitSession s;
+  std::string err = run([&]() -> leaf::result<void> {
+    const std::size_t a = s.add_configuration(named_cell("alpha"));
+    const std::size_t b = s.add_configuration(named_cell("beta"));
+    BOOST_LEAF_AUTO(ia, s.get_configuration_index("alpha"));
+    BOOST_LEAF_AUTO(ib, s.get_configuration_index("beta"));
+    EXPECT_EQ(ia, a);
+    EXPECT_EQ(ib, b);
+    return {};
+  });
+  EXPECT_EQ(err, "") << err;
+}
+
+// Unnamed configs get auto-names ("config-<i>") materialized on demand by
+// index_of — proving the lookup works without a full freeze().
+TEST(FitSession, IndexOfAutoName) {
+  FitSession s;
+  std::string err = run([&]() -> leaf::result<void> {
+    s.add_configuration(cu_cell(8.0));
+    s.add_configuration(cu_cell(8.5));
+    BOOST_LEAF_AUTO(i1, s.get_configuration_index("config-1"));
+    EXPECT_EQ(i1, 1u);
+    return {};
+  });
+  EXPECT_EQ(err, "") << err;
+}
+
+// index_of(Configuration&) round-trips a handle from configurations() back to
+// its dense index in O(1).
+TEST(FitSession, IndexOfByRefRoundTrips) {
+  FitSession s;
+  std::string err = run([&]() -> leaf::result<void> {
+    s.add_configuration(cu_cell(8.0));
+    s.add_configuration(cu_cell(8.5));
+    s.add_configuration(cu_cell(9.0));
+    BOOST_LEAF_CHECK(s.set_pair_potential("Cu", "Cu", morse_cu()));
+    BOOST_LEAF_AUTO(cfgs, s.configurations());
+    for (std::size_t k = 0; k < cfgs.size(); ++k) {
+      BOOST_LEAF_AUTO(idx, s.get_configuration_index(cfgs[k]));
+      EXPECT_EQ(idx, k);
+    }
+    return {};
+  });
+  EXPECT_EQ(err, "") << err;
+}
+
+// Both overloads report errors for unknown name / foreign configuration.
+TEST(FitSession, IndexOfErrors) {
+  FitSession s;
+  s.add_configuration(cu_cell(8.0));
+
+  // Unknown name.
+  std::string e1 = run([&]() -> leaf::result<void> {
+    BOOST_LEAF_AUTO(i, s.get_configuration_index("nope"));
+    (void)i;
+    return {};
+  });
+  EXPECT_NE(e1, "");
+
+  // A configuration not owned by this session.
+  std::string e2 = run([&]() -> leaf::result<void> {
+    Configuration foreign = cu_cell(8.0);
+    BOOST_LEAF_AUTO(i, s.get_configuration_index(foreign));
+    (void)i;
+    return {};
+  });
+  EXPECT_NE(e2, "");
+}
+
+// Duplicate user-supplied names surface the dedup error early, via
+// get_configuration_index.
+TEST(FitSession, IndexOfDuplicateName) {
+  FitSession s;
+  s.add_configuration(named_cell("dup"));
+  s.add_configuration(named_cell("dup"));
+  std::string err = run([&]() -> leaf::result<void> {
+    BOOST_LEAF_AUTO(i, s.get_configuration_index("dup"));
+    (void)i;
+    return {};
+  });
+  EXPECT_NE(err, "");
+}
+
+// get_atom_index(atom) returns the atom's position within its parent config;
+// atom.parent is stamped at freeze, so every atom from configurations() resolves.
+TEST(FitSession, GetAtomIndex) {
+  FitSession s;
+  std::string err = run([&]() -> leaf::result<void> {
+    s.add_configuration(cu_cell(8.0));
+    s.add_configuration(cu_cell(8.5));
+    BOOST_LEAF_CHECK(s.set_pair_potential("Cu", "Cu", morse_cu()));
+    BOOST_LEAF_AUTO(cfgs, s.configurations());
+    for (const auto &cfg : cfgs) {
+      for (std::size_t a = 0; a < cfg.atoms.size(); ++a) {
+        BOOST_LEAF_AUTO(ai, s.get_atom_index(cfg.atoms[a]));
+        EXPECT_EQ(ai, a);
+      }
+    }
+    return {};
+  });
+  EXPECT_EQ(err, "") << err;
+}
+
+// An atom that is not owned by the session errors — even after the implicit
+// freeze (which only stamps the session's own atoms, not a foreign one).
+TEST(FitSession, GetAtomIndexForeignAtom) {
+  FitSession s;
+  s.add_configuration(cu_cell(8.0));
+  Configuration foreign = cu_cell(8.0); // not in the session → parent stays null
+  std::string err = run([&]() -> leaf::result<void> {
+    BOOST_LEAF_CHECK(s.set_pair_potential("Cu", "Cu", morse_cu())); // freeze ok
+    BOOST_LEAF_AUTO(ai, s.get_atom_index(foreign.atoms[0]));
+    (void)ai;
+    return {};
+  });
+  EXPECT_NE(err, "");
+}
+
+// atom.parent points back at the owning config, and chains to its config index.
+TEST(FitSession, AtomParentBackRef) {
+  FitSession s;
+  std::string err = run([&]() -> leaf::result<void> {
+    s.add_configuration(cu_cell(8.0));
+    s.add_configuration(cu_cell(8.5));
+    BOOST_LEAF_CHECK(s.set_pair_potential("Cu", "Cu", morse_cu()));
+    BOOST_LEAF_AUTO(cfgs, s.configurations());
+    for (std::size_t k = 0; k < cfgs.size(); ++k) {
+      for (const auto &atom : cfgs[k].atoms) {
+        EXPECT_EQ(atom.parent, &cfgs[k]);
+        BOOST_LEAF_AUTO(ci, s.get_configuration_index(*atom.parent));
+        EXPECT_EQ(ci, k);
+      }
+    }
+    return {};
+  });
+  EXPECT_EQ(err, "") << err;
+}
+
+// The name and atom-handle reference setters land the same values as the
+// index-based forms.
+TEST(FitSession, ReferenceSettersByNameAndHandle) {
+  FitSession s;
+  std::string err = run([&]() -> leaf::result<void> {
+    s.add_configuration(named_cell("alpha"));
+    BOOST_LEAF_CHECK(s.set_pair_potential("Cu", "Cu", morse_cu()));
+
+    // by name (config-level) and by atom handle (per-atom force)
+    BOOST_LEAF_CHECK(s.set_ref_energy("alpha", -3.5));
+    BOOST_LEAF_CHECK(s.set_weight("alpha", 2.0));
+    BOOST_LEAF_AUTO(cfgs, s.configurations());
+    const Vec3 f(0.1, 0.2, 0.3);
+    BOOST_LEAF_CHECK(s.set_ref_force(cfgs[0].atoms[1], f));
+
+    EXPECT_EQ(cfgs[0].ref.energy, -3.5);
+    EXPECT_EQ(cfgs[0].weight, 2.0);
+    EXPECT_TRUE(cfgs[0].atoms[1].ref.force.isApprox(f));
+    // The untouched atom keeps its default reference force.
+    EXPECT_TRUE(cfgs[0].atoms[0].ref.force.isApprox(Vec3::Zero()));
     return {};
   });
   EXPECT_EQ(err, "") << err;

@@ -12,6 +12,7 @@
 #include "potfit/io/write_model.hpp"
 
 #include <algorithm>
+#include <iterator>
 #include <map>
 #include <ranges>
 #include <string>
@@ -46,7 +47,8 @@ require(const Map &m, const typename Map::key_type &key, std::string what) {
   return std::visit([](const auto &c) { return c.max_cutoff(); }, m);
 }
 // Radial pair table (φ_ij) when the model has one; nullptr for tersoff/stiweb.
-[[nodiscard]] constexpr const PotentialPair *pair_table_of(const ForceCalculator &m) {
+[[nodiscard]] constexpr const PotentialPair *
+pair_table_of(const ForceCalculator &m) {
   return std::visit(
       [](const auto &c) -> const PotentialPair * {
         if constexpr (requires { c.pair; }) {
@@ -78,11 +80,59 @@ leaf::result<Configuration *> FitSession::config_at(std::size_t cfg) {
   return &configs_[cfg];
 }
 
+leaf::result<void> FitSession::ensure_named() {
+  for (auto &&[i, cfg] : std::views::enumerate(configs_)) {
+    if (cfg.name.empty()) {
+      cfg.name = "config-" + std::to_string(i);
+    }
+  }
+  std::vector<std::string_view> names;
+  names.reserve(configs_.size());
+  std::ranges::transform(configs_, std::back_inserter(names),
+                         &Configuration::name);
+  std::ranges::sort(names);
+  if (auto dup = std::ranges::adjacent_find(names); dup != names.end()) {
+    return err("duplicate configuration name '" + std::string(*dup) + "'");
+  }
+  return {};
+}
+
+leaf::result<std::size_t>
+FitSession::get_configuration_index(std::string_view name) {
+  BOOST_LEAF_CHECK(ensure_named());
+  for (auto &&[i, cfg] : configs_ | std::views::enumerate) {
+    if (cfg.name == name) {
+      return static_cast<std::size_t>(i);
+    }
+  }
+  return err("no configuration named '" + std::string(name) + "'");
+}
+
+leaf::result<std::size_t>
+FitSession::get_configuration_index(const Configuration &cfg) const {
+  // Address equality (well-defined for any pointer), not a relational
+  // pointer-range check against a possibly-foreign &cfg (unspecified behavior).
+  const auto it = std::ranges::find_if(
+      configs_, [&](const Configuration &c) { return &c == &cfg; });
+  if (it == configs_.end()) {
+    return err("configuration is not owned by this session");
+  }
+  return static_cast<std::size_t>(std::distance(configs_.begin(), it));
+}
+
+leaf::result<std::size_t> FitSession::get_atom_index(const Atom &atom) {
+  BOOST_LEAF_CHECK(ensure_frozen()); // stamps Atom::parent for owned atoms
+  if (atom.parent == nullptr) {
+    return err("atom is not owned by this session");
+  }
+  // Legal pointer subtraction: `atom` genuinely lives in parent->atoms.
+  return static_cast<std::size_t>(&atom - atom.parent->atoms.data());
+}
+
 std::size_t FitSession::add_configuration(BoundaryConditions bc) {
   Configuration cfg;
   cfg.bc = std::move(bc);
-  configs_.push_back(std::move(cfg));
-  dirty_ = true;
+  return add_configuration(std::move(cfg));
   return configs_.size() - 1;
 }
 
@@ -168,8 +218,8 @@ leaf::result<std::size_t> FitSession::atom_count(std::size_t cfg) const {
 }
 
 // ── reference data (no dirty) ────────────────────────────────────────────────
-leaf::result<void> FitSession::set_ref_force(std::size_t cfg, std::size_t atom,
-                                             const Vec3 &f) {
+leaf::result<void>
+FitSession::write_ref_force(std::size_t cfg, std::size_t atom, const Vec3 &f) {
   BOOST_LEAF_AUTO(c, config_at(cfg));
   if (atom >= c->atoms.size()) {
     return err("atom index out of range");
@@ -197,7 +247,51 @@ leaf::result<void> FitSession::set_weight(std::size_t cfg, double w) {
   return {};
 }
 
-// ── species ──────────────────────────────────────────────────────────────────
+leaf::result<void> FitSession::set_ref_force(const Atom &atom, const Vec3 &f) {
+  BOOST_LEAF_AUTO(ai, get_atom_index(atom)); // freezes; stamps atom.parent
+  BOOST_LEAF_AUTO(ci, get_configuration_index(*atom.parent));
+  return write_ref_force(ci, ai, f);
+}
+
+leaf::result<void> FitSession::set_ref_force(std::string_view cfg,
+                                             std::size_t atom, const Vec3 &f) {
+  BOOST_LEAF_AUTO(ci, get_configuration_index(cfg));
+  return write_ref_force(ci, atom, f);
+}
+
+leaf::result<void> FitSession::set_ref_energy(std::string_view cfg, double e) {
+  BOOST_LEAF_AUTO(ci, get_configuration_index(cfg));
+  return set_ref_energy(ci, e);
+}
+
+leaf::result<void> FitSession::set_ref_energy(const Configuration &cfg,
+                                              double e) {
+  BOOST_LEAF_AUTO(ci, get_configuration_index(cfg));
+  return set_ref_energy(ci, e);
+}
+
+leaf::result<void> FitSession::set_ref_stress(std::string_view cfg,
+                                              const SymTens &s) {
+  BOOST_LEAF_AUTO(ci, get_configuration_index(cfg));
+  return set_ref_stress(ci, s);
+}
+
+leaf::result<void> FitSession::set_ref_stress(const Configuration &cfg,
+                                              const SymTens &s) {
+  BOOST_LEAF_AUTO(ci, get_configuration_index(cfg));
+  return set_ref_stress(ci, s);
+}
+
+leaf::result<void> FitSession::set_weight(std::string_view cfg, double w) {
+  BOOST_LEAF_AUTO(ci, get_configuration_index(cfg));
+  return set_weight(ci, w);
+}
+
+leaf::result<void> FitSession::set_weight(const Configuration &cfg, double w) {
+  BOOST_LEAF_AUTO(ci, get_configuration_index(cfg));
+  return set_weight(ci, w);
+}
+
 leaf::result<void> FitSession::declare_element(std::string_view sym) {
   BOOST_LEAF_CHECK(Species::lookup(sym)); // validate against the catalog
   if (std::ranges::find(declared_, std::string(sym)) == declared_.end()) {
@@ -239,8 +333,8 @@ void FitSession::set_global(GlobalParam g) {
   dirty_ = true;
 }
 
-leaf::result<void> FitSession::set_dipole(std::string_view a, std::string_view b,
-                                          Potential p) {
+leaf::result<void> FitSession::set_dipole(std::string_view a,
+                                          std::string_view b, Potential p) {
   BOOST_LEAF_CHECK(Species::lookup(a));
   BOOST_LEAF_CHECK(Species::lookup(b));
   BOOST_LEAF_CHECK(detach_seeded("edit"));
@@ -259,8 +353,8 @@ leaf::result<void> FitSession::set_quadrupole(std::string_view a,
   return {};
 }
 
-leaf::result<void> FitSession::set_radial(std::string_view a, std::string_view b,
-                                          Potential p) {
+leaf::result<void> FitSession::set_radial(std::string_view a,
+                                          std::string_view b, Potential p) {
   BOOST_LEAF_CHECK(Species::lookup(a));
   BOOST_LEAF_CHECK(Species::lookup(b));
   BOOST_LEAF_CHECK(detach_seeded("edit"));
@@ -399,10 +493,10 @@ namespace {
 // Each force-calculator family is a strategy that knows (a) when it applies to
 // the editable spec, (b) how to build itself from the spec, and (c) how to
 // decompose a built model back into the spec. The forward direction is selected
-// by probing `applies` in priority order; the inverse is selected by the variant
-// alternative. Globals are handled uniformly through the WithGlobals/NoGlobals
-// mixin interface (set_globals / finalize_globals / globals_empty), so no family
-// special-cases them.
+// by probing `applies` in priority order; the inverse is selected by the
+// variant alternative. Globals are handled uniformly through the
+// WithGlobals/NoGlobals mixin interface (set_globals / finalize_globals /
+// globals_empty), so no family special-cases them.
 
 using LambdaKey = std::tuple<std::string, std::string, std::string>;
 
@@ -440,10 +534,11 @@ build_pair_table(const std::map<FitSession::PairKey, V> &src,
   SymmetricMatrix<V> mat;
   mat.reserve(ntypes(reg));
   for (auto [ti, tj] : mat.indices()) {
-    const auto key = norm_key(species_at(reg, ti).symbol,
-                              species_at(reg, tj).symbol);
-    BOOST_LEAF_AUTO(v, require(src, key, std::string(what) + " for " +
-                                             key.first + "-" + key.second));
+    const auto key =
+        norm_key(species_at(reg, ti).symbol, species_at(reg, tj).symbol);
+    BOOST_LEAF_AUTO(
+        v, require(src, key,
+                   std::string(what) + " for " + key.first + "-" + key.second));
     mat.emplace_back(std::move(v));
   }
   return mat;
@@ -466,15 +561,16 @@ build_type_array(const std::map<std::string, Potential> &src,
 // Stiweb λ flat vector, in the calculator's own order: ti outer, then the
 // unordered neighbour pair in upper-triangular slot order (== lambda_index).
 [[nodiscard]] leaf::result<std::vector<Param>>
-build_lambda(const std::map<LambdaKey, Param> &src, const SpeciesRegistry &reg) {
+build_lambda(const std::map<LambdaKey, Param> &src,
+             const SpeciesRegistry &reg) {
   const std::size_t n = ntypes(reg);
   std::vector<Param> lam;
   lam.reserve(n * n * (n + 1) / 2);
   for (std::size_t ti = 0; ti < n; ++ti) {
     const std::string ci(species_at(reg, ti).symbol);
     for (auto [tj, tk] : upper_triangle(n)) {
-      const auto nb = norm_key(species_at(reg, tj).symbol,
-                               species_at(reg, tk).symbol);
+      const auto nb =
+          norm_key(species_at(reg, tj).symbol, species_at(reg, tk).symbol);
       BOOST_LEAF_AUTO(v, require(src, LambdaKey{ci, nb.first, nb.second},
                                  "stiweb lambda for " + ci + ":" + nb.first +
                                      "-" + nb.second));
@@ -489,9 +585,9 @@ template <class V>
 void dump_pair_table(const SymmetricMatrix<V> &mat, const SpeciesRegistry &reg,
                      std::map<FitSession::PairKey, V> &dst) {
   for (auto [ti, tj] : upper_triangle(ntypes(reg))) {
-    dst.insert_or_assign(norm_key(species_at(reg, ti).symbol,
-                                  species_at(reg, tj).symbol),
-                         mat[ti, tj]);
+    dst.insert_or_assign(
+        norm_key(species_at(reg, ti).symbol, species_at(reg, tj).symbol),
+        mat[ti, tj]);
   }
 }
 
@@ -508,8 +604,8 @@ void dump_lambda(const StiwebForceCalculator &c, const SpeciesRegistry &reg,
   for (std::size_t ti = 0; ti < n; ++ti) {
     const std::string ci(species_at(reg, ti).symbol);
     for (auto [tj, tk] : upper_triangle(n)) {
-      const auto nb = norm_key(species_at(reg, tj).symbol,
-                               species_at(reg, tk).symbol);
+      const auto nb =
+          norm_key(species_at(reg, tj).symbol, species_at(reg, tk).symbol);
       dst.insert_or_assign(LambdaKey{ci, nb.first, nb.second},
                            c.lambda_at(ti, tj, tk));
     }
@@ -524,7 +620,9 @@ constexpr char kGlobalsRerankError[] =
 template <class Calc> struct Family; // primary left undefined
 
 template <> struct Family<PairForceCalculator> {
-  static bool applies(const SpecRef &) { return true; } // unconditional fallback
+  static bool applies(const SpecRef &) {
+    return true;
+  } // unconditional fallback
   static leaf::result<ForceCalculator> materialize(const SpecRef &s) {
     if (s.pair.empty()) {
       return err("no pair potentials set");
@@ -556,8 +654,8 @@ template <> struct Family<EAMForceCalculator> {
     calc.ntypes = ntypes(s.registry);
     BOOST_LEAF_AUTO(pt, build_pair_table(s.pair, s.registry, "pair potential"));
     calc.pair = std::move(pt);
-    BOOST_LEAF_AUTO(
-        d, build_type_array(s.density, s.registry, "density (transfer) function"));
+    BOOST_LEAF_AUTO(d, build_type_array(s.density, s.registry,
+                                        "density (transfer) function"));
     calc.density = std::move(d);
     BOOST_LEAF_AUTO(
         e, build_type_array(s.embedding, s.registry, "embedding function"));
@@ -587,13 +685,14 @@ template <> struct Family<ADPForceCalculator> {
     calc.ntypes = ntypes(s.registry);
     BOOST_LEAF_AUTO(pt, build_pair_table(s.pair, s.registry, "pair potential"));
     calc.pair = std::move(pt);
-    BOOST_LEAF_AUTO(
-        d, build_type_array(s.density, s.registry, "density (transfer) function"));
+    BOOST_LEAF_AUTO(d, build_type_array(s.density, s.registry,
+                                        "density (transfer) function"));
     calc.density = std::move(d);
     BOOST_LEAF_AUTO(
         e, build_type_array(s.embedding, s.registry, "embedding function"));
     calc.embedding = std::move(e);
-    BOOST_LEAF_AUTO(u, build_pair_table(s.dipole, s.registry, "dipole function"));
+    BOOST_LEAF_AUTO(u,
+                    build_pair_table(s.dipole, s.registry, "dipole function"));
     calc.dipole = std::move(u);
     BOOST_LEAF_AUTO(
         w, build_pair_table(s.quadrupole, s.registry, "quadrupole function"));
@@ -622,10 +721,11 @@ template <> struct Family<AngularForceCalculator> {
     calc.ntypes = ntypes(s.registry);
     BOOST_LEAF_AUTO(pt, build_pair_table(s.pair, s.registry, "pair potential"));
     calc.pair = std::move(pt);
-    BOOST_LEAF_AUTO(
-        r, build_pair_table(s.radial, s.registry, "radial function"));
+    BOOST_LEAF_AUTO(r,
+                    build_pair_table(s.radial, s.registry, "radial function"));
     calc.radial = std::move(r);
-    BOOST_LEAF_AUTO(g, build_type_array(s.angular, s.registry, "angular function"));
+    BOOST_LEAF_AUTO(
+        g, build_type_array(s.angular, s.registry, "angular function"));
     calc.angular = std::move(g);
     calc.set_globals(s.globals); // no-op
     calc.finalize_globals();     // no-op
@@ -645,8 +745,8 @@ template <> struct Family<TersoffForceCalculator> {
   static leaf::result<ForceCalculator> materialize(const SpecRef &s) {
     TersoffForceCalculator calc;
     calc.ntypes = ntypes(s.registry);
-    BOOST_LEAF_AUTO(p,
-                    build_pair_table(s.tersoff, s.registry, "tersoff parameters"));
+    BOOST_LEAF_AUTO(
+        p, build_pair_table(s.tersoff, s.registry, "tersoff parameters"));
     calc.params = std::move(p);
     calc.set_globals(s.globals); // no-op
     calc.finalize_globals();     // no-op
@@ -666,8 +766,8 @@ template <> struct Family<StiwebForceCalculator> {
   static leaf::result<ForceCalculator> materialize(const SpecRef &s) {
     StiwebForceCalculator calc;
     calc.ntypes = ntypes(s.registry);
-    BOOST_LEAF_AUTO(p,
-                    build_pair_table(s.stiweb, s.registry, "stiweb parameters"));
+    BOOST_LEAF_AUTO(
+        p, build_pair_table(s.stiweb, s.registry, "stiweb parameters"));
     calc.params = std::move(p);
     BOOST_LEAF_AUTO(lam, build_lambda(s.lambda, s.registry));
     calc.lambda = std::move(lam);
@@ -698,9 +798,8 @@ template <class Calc> constexpr Probe probe_for() {
 } // namespace
 
 leaf::result<void> FitSession::materialize_from_spec() {
-  SpecRef spec{registry_,   pair_,    density_, embedding_, dipole_,
-               quadrupole_, radial_,  angular_, tersoff_,   stiweb_,
-               lambda_,     globals_};
+  SpecRef spec{registry_, pair_,    density_, embedding_, dipole_, quadrupole_,
+               radial_,   angular_, tersoff_, stiweb_,    lambda_, globals_};
 
   const Probe probes[] = {
       probe_for<ADPForceCalculator>(),     probe_for<AngularForceCalculator>(),
@@ -734,9 +833,8 @@ FitSession::decompose_seeded_into_spec(const SpeciesRegistry &reg) {
   if (!seeded_) {
     return {};
   }
-  SpecRef spec{registry_,   pair_,    density_, embedding_, dipole_,
-               quadrupole_, radial_,  angular_, tersoff_,   stiweb_,
-               lambda_,     globals_};
+  SpecRef spec{registry_, pair_,    density_, embedding_, dipole_, quadrupole_,
+               radial_,   angular_, tersoff_, stiweb_,    lambda_, globals_};
   return std::visit(
       [&](auto &c) -> leaf::result<void> {
         return Family<std::decay_t<decltype(c)>>::decompose(c, reg, spec);
@@ -784,23 +882,7 @@ leaf::result<void> FitSession::ensure_frozen() {
     }
   }
 
-  for (auto &&[i, cfg] : std::views::enumerate(configs_)) {
-    if (cfg.name.empty()) {
-      cfg.name = "config-" + std::to_string(i);
-    }
-  }
-  {
-    std::vector<std::string_view> names;
-    names.reserve(configs_.size());
-    for (const auto &cfg : configs_) {
-      names.push_back(cfg.name);
-    }
-    std::ranges::sort(names);
-    const auto dup = std::ranges::adjacent_find(names);
-    if (dup != names.end()) {
-      return err("duplicate configuration name '" + std::string(*dup) + "'");
-    }
-  }
+  BOOST_LEAF_CHECK(ensure_named());
 
   // Auxiliary grouping index (configs_ must not be resized/reordered
   // hereafter).
@@ -814,8 +896,6 @@ leaf::result<void> FitSession::ensure_frozen() {
   dirty_ = false;
   return {};
 }
-
-leaf::result<void> FitSession::freeze() { return ensure_frozen(); }
 
 // ── run / IO ─────────────────────────────────────────────────────────────────
 leaf::result<force::EvalResult> FitSession::evaluate(std::size_t cfg) {
@@ -856,7 +936,8 @@ leaf::result<const config_index::ConfigIndex *> FitSession::index() {
   return &index_.value();
 }
 
-leaf::result<Configuration *> FitSession::config_by_name(std::string_view name) {
+leaf::result<Configuration *>
+FitSession::config_by_name(std::string_view name) {
   BOOST_LEAF_CHECK(ensure_frozen());
   Configuration *cfg = config_index::config_by_name(index_.value(), name);
   if (cfg == nullptr) {

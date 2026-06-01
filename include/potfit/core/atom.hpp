@@ -19,6 +19,7 @@
 namespace potfit {
 
 struct Atom;
+struct Configuration;
 class Potential;
 
 struct NeighborEntry : Serializable<NeighborEntry> {
@@ -37,6 +38,11 @@ struct Atom : Serializable<Atom> {
 
   Vec3 calc_force = Vec3::Zero(); // written by ForceCalculator
   std::vector<NeighborEntry> neighbors;
+
+  // Owning configuration. Transient: stamped by build_neighbor_list at freeze,
+  // NOT serialized — invalidated by any structural edit (which re-freezes and
+  // re-stamps). Same contract as NeighborEntry::neighbor.
+  const Configuration *parent = nullptr;
 
   // EAM/ADP scratch fields — zeroed before each force evaluation, not
   // serialized.
