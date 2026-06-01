@@ -30,7 +30,7 @@ struct GlobalParam {
 };
 
 // ── Globals mixins ──────────────────────────────────────────────────────────
-// A uniform globals interface so callers (e.g. FitSession materialization) never
+// A uniform globals interface so callers (e.g. PotFit materialization) never
 // branch on whether a model supports global parameters. Calculators that do
 // (pair, EAM) inherit WithGlobals for the storage + set_globals; those that do
 // not (ADP, angular, tersoff, stiweb) inherit NoGlobals, which makes every

@@ -108,7 +108,7 @@ get_array_n(const json &arr, std::string_view ctx) {
 
 // Registry-free atom parse: resolve the element straight from the static
 // periodic-table catalog (Species::lookup). The compact table slot
-// (Species::index) is left at its default 0 — FitSession assigns the real slot
+// (Species::index) is left at its default 0 — PotFit assigns the real slot
 // at freeze once the full element set is known. Used by Configuration::from_*.
 [[nodiscard]] leaf::result<Atom> parse_atom_catalog(const json &a_obj,
                                                     std::string_view ctx) {

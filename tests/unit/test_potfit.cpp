@@ -1,4 +1,4 @@
-#include "potfit/api/fit_session.hpp"
+#include "potfit/api/potfit.hpp"
 #include "potfit/force/adp_force.hpp"
 #include "potfit/force/stiweb_force.hpp"
 #include "potfit/force/tersoff_force.hpp"
@@ -46,8 +46,8 @@ static Potential morse_cu() {
 
 // ── Programmatic build → evaluate, and parity with the loader-style path ──────
 
-TEST(FitSession, ProgrammaticEvaluate) {
-  FitSession s;
+TEST(PotFit, ProgrammaticEvaluate) {
+  PotFit s;
   std::string err = run([&]() -> leaf::result<void> {
     const std::size_t c = s.add_configuration(PeriodicBC(cubic(8.0)));
     BOOST_LEAF_CHECK(s.add_atom(c, "Cu", Vec3(0, 0, 0)));
@@ -66,8 +66,8 @@ TEST(FitSession, ProgrammaticEvaluate) {
 
 // Building the same fit two ways — programmatic set_pair_potential vs seeding a
 // parsed force model — must give identical energy/forces.
-TEST(FitSession, ProgrammaticMatchesSeeded) {
-  auto build_cfg = [](FitSession &s) -> leaf::result<std::size_t> {
+TEST(PotFit, ProgrammaticMatchesSeeded) {
+  auto build_cfg = [](PotFit &s) -> leaf::result<std::size_t> {
     const std::size_t c = s.add_configuration(PeriodicBC(cubic(8.0)));
     BOOST_LEAF_CHECK(s.add_atom(c, "Cu", Vec3(0, 0, 0)));
     BOOST_LEAF_CHECK(s.add_atom(c, "Cu", Vec3(2.5, 0, 0)));
@@ -81,14 +81,14 @@ TEST(FitSession, ProgrammaticMatchesSeeded) {
   Vec3 f0_seed = Vec3::Zero();
 
   std::string err = run([&]() -> leaf::result<void> {
-    FitSession prog;
+    PotFit prog;
     BOOST_LEAF_AUTO(cp, build_cfg(prog));
     BOOST_LEAF_CHECK(prog.set_pair_potential("Cu", "Cu", morse_cu()));
     BOOST_LEAF_AUTO(rp, prog.evaluate(cp));
     e_prog = rp.energy;
     f0_prog = rp.forces[0];
 
-    FitSession seed;
+    PotFit seed;
     BOOST_LEAF_AUTO(cs, build_cfg(seed));
     BOOST_LEAF_AUTO(pot, Potential::from_text(
                              R"({"type":"morse","rmin":0.1,"rmax":6.0,)"
@@ -107,8 +107,8 @@ TEST(FitSession, ProgrammaticMatchesSeeded) {
 
 // ── Auto-grow: adding a new element re-ranks slots (Z-sorted) at the next build
 
-TEST(FitSession, AutoGrowRerank) {
-  FitSession s;
+TEST(PotFit, AutoGrowRerank) {
+  PotFit s;
   std::string err = run([&]() -> leaf::result<void> {
     const std::size_t c = s.add_configuration(PeriodicBC(cubic(8.0)));
     BOOST_LEAF_CHECK(s.add_atom(c, "Cu", Vec3(0, 0, 0)));
@@ -134,8 +134,8 @@ TEST(FitSession, AutoGrowRerank) {
 
 // ── A missing required pair potential surfaces as a leaf error at build time ──
 
-TEST(FitSession, MissingPairPotentialErrors) {
-  FitSession s;
+TEST(PotFit, MissingPairPotentialErrors) {
+  PotFit s;
   std::string err = run([&]() -> leaf::result<void> {
     const std::size_t c = s.add_configuration(PeriodicBC(cubic(8.0)));
     BOOST_LEAF_CHECK(s.add_atom(c, "Cu", Vec3(0, 0, 0)));
@@ -150,8 +150,8 @@ TEST(FitSession, MissingPairPotentialErrors) {
 
 // ── An unknown element symbol is rejected immediately ─────────────────────────
 
-TEST(FitSession, UnknownElementRejected) {
-  FitSession s;
+TEST(PotFit, UnknownElementRejected) {
+  PotFit s;
   const std::size_t c = s.add_configuration(PeriodicBC(cubic(8.0)));
   std::string err = run([&]() -> leaf::result<void> {
     BOOST_LEAF_CHECK(s.add_atom(c, "Xx", Vec3(0, 0, 0)));
@@ -180,7 +180,7 @@ static TersoffParams si_tersoff() {
 }
 
 // Three Si atoms in an equilateral triangle (side within the Tersoff cutoff).
-static leaf::result<std::size_t> si_triangle(FitSession &s, double r = 2.35) {
+static leaf::result<std::size_t> si_triangle(PotFit &s, double r = 2.35) {
   BOOST_LEAF_CHECK(s.declare_element("Si"));
   const std::size_t c = s.add_configuration(PeriodicBC(cubic(12.0)));
   BOOST_LEAF_CHECK(s.add_atom(c, "Si", Vec3(0, 0, 0)));
@@ -193,12 +193,12 @@ static leaf::result<std::size_t> si_triangle(FitSession &s, double r = 2.35) {
 // seeding a directly-constructed TersoffForceCalculator through the same
 // pipeline — this validates the analytic-param materialize path and that the
 // strategy registry selects the Tersoff family.
-TEST(FitSession, TersoffProgrammaticMatchesSeeded) {
+TEST(PotFit, TersoffProgrammaticMatchesSeeded) {
   double e_prog = 0.0;
   double e_seed = 0.0;
 
   std::string err = run([&]() -> leaf::result<void> {
-    FitSession prog;
+    PotFit prog;
     BOOST_LEAF_AUTO(cp, si_triangle(prog));
     BOOST_LEAF_CHECK(prog.set_tersoff_params("Si", "Si", si_tersoff()));
     BOOST_LEAF_AUTO(rp, prog.evaluate(cp));
@@ -206,7 +206,7 @@ TEST(FitSession, TersoffProgrammaticMatchesSeeded) {
     BOOST_LEAF_AUTO(m, prog.model());
     EXPECT_TRUE(std::holds_alternative<TersoffForceCalculator>(*m));
 
-    FitSession seed;
+    PotFit seed;
     BOOST_LEAF_AUTO(cs, si_triangle(seed));
     TersoffForceCalculator calc;
     calc.ntypes = 1;
@@ -223,7 +223,7 @@ TEST(FitSession, TersoffProgrammaticMatchesSeeded) {
 }
 
 // Stiweb exercises both the analytic params and the per-triplet λ vector.
-TEST(FitSession, StiwebProgrammaticMatchesSeeded) {
+TEST(PotFit, StiwebProgrammaticMatchesSeeded) {
   auto sw_params = [] {
     SWParams p;
     p.A = 7.05;
@@ -242,7 +242,7 @@ TEST(FitSession, StiwebProgrammaticMatchesSeeded) {
   double e_seed = 0.0;
 
   std::string err = run([&]() -> leaf::result<void> {
-    FitSession prog;
+    PotFit prog;
     BOOST_LEAF_AUTO(cp, si_triangle(prog, 2.5));
     BOOST_LEAF_CHECK(prog.set_stiweb_params("Si", "Si", sw_params()));
     BOOST_LEAF_CHECK(prog.set_stiweb_lambda("Si", "Si", "Si", lambda));
@@ -251,7 +251,7 @@ TEST(FitSession, StiwebProgrammaticMatchesSeeded) {
     BOOST_LEAF_AUTO(m, prog.model());
     EXPECT_TRUE(std::holds_alternative<StiwebForceCalculator>(*m));
 
-    FitSession seed;
+    PotFit seed;
     BOOST_LEAF_AUTO(cs, si_triangle(seed, 2.5));
     StiwebForceCalculator calc;
     calc.ntypes = 1;
@@ -272,7 +272,7 @@ TEST(FitSession, StiwebProgrammaticMatchesSeeded) {
 // detaches the seed (which decomposes the built model back into the symbol-keyed
 // spec) and re-materializes. Re-setting one table to its same value must leave
 // the energy unchanged — proving every ADP table survived the round-trip.
-TEST(FitSession, AdpSeededDecomposeRoundTrip) {
+TEST(PotFit, AdpSeededDecomposeRoundTrip) {
   auto phi = [] { return Potential(Morse(0.5, 1.5, 2.5, 0.1, 6.0)); };
   auto dens = [] { return Potential(ExpDecay(1.0, 1.0, 0.1, 6.0)); };
   auto emb = [] { return Potential(ConstFunc(-2.0, 0.0, 100.0)); };
@@ -283,7 +283,7 @@ TEST(FitSession, AdpSeededDecomposeRoundTrip) {
   double e_after = 0.0;
 
   std::string err = run([&]() -> leaf::result<void> {
-    FitSession s;
+    PotFit s;
     BOOST_LEAF_CHECK(s.declare_element("Cu"));
     const std::size_t c = s.add_configuration(PeriodicBC(cubic(8.0)));
     BOOST_LEAF_CHECK(s.add_atom(c, "Cu", Vec3(0, 0, 0)));
@@ -322,8 +322,8 @@ TEST(FitSession, AdpSeededDecomposeRoundTrip) {
 }
 
 // A missing analytic-parameter block surfaces as a build-time leaf error.
-TEST(FitSession, MissingTersoffParamErrors) {
-  FitSession s;
+TEST(PotFit, MissingTersoffParamErrors) {
+  PotFit s;
   std::string err = run([&]() -> leaf::result<void> {
     const std::size_t c = s.add_configuration(PeriodicBC(cubic(8.0)));
     BOOST_LEAF_CHECK(s.add_atom(c, "Si", Vec3(0, 0, 0)));
@@ -340,7 +340,7 @@ TEST(FitSession, MissingTersoffParamErrors) {
 
 // ── Configuration factory round-trip ─────────────────────────────────────────
 
-TEST(FitSession, ConfigurationFromText) {
+TEST(PotFit, ConfigurationFromText) {
   std::string err = run([&]() -> leaf::result<void> {
     BOOST_LEAF_AUTO(cfg, Configuration::from_text(R"({
       "X": [5.0, 0.0, 0.0],
@@ -377,12 +377,12 @@ static Configuration cu_cell(double a) {
   return r.value(); // tests build clean input; surface any parse bug loudly
 }
 
-TEST(FitSession, AddConfigurationsBulk) {
+TEST(PotFit, AddConfigurationsBulk) {
   // Batch-attach via a std::vector, then again via a std::array, and confirm the
   // returned first-index, config_count growth, and that the lazy re-freeze picks
   // the new configs up (atom slots stamped, neighbor lists built).
   std::string err = run([&]() -> leaf::result<void> {
-    FitSession s;
+    PotFit s;
     BOOST_LEAF_CHECK(s.set_pair_potential("Cu", "Cu", morse_cu()));
 
     // Pre-seed one config the single-arg way so the batch does not start at 0.
@@ -421,11 +421,11 @@ TEST(FitSession, AddConfigurationsBulk) {
   EXPECT_EQ(err, "") << err;
 }
 
-TEST(FitSession, AddConfigurationsEquivalentToLoop) {
+TEST(PotFit, AddConfigurationsEquivalentToLoop) {
   // One bulk call must yield the same config_count and per-config atom counts as
   // N single add_configuration calls.
   auto build = [](bool bulk) -> std::size_t {
-    FitSession s;
+    PotFit s;
     std::vector<Configuration> batch;
     batch.push_back(cu_cell(8.0));
     batch.push_back(cu_cell(8.5));
@@ -461,8 +461,8 @@ static Configuration named_cell(std::string_view name) {
 
 // index_of(name) resolves a user-supplied name to the index add_configuration
 // returned — with no explicit freeze() and without dirtying the session.
-TEST(FitSession, IndexOfByName) {
-  FitSession s;
+TEST(PotFit, IndexOfByName) {
+  PotFit s;
   std::string err = run([&]() -> leaf::result<void> {
     const std::size_t a = s.add_configuration(named_cell("alpha"));
     const std::size_t b = s.add_configuration(named_cell("beta"));
@@ -477,8 +477,8 @@ TEST(FitSession, IndexOfByName) {
 
 // Unnamed configs get auto-names ("config-<i>") materialized on demand by
 // index_of — proving the lookup works without a full freeze().
-TEST(FitSession, IndexOfAutoName) {
-  FitSession s;
+TEST(PotFit, IndexOfAutoName) {
+  PotFit s;
   std::string err = run([&]() -> leaf::result<void> {
     s.add_configuration(cu_cell(8.0));
     s.add_configuration(cu_cell(8.5));
@@ -491,8 +491,8 @@ TEST(FitSession, IndexOfAutoName) {
 
 // index_of(Configuration&) round-trips a handle from configurations() back to
 // its dense index in O(1).
-TEST(FitSession, IndexOfByRefRoundTrips) {
-  FitSession s;
+TEST(PotFit, IndexOfByRefRoundTrips) {
+  PotFit s;
   std::string err = run([&]() -> leaf::result<void> {
     s.add_configuration(cu_cell(8.0));
     s.add_configuration(cu_cell(8.5));
@@ -509,8 +509,8 @@ TEST(FitSession, IndexOfByRefRoundTrips) {
 }
 
 // Both overloads report errors for unknown name / foreign configuration.
-TEST(FitSession, IndexOfErrors) {
-  FitSession s;
+TEST(PotFit, IndexOfErrors) {
+  PotFit s;
   s.add_configuration(cu_cell(8.0));
 
   // Unknown name.
@@ -533,8 +533,8 @@ TEST(FitSession, IndexOfErrors) {
 
 // Duplicate user-supplied names surface the dedup error early, via
 // get_configuration_index.
-TEST(FitSession, IndexOfDuplicateName) {
-  FitSession s;
+TEST(PotFit, IndexOfDuplicateName) {
+  PotFit s;
   s.add_configuration(named_cell("dup"));
   s.add_configuration(named_cell("dup"));
   std::string err = run([&]() -> leaf::result<void> {
@@ -547,8 +547,8 @@ TEST(FitSession, IndexOfDuplicateName) {
 
 // get_atom_index(atom) returns the atom's position within its parent config;
 // atom.parent is stamped at freeze, so every atom from configurations() resolves.
-TEST(FitSession, GetAtomIndex) {
-  FitSession s;
+TEST(PotFit, GetAtomIndex) {
+  PotFit s;
   std::string err = run([&]() -> leaf::result<void> {
     s.add_configuration(cu_cell(8.0));
     s.add_configuration(cu_cell(8.5));
@@ -567,8 +567,8 @@ TEST(FitSession, GetAtomIndex) {
 
 // An atom that is not owned by the session errors — even after the implicit
 // freeze (which only stamps the session's own atoms, not a foreign one).
-TEST(FitSession, GetAtomIndexForeignAtom) {
-  FitSession s;
+TEST(PotFit, GetAtomIndexForeignAtom) {
+  PotFit s;
   s.add_configuration(cu_cell(8.0));
   Configuration foreign = cu_cell(8.0); // not in the session → parent stays null
   std::string err = run([&]() -> leaf::result<void> {
@@ -581,8 +581,8 @@ TEST(FitSession, GetAtomIndexForeignAtom) {
 }
 
 // atom.parent points back at the owning config, and chains to its config index.
-TEST(FitSession, AtomParentBackRef) {
-  FitSession s;
+TEST(PotFit, AtomParentBackRef) {
+  PotFit s;
   std::string err = run([&]() -> leaf::result<void> {
     s.add_configuration(cu_cell(8.0));
     s.add_configuration(cu_cell(8.5));
@@ -602,8 +602,8 @@ TEST(FitSession, AtomParentBackRef) {
 
 // The name and atom-handle reference setters land the same values as the
 // index-based forms.
-TEST(FitSession, ReferenceSettersByNameAndHandle) {
-  FitSession s;
+TEST(PotFit, ReferenceSettersByNameAndHandle) {
+  PotFit s;
   std::string err = run([&]() -> leaf::result<void> {
     s.add_configuration(named_cell("alpha"));
     BOOST_LEAF_CHECK(s.set_pair_potential("Cu", "Cu", morse_cu()));

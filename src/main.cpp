@@ -1,4 +1,4 @@
-#include "potfit/api/fit_session.hpp"
+#include "potfit/api/potfit.hpp"
 #include "potfit/core/checkpoint.hpp"
 #include "potfit/events/signals.hpp"
 #include "potfit/force/pair_force.hpp"
@@ -80,9 +80,9 @@ int main(int argc, char *argv[]) {
   int ret = 0;
   leaf::try_handle_all(
       [&]() -> leaf::result<void> {
-        // The CLI is a thin client of the FitSession API: build the session,
+        // The CLI is a thin client of the PotFit API: build the session,
         // then evaluate / optimize / write through it.
-        potfit::FitSession session;
+        potfit::PotFit session;
 
         const bool has_checkpoint = vm.count("checkpoint") > 0;
         const std::string ckpt_prefix =

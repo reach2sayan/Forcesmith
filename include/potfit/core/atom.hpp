@@ -65,7 +65,7 @@ struct Configuration : Serializable<Configuration> {
   BoundaryConditions bc = PeriodicBC(Mat3::Identity());
 
   // Unique, human-facing identifier. Empty on load → auto-filled "config-<order>"
-  // at freeze (see FitSession::ensure_frozen). The config_index holds a
+  // at freeze (see PotFit::ensure_frozen). The config_index holds a
   // std::string_view into this owned string, so it is IMMUTABLE after freeze:
   // reassigning it could reallocate the buffer and dangle every view.
   std::string name;
@@ -85,7 +85,7 @@ struct Configuration : Serializable<Configuration> {
   // Build ONE configuration from a single JSON record (the same shape as one
   // element of the config-file array): {X,Y,Z, E, [W], [S], atoms:[…]}. Atoms
   // carry their Species by identity (symbol/Z from the static catalog); the
-  // compact table slot (Species::index) is assigned later by FitSession at
+  // compact table slot (Species::index) is assigned later by PotFit at
   // freeze, so no registry is needed here. Defined in src/io/config_reader.cpp
   // (keeps nlohmann out of this core header). Leaf-returning, not a throwing
   // ctor — see feedback_error_handling.

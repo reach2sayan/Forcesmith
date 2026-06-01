@@ -1,4 +1,4 @@
-#include "potfit/api/fit_session.hpp"
+#include "potfit/api/potfit.hpp"
 
 #include "potfit/core/neighbor_list.hpp"
 #include "potfit/force/adp_force.hpp"
@@ -62,7 +62,7 @@ pair_table_of(const ForceCalculator &m) {
 
 } // namespace
 
-FitSession::PairKey FitSession::norm_key(std::string_view a,
+PotFit::PairKey PotFit::norm_key(std::string_view a,
                                          std::string_view b) {
   std::string sa(a);
   std::string sb(b);
@@ -72,7 +72,7 @@ FitSession::PairKey FitSession::norm_key(std::string_view a,
   return {std::move(sa), std::move(sb)};
 }
 
-leaf::result<Configuration *> FitSession::config_at(std::size_t cfg) {
+leaf::result<Configuration *> PotFit::config_at(std::size_t cfg) {
   if (cfg >= configs_.size()) {
     return err("configuration index " + std::to_string(cfg) +
                " out of range (" + std::to_string(configs_.size()) + ")");
@@ -80,7 +80,7 @@ leaf::result<Configuration *> FitSession::config_at(std::size_t cfg) {
   return &configs_[cfg];
 }
 
-leaf::result<void> FitSession::ensure_named() {
+leaf::result<void> PotFit::ensure_named() {
   for (auto &&[i, cfg] : std::views::enumerate(configs_)) {
     if (cfg.name.empty()) {
       cfg.name = "config-" + std::to_string(i);
@@ -98,7 +98,7 @@ leaf::result<void> FitSession::ensure_named() {
 }
 
 leaf::result<std::size_t>
-FitSession::get_configuration_index(std::string_view name) {
+PotFit::get_configuration_index(std::string_view name) {
   BOOST_LEAF_CHECK(ensure_named());
   for (auto &&[i, cfg] : configs_ | std::views::enumerate) {
     if (cfg.name == name) {
@@ -109,7 +109,7 @@ FitSession::get_configuration_index(std::string_view name) {
 }
 
 leaf::result<std::size_t>
-FitSession::get_configuration_index(const Configuration &cfg) const {
+PotFit::get_configuration_index(const Configuration &cfg) const {
   // Address equality (well-defined for any pointer), not a relational
   // pointer-range check against a possibly-foreign &cfg (unspecified behavior).
   const auto it = std::ranges::find_if(
@@ -120,7 +120,7 @@ FitSession::get_configuration_index(const Configuration &cfg) const {
   return static_cast<std::size_t>(std::distance(configs_.begin(), it));
 }
 
-leaf::result<std::size_t> FitSession::get_atom_index(const Atom &atom) {
+leaf::result<std::size_t> PotFit::get_atom_index(const Atom &atom) {
   BOOST_LEAF_CHECK(ensure_frozen()); // stamps Atom::parent for owned atoms
   if (atom.parent == nullptr) {
     return err("atom is not owned by this session");
@@ -129,20 +129,20 @@ leaf::result<std::size_t> FitSession::get_atom_index(const Atom &atom) {
   return static_cast<std::size_t>(&atom - atom.parent->atoms.data());
 }
 
-std::size_t FitSession::add_configuration(BoundaryConditions bc) {
+std::size_t PotFit::add_configuration(BoundaryConditions bc) {
   Configuration cfg;
   cfg.bc = std::move(bc);
   return add_configuration(std::move(cfg));
   return configs_.size() - 1;
 }
 
-std::size_t FitSession::add_configuration(Configuration cfg) {
+std::size_t PotFit::add_configuration(Configuration cfg) {
   configs_.push_back(std::move(cfg));
   dirty_ = true;
   return configs_.size() - 1;
 }
 
-leaf::result<void> FitSession::remove_configuration(std::size_t cfg) {
+leaf::result<void> PotFit::remove_configuration(std::size_t cfg) {
   BOOST_LEAF_AUTO(c, config_at(cfg));
   configs_.erase(configs_.begin() +
                  static_cast<std::ptrdiff_t>(c - configs_.data()));
@@ -150,21 +150,21 @@ leaf::result<void> FitSession::remove_configuration(std::size_t cfg) {
   return {};
 }
 
-leaf::result<void> FitSession::set_cell(std::size_t cfg, const Mat3 &box) {
+leaf::result<void> PotFit::set_cell(std::size_t cfg, const Mat3 &box) {
   BOOST_LEAF_AUTO(c, config_at(cfg));
   c->bc = PeriodicBC(box);
   dirty_ = true;
   return {};
 }
 
-leaf::result<void> FitSession::set_infinite(std::size_t cfg, double volume) {
+leaf::result<void> PotFit::set_infinite(std::size_t cfg, double volume) {
   BOOST_LEAF_AUTO(c, config_at(cfg));
   c->bc = InfiniteBC(volume);
   dirty_ = true;
   return {};
 }
 
-leaf::result<std::size_t> FitSession::add_atom(std::size_t cfg,
+leaf::result<std::size_t> PotFit::add_atom(std::size_t cfg,
                                                std::string_view element,
                                                const Vec3 &pos) {
   BOOST_LEAF_AUTO(c, config_at(cfg));
@@ -177,7 +177,7 @@ leaf::result<std::size_t> FitSession::add_atom(std::size_t cfg,
   return c->atoms.size() - 1;
 }
 
-leaf::result<void> FitSession::remove_atom(std::size_t cfg, std::size_t atom) {
+leaf::result<void> PotFit::remove_atom(std::size_t cfg, std::size_t atom) {
   BOOST_LEAF_AUTO(c, config_at(cfg));
   if (atom >= c->atoms.size()) {
     return err("atom index out of range");
@@ -187,7 +187,7 @@ leaf::result<void> FitSession::remove_atom(std::size_t cfg, std::size_t atom) {
   return {};
 }
 
-leaf::result<void> FitSession::set_position(std::size_t cfg, std::size_t atom,
+leaf::result<void> PotFit::set_position(std::size_t cfg, std::size_t atom,
                                             const Vec3 &pos) {
   BOOST_LEAF_AUTO(c, config_at(cfg));
   if (atom >= c->atoms.size()) {
@@ -198,7 +198,7 @@ leaf::result<void> FitSession::set_position(std::size_t cfg, std::size_t atom,
   return {};
 }
 
-leaf::result<void> FitSession::set_element(std::size_t cfg, std::size_t atom,
+leaf::result<void> PotFit::set_element(std::size_t cfg, std::size_t atom,
                                            std::string_view element) {
   BOOST_LEAF_AUTO(c, config_at(cfg));
   if (atom >= c->atoms.size()) {
@@ -210,7 +210,7 @@ leaf::result<void> FitSession::set_element(std::size_t cfg, std::size_t atom,
   return {};
 }
 
-leaf::result<std::size_t> FitSession::atom_count(std::size_t cfg) const {
+leaf::result<std::size_t> PotFit::atom_count(std::size_t cfg) const {
   if (cfg >= configs_.size()) {
     return err("configuration index out of range");
   }
@@ -219,7 +219,7 @@ leaf::result<std::size_t> FitSession::atom_count(std::size_t cfg) const {
 
 // ── reference data (no dirty) ────────────────────────────────────────────────
 leaf::result<void>
-FitSession::write_ref_force(std::size_t cfg, std::size_t atom, const Vec3 &f) {
+PotFit::write_ref_force(std::size_t cfg, std::size_t atom, const Vec3 &f) {
   BOOST_LEAF_AUTO(c, config_at(cfg));
   if (atom >= c->atoms.size()) {
     return err("atom index out of range");
@@ -228,71 +228,71 @@ FitSession::write_ref_force(std::size_t cfg, std::size_t atom, const Vec3 &f) {
   return {};
 }
 
-leaf::result<void> FitSession::set_ref_energy(std::size_t cfg, double e) {
+leaf::result<void> PotFit::set_ref_energy(std::size_t cfg, double e) {
   BOOST_LEAF_AUTO(c, config_at(cfg));
   c->ref.energy = e;
   return {};
 }
 
-leaf::result<void> FitSession::set_ref_stress(std::size_t cfg,
+leaf::result<void> PotFit::set_ref_stress(std::size_t cfg,
                                               const SymTens &s) {
   BOOST_LEAF_AUTO(c, config_at(cfg));
   c->ref.stress = s;
   return {};
 }
 
-leaf::result<void> FitSession::set_weight(std::size_t cfg, double w) {
+leaf::result<void> PotFit::set_weight(std::size_t cfg, double w) {
   BOOST_LEAF_AUTO(c, config_at(cfg));
   c->weight = w;
   return {};
 }
 
-leaf::result<void> FitSession::set_ref_force(const Atom &atom, const Vec3 &f) {
+leaf::result<void> PotFit::set_ref_force(const Atom &atom, const Vec3 &f) {
   BOOST_LEAF_AUTO(ai, get_atom_index(atom)); // freezes; stamps atom.parent
   BOOST_LEAF_AUTO(ci, get_configuration_index(*atom.parent));
   return write_ref_force(ci, ai, f);
 }
 
-leaf::result<void> FitSession::set_ref_force(std::string_view cfg,
+leaf::result<void> PotFit::set_ref_force(std::string_view cfg,
                                              std::size_t atom, const Vec3 &f) {
   BOOST_LEAF_AUTO(ci, get_configuration_index(cfg));
   return write_ref_force(ci, atom, f);
 }
 
-leaf::result<void> FitSession::set_ref_energy(std::string_view cfg, double e) {
+leaf::result<void> PotFit::set_ref_energy(std::string_view cfg, double e) {
   BOOST_LEAF_AUTO(ci, get_configuration_index(cfg));
   return set_ref_energy(ci, e);
 }
 
-leaf::result<void> FitSession::set_ref_energy(const Configuration &cfg,
+leaf::result<void> PotFit::set_ref_energy(const Configuration &cfg,
                                               double e) {
   BOOST_LEAF_AUTO(ci, get_configuration_index(cfg));
   return set_ref_energy(ci, e);
 }
 
-leaf::result<void> FitSession::set_ref_stress(std::string_view cfg,
+leaf::result<void> PotFit::set_ref_stress(std::string_view cfg,
                                               const SymTens &s) {
   BOOST_LEAF_AUTO(ci, get_configuration_index(cfg));
   return set_ref_stress(ci, s);
 }
 
-leaf::result<void> FitSession::set_ref_stress(const Configuration &cfg,
+leaf::result<void> PotFit::set_ref_stress(const Configuration &cfg,
                                               const SymTens &s) {
   BOOST_LEAF_AUTO(ci, get_configuration_index(cfg));
   return set_ref_stress(ci, s);
 }
 
-leaf::result<void> FitSession::set_weight(std::string_view cfg, double w) {
+leaf::result<void> PotFit::set_weight(std::string_view cfg, double w) {
   BOOST_LEAF_AUTO(ci, get_configuration_index(cfg));
   return set_weight(ci, w);
 }
 
-leaf::result<void> FitSession::set_weight(const Configuration &cfg, double w) {
+leaf::result<void> PotFit::set_weight(const Configuration &cfg, double w) {
   BOOST_LEAF_AUTO(ci, get_configuration_index(cfg));
   return set_weight(ci, w);
 }
 
-leaf::result<void> FitSession::declare_element(std::string_view sym) {
+leaf::result<void> PotFit::declare_element(std::string_view sym) {
   BOOST_LEAF_CHECK(Species::lookup(sym)); // validate against the catalog
   if (std::ranges::find(declared_, std::string(sym)) == declared_.end()) {
     declared_.emplace_back(sym);
@@ -301,7 +301,7 @@ leaf::result<void> FitSession::declare_element(std::string_view sym) {
   return {};
 }
 
-leaf::result<void> FitSession::set_pair_potential(std::string_view a,
+leaf::result<void> PotFit::set_pair_potential(std::string_view a,
                                                   std::string_view b,
                                                   Potential p) {
   BOOST_LEAF_CHECK(Species::lookup(a));
@@ -312,7 +312,7 @@ leaf::result<void> FitSession::set_pair_potential(std::string_view a,
   return {};
 }
 
-leaf::result<void> FitSession::set_density(std::string_view a, Potential p) {
+leaf::result<void> PotFit::set_density(std::string_view a, Potential p) {
   BOOST_LEAF_CHECK(Species::lookup(a));
   BOOST_LEAF_CHECK(detach_seeded("edit"));
   density_.insert_or_assign(std::string(a), std::move(p));
@@ -320,7 +320,7 @@ leaf::result<void> FitSession::set_density(std::string_view a, Potential p) {
   return {};
 }
 
-leaf::result<void> FitSession::set_embedding(std::string_view a, Potential p) {
+leaf::result<void> PotFit::set_embedding(std::string_view a, Potential p) {
   BOOST_LEAF_CHECK(Species::lookup(a));
   BOOST_LEAF_CHECK(detach_seeded("edit"));
   embedding_.insert_or_assign(std::string(a), std::move(p));
@@ -328,12 +328,12 @@ leaf::result<void> FitSession::set_embedding(std::string_view a, Potential p) {
   return {};
 }
 
-void FitSession::set_global(GlobalParam g) {
+void PotFit::set_global(GlobalParam g) {
   globals_.push_back(std::move(g));
   dirty_ = true;
 }
 
-leaf::result<void> FitSession::set_dipole(std::string_view a,
+leaf::result<void> PotFit::set_dipole(std::string_view a,
                                           std::string_view b, Potential p) {
   BOOST_LEAF_CHECK(Species::lookup(a));
   BOOST_LEAF_CHECK(Species::lookup(b));
@@ -343,7 +343,7 @@ leaf::result<void> FitSession::set_dipole(std::string_view a,
   return {};
 }
 
-leaf::result<void> FitSession::set_quadrupole(std::string_view a,
+leaf::result<void> PotFit::set_quadrupole(std::string_view a,
                                               std::string_view b, Potential p) {
   BOOST_LEAF_CHECK(Species::lookup(a));
   BOOST_LEAF_CHECK(Species::lookup(b));
@@ -353,7 +353,7 @@ leaf::result<void> FitSession::set_quadrupole(std::string_view a,
   return {};
 }
 
-leaf::result<void> FitSession::set_radial(std::string_view a,
+leaf::result<void> PotFit::set_radial(std::string_view a,
                                           std::string_view b, Potential p) {
   BOOST_LEAF_CHECK(Species::lookup(a));
   BOOST_LEAF_CHECK(Species::lookup(b));
@@ -363,7 +363,7 @@ leaf::result<void> FitSession::set_radial(std::string_view a,
   return {};
 }
 
-leaf::result<void> FitSession::set_angular(std::string_view a, Potential p) {
+leaf::result<void> PotFit::set_angular(std::string_view a, Potential p) {
   BOOST_LEAF_CHECK(Species::lookup(a));
   BOOST_LEAF_CHECK(detach_seeded("edit"));
   angular_.insert_or_assign(std::string(a), std::move(p));
@@ -371,7 +371,7 @@ leaf::result<void> FitSession::set_angular(std::string_view a, Potential p) {
   return {};
 }
 
-leaf::result<void> FitSession::set_tersoff_params(std::string_view a,
+leaf::result<void> PotFit::set_tersoff_params(std::string_view a,
                                                   std::string_view b,
                                                   TersoffParams params) {
   BOOST_LEAF_CHECK(Species::lookup(a));
@@ -382,7 +382,7 @@ leaf::result<void> FitSession::set_tersoff_params(std::string_view a,
   return {};
 }
 
-leaf::result<void> FitSession::set_stiweb_params(std::string_view a,
+leaf::result<void> PotFit::set_stiweb_params(std::string_view a,
                                                  std::string_view b,
                                                  SWParams params) {
   BOOST_LEAF_CHECK(Species::lookup(a));
@@ -393,7 +393,7 @@ leaf::result<void> FitSession::set_stiweb_params(std::string_view a,
   return {};
 }
 
-leaf::result<void> FitSession::set_stiweb_lambda(std::string_view central,
+leaf::result<void> PotFit::set_stiweb_lambda(std::string_view central,
                                                  std::string_view a,
                                                  std::string_view b,
                                                  Param value) {
@@ -408,7 +408,7 @@ leaf::result<void> FitSession::set_stiweb_lambda(std::string_view central,
   return {};
 }
 
-leaf::result<void> FitSession::set_pair_param(std::string_view a,
+leaf::result<void> PotFit::set_pair_param(std::string_view a,
                                               std::string_view b, std::size_t i,
                                               double v) {
   BOOST_LEAF_CHECK(ensure_frozen());
@@ -429,7 +429,7 @@ leaf::result<void> FitSession::set_pair_param(std::string_view a,
   return {};
 }
 
-leaf::result<void> FitSession::seed_force_model(ForceCalculator model) {
+leaf::result<void> PotFit::seed_force_model(ForceCalculator model) {
   // Capture the element ordering this model was built against, so a later edit
   // that re-ranks slots can still recover the per-symbol potentials.
   BOOST_LEAF_AUTO(reg, build_registry());
@@ -452,7 +452,7 @@ leaf::result<void> FitSession::seed_force_model(ForceCalculator model) {
 }
 
 // ── build helpers ────────────────────────────────────────────────────────────
-leaf::result<SpeciesRegistry> FitSession::build_registry() const {
+leaf::result<SpeciesRegistry> PotFit::build_registry() const {
   std::vector<std::string_view> syms;
   auto add = [&](std::string_view s) {
     if (!s.empty() && std::ranges::find(syms, s) == syms.end()) {
@@ -504,20 +504,20 @@ using LambdaKey = std::tuple<std::string, std::string, std::string>;
 // free strategies can read (materialize) and write (decompose) them.
 struct SpecRef {
   const SpeciesRegistry &registry;
-  std::map<FitSession::PairKey, Potential> &pair;
+  std::map<PotFit::PairKey, Potential> &pair;
   std::map<std::string, Potential> &density;
   std::map<std::string, Potential> &embedding;
-  std::map<FitSession::PairKey, Potential> &dipole;
-  std::map<FitSession::PairKey, Potential> &quadrupole;
-  std::map<FitSession::PairKey, Potential> &radial;
+  std::map<PotFit::PairKey, Potential> &dipole;
+  std::map<PotFit::PairKey, Potential> &quadrupole;
+  std::map<PotFit::PairKey, Potential> &radial;
   std::map<std::string, Potential> &angular;
-  std::map<FitSession::PairKey, TersoffParams> &tersoff;
-  std::map<FitSession::PairKey, SWParams> &stiweb;
+  std::map<PotFit::PairKey, TersoffParams> &tersoff;
+  std::map<PotFit::PairKey, SWParams> &stiweb;
   std::map<LambdaKey, Param> &lambda;
   const std::vector<GlobalParam> &globals;
 };
 
-[[nodiscard]] FitSession::PairKey norm_key(std::string_view a,
+[[nodiscard]] PotFit::PairKey norm_key(std::string_view a,
                                            std::string_view b) {
   std::string sa(a), sb(b);
   if (sb < sa) {
@@ -529,7 +529,7 @@ struct SpecRef {
 // ── generic builders (spec → table) ──────────────────────────────────────────
 template <class V>
 [[nodiscard]] leaf::result<SymmetricMatrix<V>>
-build_pair_table(const std::map<FitSession::PairKey, V> &src,
+build_pair_table(const std::map<PotFit::PairKey, V> &src,
                  const SpeciesRegistry &reg, std::string_view what) {
   SymmetricMatrix<V> mat;
   mat.reserve(ntypes(reg));
@@ -583,7 +583,7 @@ build_lambda(const std::map<LambdaKey, Param> &src,
 // ── generic dumpers (table → spec) ───────────────────────────────────────────
 template <class V>
 void dump_pair_table(const SymmetricMatrix<V> &mat, const SpeciesRegistry &reg,
-                     std::map<FitSession::PairKey, V> &dst) {
+                     std::map<PotFit::PairKey, V> &dst) {
   for (auto [ti, tj] : upper_triangle(ntypes(reg))) {
     dst.insert_or_assign(
         norm_key(species_at(reg, ti).symbol, species_at(reg, tj).symbol),
@@ -797,7 +797,7 @@ template <class Calc> constexpr Probe probe_for() {
 
 } // namespace
 
-leaf::result<void> FitSession::materialize_from_spec() {
+leaf::result<void> PotFit::materialize_from_spec() {
   SpecRef spec{registry_, pair_,    density_, embedding_, dipole_, quadrupole_,
                radial_,   angular_, tersoff_, stiweb_,    lambda_, globals_};
 
@@ -814,7 +814,7 @@ leaf::result<void> FitSession::materialize_from_spec() {
   return {};
 }
 
-leaf::result<void> FitSession::detach_seeded(std::string_view action) {
+leaf::result<void> PotFit::detach_seeded(std::string_view action) {
   if (!seeded_) {
     return {};
   }
@@ -829,7 +829,7 @@ leaf::result<void> FitSession::detach_seeded(std::string_view action) {
 }
 
 leaf::result<void>
-FitSession::decompose_seeded_into_spec(const SpeciesRegistry &reg) {
+PotFit::decompose_seeded_into_spec(const SpeciesRegistry &reg) {
   if (!seeded_) {
     return {};
   }
@@ -842,7 +842,7 @@ FitSession::decompose_seeded_into_spec(const SpeciesRegistry &reg) {
       *seeded_);
 }
 
-leaf::result<void> FitSession::ensure_frozen() {
+leaf::result<void> PotFit::ensure_frozen() {
   if (!dirty_) {
     return {};
   }
@@ -898,7 +898,7 @@ leaf::result<void> FitSession::ensure_frozen() {
 }
 
 // ── run / IO ─────────────────────────────────────────────────────────────────
-leaf::result<force::EvalResult> FitSession::evaluate(std::size_t cfg) {
+leaf::result<force::EvalResult> PotFit::evaluate(std::size_t cfg) {
   BOOST_LEAF_CHECK(ensure_frozen());
   if (cfg >= configs_.size()) {
     return err("configuration index out of range");
@@ -906,7 +906,7 @@ leaf::result<force::EvalResult> FitSession::evaluate(std::size_t cfg) {
   return force::evaluate(model_, configs_[cfg]);
 }
 
-leaf::result<int> FitSession::optimize() {
+leaf::result<int> PotFit::optimize() {
   BOOST_LEAF_CHECK(ensure_frozen());
   if (configs_.empty()) {
     return err("no configurations to optimize against");
@@ -914,30 +914,30 @@ leaf::result<int> FitSession::optimize() {
   return run_optimizer(std::span<Configuration>(configs_), model_, opts_);
 }
 
-leaf::result<void> FitSession::write(const std::filesystem::path &path,
+leaf::result<void> PotFit::write(const std::filesystem::path &path,
                                      std::string_view format) {
   BOOST_LEAF_CHECK(ensure_frozen());
   return io::write_model(model_, path, format);
 }
 
 // ── accessors ────────────────────────────────────────────────────────────────
-leaf::result<const SpeciesRegistry *> FitSession::species() {
+leaf::result<const SpeciesRegistry *> PotFit::species() {
   BOOST_LEAF_CHECK(ensure_frozen());
   return &registry_;
 }
 
-leaf::result<std::span<const Configuration>> FitSession::configurations() {
+leaf::result<std::span<const Configuration>> PotFit::configurations() {
   BOOST_LEAF_CHECK(ensure_frozen());
   return std::span<const Configuration>(configs_);
 }
 
-leaf::result<const config_index::ConfigIndex *> FitSession::index() {
+leaf::result<const config_index::ConfigIndex *> PotFit::index() {
   BOOST_LEAF_CHECK(ensure_frozen());
   return &index_.value();
 }
 
 leaf::result<Configuration *>
-FitSession::config_by_name(std::string_view name) {
+PotFit::config_by_name(std::string_view name) {
   BOOST_LEAF_CHECK(ensure_frozen());
   Configuration *cfg = config_index::config_by_name(index_.value(), name);
   if (cfg == nullptr) {
@@ -946,7 +946,7 @@ FitSession::config_by_name(std::string_view name) {
   return cfg;
 }
 
-leaf::result<const ForceCalculator *> FitSession::model() {
+leaf::result<const ForceCalculator *> PotFit::model() {
   BOOST_LEAF_CHECK(ensure_frozen());
   return &model_;
 }

@@ -17,8 +17,11 @@ target_compile_options(potfit_warnings INTERFACE
 
 target_link_options(potfit_warnings INTERFACE $<$<CONFIG:Debug>:-fsanitize=address,undefined>)
 
-set(POTFIT_LIB_SOURCES
-        src/api/fit_session.cpp
+# ── Static engine library ──────────────────────────────────────────────────
+# Everything below the public API. Must NOT depend on the PotFit API (the shared
+# `potfit` lib sits on top of this). io/loaders.cpp is a thin API front-end and
+# therefore lives with the shared lib, not here.
+set(POTFIT_ENGINE_SOURCES
         src/core/checkpoint.cpp
         src/core/neighbor_list.cpp
         src/core/rescale.cpp
@@ -32,7 +35,6 @@ set(POTFIT_LIB_SOURCES
         src/force/smoothness.cpp
         src/io/config_reader.cpp
         src/io/force_model_reader.cpp
-        src/io/loaders.cpp
         src/io/output_writer.cpp
         src/io/potential_reader.cpp
         src/io/write_model.cpp
@@ -43,9 +45,9 @@ set(POTFIT_LIB_SOURCES
         src/potentials/spline.cpp
 )
 
-add_library(potfit_lib STATIC ${POTFIT_LIB_SOURCES})
-target_include_directories(potfit_lib PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include")
-target_link_libraries(potfit_lib PUBLIC
+add_library(potfit_engine STATIC ${POTFIT_ENGINE_SOURCES})
+target_include_directories(potfit_engine PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include")
+target_link_libraries(potfit_engine PUBLIC
         potfit::eigen
         Boost::serialization
         Boost::boost
@@ -54,11 +56,29 @@ target_link_libraries(potfit_lib PUBLIC
         nlohmann_json::nlohmann_json
         TBB::tbb
 )
-target_link_libraries(potfit_lib PRIVATE potfit_warnings)
+target_link_libraries(potfit_engine PRIVATE potfit_warnings)
+# Its objects get archived into the shared `potfit` lib, so they need -fPIC.
+set_target_properties(potfit_engine PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
-add_executable(potfit src/main.cpp)
-target_include_directories(potfit PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/include")
-target_link_libraries(potfit PRIVATE potfit_warnings potfit_lib Boost::program_options)
+# ── First-class shared API library ─────────────────────────────────────────
+# The programmatic Potfit API (potfit::PotFit) plus the thin file-driven loaders
+# that drive it. This is the product's public surface; the CLI and the tests are
+# ordinary clients that link it.
+add_library(potfit SHARED
+        src/api/potfit.cpp
+        src/io/loaders.cpp
+)
+target_include_directories(potfit PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include")
+target_link_libraries(potfit PUBLIC potfit_engine)
+target_link_libraries(potfit PRIVATE potfit_warnings)
+
+# ── CLI ─────────────────────────────────────────────────────────────────────
+# Target renamed to potfit_cli so the `potfit` name is free for the library; the
+# user-facing binary is still called `potfit` (libpotfit.so vs potfit — no clash).
+add_executable(potfit_cli src/main.cpp)
+set_target_properties(potfit_cli PROPERTIES OUTPUT_NAME potfit)
+target_include_directories(potfit_cli PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/include")
+target_link_libraries(potfit_cli PRIVATE potfit_warnings potfit Boost::program_options)
 
 enable_testing()
 FetchContent_Declare(googletest
@@ -77,7 +97,7 @@ set(UNIT_TEST_SOURCES
         tests/unit/test_checkpoint.cpp
         tests/unit/test_config_reader.cpp
         tests/unit/test_eam_force.cpp
-        tests/unit/test_fit_session.cpp
+        tests/unit/test_potfit.cpp
         tests/unit/test_force_calc.cpp
         tests/unit/test_force_model_reader.cpp
         tests/unit/test_neighbor_list.cpp
@@ -95,7 +115,7 @@ set(UNIT_TEST_SOURCES
 add_executable(potfit_tests ${UNIT_TEST_SOURCES})
 target_include_directories(potfit_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/include")
 
-target_link_libraries(potfit_tests PRIVATE potfit_warnings potfit_lib GTest::gtest_main)
+target_link_libraries(potfit_tests PRIVATE potfit_warnings potfit GTest::gtest_main)
 
 include(GoogleTest)
 gtest_discover_tests(potfit_tests)
@@ -104,7 +124,7 @@ file(GLOB INTEGRATION_TEST_SOURCES "tests/integration/*.cpp")
 if (INTEGRATION_TEST_SOURCES)
     add_executable(potfit_integration_tests ${INTEGRATION_TEST_SOURCES})
     target_include_directories(potfit_integration_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/include")
-    target_link_libraries(potfit_integration_tests PRIVATE potfit_warnings potfit_lib GTest::gtest_main)
+    target_link_libraries(potfit_integration_tests PRIVATE potfit_warnings potfit GTest::gtest_main)
     gtest_discover_tests(potfit_integration_tests)
 endif ()
 
@@ -124,7 +144,7 @@ if (POTFIT_BUILD_UNEP_FITS)
         add_executable(${tgt} tests/unep/fit_eam_api.cpp)
         target_include_directories(${tgt} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/include")
         target_compile_definitions(${tgt} PRIVATE POTFIT_UNEP_ELEMENT="${el}")
-        target_link_libraries(${tgt} PRIVATE potfit_warnings potfit_lib Boost::program_options)
+        target_link_libraries(${tgt} PRIVATE potfit_warnings potfit Boost::program_options)
         add_dependencies(unep_fits ${tgt})
     endforeach ()
 endif ()

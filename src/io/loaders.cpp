@@ -27,7 +27,7 @@ read_file(const std::filesystem::path &path) {
 } // namespace
 
 leaf::result<void> load_configs(const std::filesystem::path &path,
-                                FitSession &session) {
+                                PotFit &session) {
   BOOST_LEAF_AUTO(text, read_file(path));
 
   nlohmann::json j;
@@ -51,7 +51,7 @@ leaf::result<void> load_configs(const std::filesystem::path &path,
 }
 
 leaf::result<void> load_model(const std::filesystem::path &path,
-                              FitSession &session) {
+                              PotFit &session) {
   BOOST_LEAF_AUTO(text, read_file(path));
   BOOST_LEAF_AUTO(model, parse_force_model(text));
   return session.seed_force_model(std::move(model));

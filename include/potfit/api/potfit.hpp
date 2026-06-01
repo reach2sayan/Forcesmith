@@ -1,6 +1,6 @@
 #pragma once
 
-// FitSession — the programmatic Potfit API.
+// PotFit — the programmatic Potfit API.
 //
 // One owning facade for building a fit in memory: create/modify potentials,
 // add/remove/modify atoms, set reference forces/stresses/energy, then evaluate
@@ -47,11 +47,11 @@
 
 namespace potfit {
 
-class FitSession {
+class PotFit {
 public:
   using PairKey = std::pair<std::string, std::string>; // sorted (min,max) symbols
 
-  FitSession() = default;
+  PotFit() = default;
 
   std::size_t
   add_configuration(BoundaryConditions bc = PeriodicBC(Mat3::Identity()));
