@@ -16,11 +16,10 @@ namespace potfit {
 //   pair      — φ_{ij}(r)  pair repulsion,  paircol = ntypes*(ntypes+1)/2
 //   entries density   — g_i(r)     electron density, ntypes entries embedding —
 //   F_i(ρ)     cohesive energy,  ntypes entries
-struct EAMForceCalculator : ForceCalculatorBase<EAMForceCalculator> {
+struct EAMForceCalculator : ForceCalculatorBase<EAMForceCalculator>, WithGlobals {
   PotentialPair pair;
   PotentialArray density;
   PotentialArray embedding;
-  std::vector<GlobalParam> globals; // shared params (e.g. smooth-cutoff h)
 
   void eval_forces(Configuration &cfg) const;
 

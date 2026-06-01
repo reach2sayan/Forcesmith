@@ -53,7 +53,8 @@ struct Bond {
 
 // params — one TersoffParams per unique pair type (paircol =
 // ntypes*(ntypes+1)/2). Access via params(ti, tj).
-struct TersoffForceCalculator : ForceCalculatorBase<TersoffForceCalculator> {
+struct TersoffForceCalculator : ForceCalculatorBase<TersoffForceCalculator>,
+                                NoGlobals {
   SymmetricMatrix<TersoffParams> params;
 
   void eval_forces(Configuration &cfg) const;

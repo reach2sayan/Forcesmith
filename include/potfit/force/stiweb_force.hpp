@@ -52,7 +52,8 @@ struct SWParams {
 // access via params(ti, tj).
 // lambda — per-triplet 3-body strength λ[i][j][k] (symmetric in j,k), stored as
 // a flat vector of ntypes·paircol entries, indexed i·paircol + pair_slot(j,k).
-struct StiwebForceCalculator : ForceCalculatorBase<StiwebForceCalculator> {
+struct StiwebForceCalculator : ForceCalculatorBase<StiwebForceCalculator>,
+                               NoGlobals {
   SymmetricMatrix<SWParams> params;
   std::vector<Param> lambda;
 

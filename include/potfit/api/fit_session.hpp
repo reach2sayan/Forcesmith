@@ -39,6 +39,7 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -85,6 +86,27 @@ public:
   boost::leaf::result<void> set_density(std::string_view a, Potential p);
   boost::leaf::result<void> set_embedding(std::string_view a, Potential p);
   void set_global(GlobalParam g);
+
+  // ── extra tables for the richer model families ────────────────────────────
+  // ADP: dipole u_{ij}(r) and quadrupole w_{ij}(r), per element pair.
+  boost::leaf::result<void> set_dipole(std::string_view a, std::string_view b,
+                                       Potential p);
+  boost::leaf::result<void> set_quadrupole(std::string_view a,
+                                           std::string_view b, Potential p);
+  // Angular: radial modulation f_{ij}(r) per pair, angular g_i(cosθ) per type.
+  boost::leaf::result<void> set_radial(std::string_view a, std::string_view b,
+                                       Potential p);
+  boost::leaf::result<void> set_angular(std::string_view a, Potential p);
+  // Tersoff / Stiweb: analytic parameter blocks per element pair.
+  boost::leaf::result<void> set_tersoff_params(std::string_view a,
+                                               std::string_view b,
+                                               TersoffParams params);
+  boost::leaf::result<void> set_stiweb_params(std::string_view a,
+                                              std::string_view b, SWParams params);
+  // Stiweb 3-body strength λ for a central type and an unordered neighbour pair.
+  boost::leaf::result<void> set_stiweb_lambda(std::string_view central,
+                                              std::string_view a,
+                                              std::string_view b, Param value);
 
   // Edit an already-placed potential in place (value writes; do NOT dirty). The
   // selectors mirror the setters. Errors if the slot is empty / not yet placed.
@@ -135,6 +157,15 @@ private:
   std::map<PairKey, Potential> pair_;
   std::map<std::string, Potential> density_;
   std::map<std::string, Potential> embedding_;
+  // Extra per-family tables (per-pair keyed by PairKey, per-type by symbol).
+  std::map<PairKey, Potential> dipole_;     // ADP
+  std::map<PairKey, Potential> quadrupole_; // ADP
+  std::map<PairKey, Potential> radial_;     // angular
+  std::map<std::string, Potential> angular_; // angular (central type)
+  std::map<PairKey, TersoffParams> tersoff_;
+  std::map<PairKey, SWParams> stiweb_;
+  // Stiweb λ: (central symbol, sorted neighbour pair) → 3-body strength.
+  std::map<std::tuple<std::string, std::string, std::string>, Param> lambda_;
   std::vector<GlobalParam> globals_;
   std::vector<std::string> declared_;
   OptimizerOptions opts_;

@@ -21,11 +21,10 @@ struct PairBond {
   Vec3 force = Vec3::Zero(); // force on i
 };
 
-struct PairForceCalculator {
+struct PairForceCalculator : WithGlobals {
   std::size_t ntypes = 1;
   std::uint64_t conf_index = 0;
   PotentialPair pair;
-  std::vector<GlobalParam> globals;
 
   void eval_forces(Configuration &cfg) const;
 

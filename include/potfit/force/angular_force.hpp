@@ -23,7 +23,8 @@ namespace potfit {
 //                             type i (matches potfit's col = 2*paircol +
 //                             typ_i),
 //                                                          ntypes entries
-struct AngularForceCalculator : ForceCalculatorBase<AngularForceCalculator> {
+struct AngularForceCalculator : ForceCalculatorBase<AngularForceCalculator>,
+                                NoGlobals {
   PotentialPair pair;
   PotentialPair radial;
   PotentialArray angular;

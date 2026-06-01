@@ -1,4 +1,7 @@
 #include "potfit/api/fit_session.hpp"
+#include "potfit/force/adp_force.hpp"
+#include "potfit/force/stiweb_force.hpp"
+#include "potfit/force/tersoff_force.hpp"
 #include "potfit/io/config_reader.hpp" // io::ParseError
 #include "potfit/potentials/analytic_potential.hpp"
 
@@ -6,6 +9,7 @@
 #include <gtest/gtest.h>
 
 #include <string>
+#include <variant>
 
 namespace leaf = boost::leaf;
 using namespace potfit;
@@ -152,6 +156,184 @@ TEST(FitSession, UnknownElementRejected) {
     return {};
   });
   EXPECT_NE(err, "");
+}
+
+// ── Richer model families: programmatic build, parity with seeded, decompose ──
+
+// Standard Tersoff (1988) Si parameters.
+static TersoffParams si_tersoff() {
+  TersoffParams p;
+  p.A = 1830.8;
+  p.B = 471.18;
+  p.lambda = 2.4799;
+  p.mu = 1.7322;
+  p.beta = 1.1e-6;
+  p.n = 0.78734;
+  p.c = 1.0039e5;
+  p.d = 16.217;
+  p.h = -0.59825;
+  p.R = 2.7;
+  p.S = 3.0;
+  return p;
+}
+
+// Three Si atoms in an equilateral triangle (side within the Tersoff cutoff).
+static leaf::result<std::size_t> si_triangle(FitSession &s, double r = 2.35) {
+  BOOST_LEAF_CHECK(s.declare_element("Si"));
+  const std::size_t c = s.add_configuration(PeriodicBC(cubic(12.0)));
+  BOOST_LEAF_CHECK(s.add_atom(c, "Si", Vec3(0, 0, 0)));
+  BOOST_LEAF_CHECK(s.add_atom(c, "Si", Vec3(r, 0, 0)));
+  BOOST_LEAF_CHECK(s.add_atom(c, "Si", Vec3(r * 0.5, r * 0.8660254, 0)));
+  return c;
+}
+
+// Building a Tersoff model programmatically (set_tersoff_params) must match
+// seeding a directly-constructed TersoffForceCalculator through the same
+// pipeline — this validates the analytic-param materialize path and that the
+// strategy registry selects the Tersoff family.
+TEST(FitSession, TersoffProgrammaticMatchesSeeded) {
+  double e_prog = 0.0;
+  double e_seed = 0.0;
+
+  std::string err = run([&]() -> leaf::result<void> {
+    FitSession prog;
+    BOOST_LEAF_AUTO(cp, si_triangle(prog));
+    BOOST_LEAF_CHECK(prog.set_tersoff_params("Si", "Si", si_tersoff()));
+    BOOST_LEAF_AUTO(rp, prog.evaluate(cp));
+    e_prog = rp.energy;
+    BOOST_LEAF_AUTO(m, prog.model());
+    EXPECT_TRUE(std::holds_alternative<TersoffForceCalculator>(*m));
+
+    FitSession seed;
+    BOOST_LEAF_AUTO(cs, si_triangle(seed));
+    TersoffForceCalculator calc;
+    calc.ntypes = 1;
+    calc.params.reserve(1);
+    calc.params.emplace_back(si_tersoff());
+    BOOST_LEAF_CHECK(seed.seed_force_model(ForceCalculator{std::move(calc)}));
+    BOOST_LEAF_AUTO(rs, seed.evaluate(cs));
+    e_seed = rs.energy;
+    return {};
+  });
+
+  ASSERT_EQ(err, "") << err;
+  EXPECT_NEAR(e_prog, e_seed, 1e-9);
+}
+
+// Stiweb exercises both the analytic params and the per-triplet λ vector.
+TEST(FitSession, StiwebProgrammaticMatchesSeeded) {
+  auto sw_params = [] {
+    SWParams p;
+    p.A = 7.05;
+    p.B = 0.602;
+    p.p = 4.0;
+    p.q = 0.0;
+    p.delta = 1.0;
+    p.a1 = 3.0;
+    p.gamma = 1.2;
+    p.a2 = 3.0;
+    return p;
+  };
+  const Param lambda{21.0};
+
+  double e_prog = 0.0;
+  double e_seed = 0.0;
+
+  std::string err = run([&]() -> leaf::result<void> {
+    FitSession prog;
+    BOOST_LEAF_AUTO(cp, si_triangle(prog, 2.5));
+    BOOST_LEAF_CHECK(prog.set_stiweb_params("Si", "Si", sw_params()));
+    BOOST_LEAF_CHECK(prog.set_stiweb_lambda("Si", "Si", "Si", lambda));
+    BOOST_LEAF_AUTO(rp, prog.evaluate(cp));
+    e_prog = rp.energy;
+    BOOST_LEAF_AUTO(m, prog.model());
+    EXPECT_TRUE(std::holds_alternative<StiwebForceCalculator>(*m));
+
+    FitSession seed;
+    BOOST_LEAF_AUTO(cs, si_triangle(seed, 2.5));
+    StiwebForceCalculator calc;
+    calc.ntypes = 1;
+    calc.params.reserve(1);
+    calc.params.emplace_back(sw_params());
+    calc.lambda.push_back(lambda); // ntypes*paircol == 1 entry
+    BOOST_LEAF_CHECK(seed.seed_force_model(ForceCalculator{std::move(calc)}));
+    BOOST_LEAF_AUTO(rs, seed.evaluate(cs));
+    e_seed = rs.energy;
+    return {};
+  });
+
+  ASSERT_EQ(err, "") << err;
+  EXPECT_NEAR(e_prog, e_seed, 1e-9);
+}
+
+// Decompose round-trip: seed a single-element ADP model, then make an edit that
+// detaches the seed (which decomposes the built model back into the symbol-keyed
+// spec) and re-materializes. Re-setting one table to its same value must leave
+// the energy unchanged — proving every ADP table survived the round-trip.
+TEST(FitSession, AdpSeededDecomposeRoundTrip) {
+  auto phi = [] { return Potential(Morse(0.5, 1.5, 2.5, 0.1, 6.0)); };
+  auto dens = [] { return Potential(ExpDecay(1.0, 1.0, 0.1, 6.0)); };
+  auto emb = [] { return Potential(ConstFunc(-2.0, 0.0, 100.0)); };
+  auto dip = [] { return Potential(ExpDecay(0.3, 0.8, 0.1, 6.0)); };
+  auto quad = [] { return Potential(ExpDecay(0.2, 0.9, 0.1, 6.0)); };
+
+  double e_seed = 0.0;
+  double e_after = 0.0;
+
+  std::string err = run([&]() -> leaf::result<void> {
+    FitSession s;
+    BOOST_LEAF_CHECK(s.declare_element("Cu"));
+    const std::size_t c = s.add_configuration(PeriodicBC(cubic(8.0)));
+    BOOST_LEAF_CHECK(s.add_atom(c, "Cu", Vec3(0, 0, 0)));
+    BOOST_LEAF_CHECK(s.add_atom(c, "Cu", Vec3(2.5, 0, 0)));
+    BOOST_LEAF_CHECK(s.add_atom(c, "Cu", Vec3(0, 2.7, 0)));
+
+    ADPForceCalculator calc;
+    calc.ntypes = 1;
+    calc.pair.reserve(1);
+    calc.pair.emplace_back(phi());
+    calc.density.reserve(1);
+    calc.density.emplace_back(dens());
+    calc.embedding.reserve(1);
+    calc.embedding.emplace_back(emb());
+    calc.dipole.reserve(1);
+    calc.dipole.emplace_back(dip());
+    calc.quadrupole.reserve(1);
+    calc.quadrupole.emplace_back(quad());
+    BOOST_LEAF_CHECK(s.seed_force_model(ForceCalculator{std::move(calc)}));
+
+    BOOST_LEAF_AUTO(r0, s.evaluate(c));
+    e_seed = r0.energy;
+
+    // This edit detaches the seed → decompose into spec → re-materialize ADP.
+    BOOST_LEAF_CHECK(s.set_dipole("Cu", "Cu", dip()));
+    BOOST_LEAF_AUTO(r1, s.evaluate(c));
+    e_after = r1.energy;
+
+    BOOST_LEAF_AUTO(m, s.model());
+    EXPECT_TRUE(std::holds_alternative<ADPForceCalculator>(*m));
+    return {};
+  });
+
+  ASSERT_EQ(err, "") << err;
+  EXPECT_NEAR(e_seed, e_after, 1e-12);
+}
+
+// A missing analytic-parameter block surfaces as a build-time leaf error.
+TEST(FitSession, MissingTersoffParamErrors) {
+  FitSession s;
+  std::string err = run([&]() -> leaf::result<void> {
+    const std::size_t c = s.add_configuration(PeriodicBC(cubic(8.0)));
+    BOOST_LEAF_CHECK(s.add_atom(c, "Si", Vec3(0, 0, 0)));
+    BOOST_LEAF_CHECK(s.add_atom(c, "C", Vec3(1.6, 0, 0)));
+    // Diagonal blocks supplied (so both elements enter the registry); the
+    // C-Si cross block is intentionally omitted.
+    BOOST_LEAF_CHECK(s.set_tersoff_params("Si", "Si", si_tersoff()));
+    BOOST_LEAF_CHECK(s.set_tersoff_params("C", "C", si_tersoff()));
+    BOOST_LEAF_CHECK(s.evaluate(c));
+    return {};
+  });
+  EXPECT_NE(err, ""); // expected: "missing tersoff parameters for C-Si"
 }
 
 // ── Configuration factory round-trip ─────────────────────────────────────────

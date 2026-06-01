@@ -40,7 +40,7 @@ struct PairForce {
 //   embedding  — F_i(ρ)     embedding energy,        ntypes entries
 //   dipole     — u_{ij}(r)  dipole coupling,         paircol entries
 //   quadrupole — w_{ij}(r)  quadrupole coupling,     paircol entries
-struct ADPForceCalculator : ForceCalculatorBase<ADPForceCalculator> {
+struct ADPForceCalculator : ForceCalculatorBase<ADPForceCalculator>, NoGlobals {
   PotentialPair pair;
   PotentialArray density;
   PotentialArray embedding;

@@ -29,6 +29,27 @@ struct GlobalParam {
   std::vector<Link> links;
 };
 
+// ── Globals mixins ──────────────────────────────────────────────────────────
+// A uniform globals interface so callers (e.g. FitSession materialization) never
+// branch on whether a model supports global parameters. Calculators that do
+// (pair, EAM) inherit WithGlobals for the storage + set_globals; those that do
+// not (ADP, angular, tersoff, stiweb) inherit NoGlobals, which makes every
+// globals operation a no-op. finalize_globals()/broadcast_globals() stay defined
+// by the WithGlobals-using calculators themselves, since they touch that
+// calculator's own potential tables.
+struct NoGlobals {
+  constexpr void set_globals(const std::vector<GlobalParam> &) noexcept {}
+  constexpr void finalize_globals() noexcept {}
+  constexpr void broadcast_globals() noexcept {}
+  [[nodiscard]] constexpr bool globals_empty() const noexcept { return true; }
+};
+
+struct WithGlobals {
+  std::vector<GlobalParam> globals;
+  void set_globals(std::vector<GlobalParam> g) { globals = std::move(g); }
+  [[nodiscard]] bool globals_empty() const noexcept { return globals.empty(); }
+};
+
 #if defined(__GNUC__) && !defined(__clang__)
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wdangling-reference"
