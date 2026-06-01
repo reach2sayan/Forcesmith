@@ -18,6 +18,7 @@ target_compile_options(potfit_warnings INTERFACE
 target_link_options(potfit_warnings INTERFACE $<$<CONFIG:Debug>:-fsanitize=address,undefined>)
 
 set(POTFIT_LIB_SOURCES
+        src/api/fit_session.cpp
         src/core/checkpoint.cpp
         src/core/neighbor_list.cpp
         src/core/rescale.cpp
@@ -30,8 +31,10 @@ set(POTFIT_LIB_SOURCES
         src/force/evaluate.cpp
         src/io/config_reader.cpp
         src/io/force_model_reader.cpp
+        src/io/loaders.cpp
         src/io/output_writer.cpp
         src/io/potential_reader.cpp
+        src/io/write_model.cpp
         src/optimization/line_search.cpp
         src/optimization/optimizer.cpp
         src/optimization/potfit_functor.cpp
@@ -73,6 +76,7 @@ set(UNIT_TEST_SOURCES
         tests/unit/test_checkpoint.cpp
         tests/unit/test_config_reader.cpp
         tests/unit/test_eam_force.cpp
+        tests/unit/test_fit_session.cpp
         tests/unit/test_force_calc.cpp
         tests/unit/test_force_model_reader.cpp
         tests/unit/test_neighbor_list.cpp

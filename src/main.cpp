@@ -1,12 +1,9 @@
+#include "potfit/api/fit_session.hpp"
 #include "potfit/core/checkpoint.hpp"
-#include "potfit/core/config_index.hpp"
 #include "potfit/events/signals.hpp"
-#include "potfit/force/evaluate.hpp"
 #include "potfit/force/pair_force.hpp"
 #include "potfit/io/config_reader.hpp"
-#include "potfit/io/force_model_reader.hpp"
-#include "potfit/io/output_writer.hpp"
-#include "potfit/optimization/optimizer.hpp"
+#include "potfit/io/loaders.hpp"
 
 #include <boost/leaf/handle_errors.hpp>
 #include <boost/program_options.hpp>
@@ -14,17 +11,12 @@
 #include <iomanip>
 #include <iostream>
 #include <string>
+#include <type_traits>
+#include <variant>
+#include <vector>
 
 namespace po = boost::program_options;
 namespace leaf = boost::leaf;
-
-static std::string read_file(const std::string &path) {
-  std::ifstream f(path);
-  if (!f)
-    throw std::runtime_error("cannot open: " + path);
-  return std::string(std::istreambuf_iterator<char>(f),
-                     std::istreambuf_iterator<char>());
-}
 
 int main(int argc, char *argv[]) {
   po::options_description desc("potfit — interatomic potential fitter");
@@ -88,8 +80,9 @@ int main(int argc, char *argv[]) {
   int ret = 0;
   leaf::try_handle_all(
       [&]() -> leaf::result<void> {
-        std::vector<potfit::Configuration> configs_vec;
-        potfit::ForceCalculator model = potfit::PairForceCalculator{};
+        // The CLI is a thin client of the FitSession API: build the session,
+        // then evaluate / optimize / write through it.
+        potfit::FitSession session;
 
         const bool has_checkpoint = vm.count("checkpoint") > 0;
         const std::string ckpt_prefix =
@@ -98,89 +91,42 @@ int main(int argc, char *argv[]) {
         // ── Resume from checkpoint if it exists ──────────────────────────
         bool resumed = false;
         if (has_checkpoint) {
+          std::vector<potfit::Configuration> cfgs;
           std::vector<potfit::Potential> pots;
-          auto r =
-              potfit::CheckpointReader(ckpt_prefix).read(configs_vec, pots);
-          if (r) {
-            model = potfit::make_pair_force_calculator(std::move(pots));
+          if (potfit::CheckpointReader(ckpt_prefix).read(cfgs, pots)) {
+            for (auto &c : cfgs) {
+              session.add_configuration(std::move(c));
+            }
+            BOOST_LEAF_CHECK(session.seed_force_model(
+                potfit::make_pair_force_calculator(std::move(pots))));
             std::cout << "resumed from checkpoint " << ckpt_prefix << "\n";
             resumed = true;
           }
-          // If load fails, fall through to normal parse (checkpoint absent).
         }
 
         if (!resumed) {
-          // ── Parse config ─────────────────────────────────────────────
-          const std::string conf_text =
-              read_file(vm["config"].as<std::string>());
-          auto r_cfg = potfit::io::parse_config(conf_text);
-          if (!r_cfg)
-            return r_cfg.error();
-          configs_vec = std::move(r_cfg->configs);
-          const potfit::SpeciesRegistry registry = std::move(r_cfg->registry);
-
-          // ── Parse startpot ───────────────────────────────────────────
-          const std::string pot_text =
-              read_file(vm["startpot"].as<std::string>());
-          auto r_pot = potfit::io::parse_force_model(pot_text);
-          if (!r_pot)
-            return r_pot.error();
-          model = std::move(*r_pot);
-
-          // The Z-sorted registry defines the type-slot layout; the potential
-          // tables must declare exactly that many element types, or slots and
-          // configurations are misaligned.
-          const std::size_t model_ntypes =
-              std::visit([](const auto &m) { return m.ntypes; }, model);
-          const std::size_t cfg_ntypes = potfit::ntypes(registry);
-          if (model_ntypes != cfg_ntypes)
-            return leaf::new_error(potfit::io::ParseError{
-                "potential ntypes (" + std::to_string(model_ntypes) +
-                    ") does not match the " + std::to_string(cfg_ntypes) +
-                    " element type(s) present in the configurations",
-                0});
+          BOOST_LEAF_CHECK(
+              potfit::io::load_configs(vm["config"].as<std::string>(), session));
+          BOOST_LEAF_CHECK(potfit::io::load_model(
+              vm["startpot"].as<std::string>(), session));
         }
 
-        if (configs_vec.empty()) {
+        if (session.config_count() == 0) {
           std::cerr << "error: no configurations loaded\n";
           ret = 1;
           return {};
         }
 
-        // Auxiliary grouping index over configs (composition / energy / weight).
-        // Derived data, rebuilt from configs_vec; configs_vec must not be resized
-        // or reordered after this point (see config_index.hpp invariant).
-        const auto config_idx =
-            potfit::config_index::build_config_index(configs_vec);
-        (void)config_idx;
-        if (std::visit([](const auto &m) { return m.param_count(); }, model) ==
-            0) {
-          std::cerr << "error: no potentials loaded\n";
-          ret = 1;
-          return {};
-        }
-
         // ── Evaluate-only mode ───────────────────────────────────────────
-        // Run a single force evaluation of the (unoptimized) start potential
-        // against every configuration and dump per-config computed vs.
-        // reference forces / energy / stress as JSON. This is the parity
-        // artifact diffed against the original C potfit's evaluate run
-        // (param `opt 0`). No optimization is performed.
+        // Single force evaluation of the (unoptimized) start potential against
+        // every configuration; dumps per-config computed vs reference forces /
+        // energy / stress as JSON. Parity artifact vs the original C potfit.
         if (vm.count("evaluate")) {
           const std::string ev_path = vm["evaluate"].as<std::string>();
           const double ew = vm["eweight"].as<double>();
           const double sw = vm["stress-weight"].as<double>();
 
-          // Demonstrates the enriched on_force_eval callback: the slot
-          // reads computed forces straight off s.cfg as each config is
-          // evaluated. The potential is captured (model) — the per-config
-          // fire site cannot see the type-erased ForceCalculator itself.
-          std::uint64_t fired = 0;
-          auto ev_conn = potfit::events::on_force_eval.connect(
-              [&](const potfit::events::ForceEvalStats &s) {
-                (void)s;
-                ++fired;
-              });
+          BOOST_LEAF_AUTO(configs, session.configurations());
 
           std::ofstream out(ev_path);
           if (!out) {
@@ -191,8 +137,6 @@ int main(int argc, char *argv[]) {
           }
           out << std::setprecision(17);
 
-          // SymTens (3x3 symmetric) → potfit's 6-vector order: xx yy zz xy yz
-          // zx.
           auto stress6 = [](const potfit::SymTens &s, std::ostream &o) {
             o << s(0, 0) << ", " << s(1, 1) << ", " << s(2, 2) << ", "
               << s(0, 1) << ", " << s(1, 2) << ", " << s(0, 2);
@@ -201,25 +145,23 @@ int main(int argc, char *argv[]) {
           double total_sumsq = 0.0;
           out << "{\n  \"energy_weight\": " << ew
               << ",\n  \"stress_weight\": " << sw
-              << ",\n  \"nconf\": " << configs_vec.size()
+              << ",\n  \"nconf\": " << configs.size()
               << ",\n  \"configs\": [\n";
 
-          for (std::size_t i = 0; i < configs_vec.size(); ++i) {
-            const potfit::Configuration &cfg = configs_vec[i];
-            const auto r = potfit::force::evaluate(model, cfg);
+          for (std::size_t i = 0; i < configs.size(); ++i) {
+            const potfit::Configuration &cfg = configs[i];
+            BOOST_LEAF_AUTO(r, session.evaluate(i));
 
-            double csq = 0.0; // this config's contribution to total_sumsq
+            double csq = 0.0;
             out << "    {\n      \"index\": " << i
                 << ",\n      \"natoms\": " << cfg.atoms.size()
                 << ",\n      \"calc_energy\": " << r.energy
                 << ",\n      \"ref_energy\": " << cfg.ref.energy
                 << ",\n      \"calc_stress\": [";
             stress6(r.stress, out);
-            out << "],\n"
-                << "      \"ref_stress\": [";
+            out << "],\n      \"ref_stress\": [";
             stress6(cfg.ref.stress, out);
-            out << "],\n"
-                << "      \"atoms\": [\n";
+            out << "],\n      \"atoms\": [\n";
             for (std::size_t a = 0; a < cfg.atoms.size(); ++a) {
               const auto &cf = r.forces[a];
               const auto &rf = cfg.atoms[a].ref.force;
@@ -238,21 +180,21 @@ int main(int argc, char *argv[]) {
               const potfit::SymTens ds = r.stress - cfg.ref.stress;
               const double comps[6] = {ds(0, 0), ds(1, 1), ds(2, 2),
                                        ds(0, 1), ds(1, 2), ds(0, 2)};
-              for (double c : comps)
+              for (double c : comps) {
                 csq += (sw * c) * (sw * c);
+              }
             }
             csq += r.limit * r.limit;
             total_sumsq += csq;
 
             out << "      ],\n      \"limit\": " << r.limit
                 << ",\n      \"sumsq\": " << csq << "\n    }"
-                << (i + 1 < configs_vec.size() ? "," : "") << "\n";
+                << (i + 1 < configs.size() ? "," : "") << "\n";
           }
 
           out << "  ],\n  \"total_sumsq\": " << total_sumsq << "\n}\n";
-          ev_conn.disconnect();
-          std::cout << "evaluated " << configs_vec.size() << " configurations ("
-                    << fired << " force-eval events), total error sum = "
+          std::cout << "evaluated " << configs.size()
+                    << " configurations, total error sum = "
                     << std::setprecision(10) << total_sumsq
                     << "\nwrote evaluation report to " << ev_path << "\n";
           return {};
@@ -266,7 +208,7 @@ int main(int argc, char *argv[]) {
         }
 
         // ── Optimize ─────────────────────────────────────────────────────
-        potfit::OptimizerOptions opts;
+        potfit::OptimizerOptions &opts = session.options();
         opts.max_iter = vm["maxiter"].as<int>();
         opts.energy_weight = vm["eweight"].as<double>();
         opts.stress_weight = vm["stress-weight"].as<double>();
@@ -279,111 +221,49 @@ int main(int argc, char *argv[]) {
             static_cast<std::size_t>(vm["de-gen"].as<int>());
 
         const std::string alg = vm["algorithm"].as<std::string>();
-        if (alg == "powell")
+        if (alg == "powell") {
           opts.algorithm = potfit::Algorithm::Powell;
-        else if (alg == "de")
+        } else if (alg == "de") {
           opts.algorithm = potfit::Algorithm::DE;
-        else if (alg == "ls")
+        } else if (alg == "ls") {
           opts.algorithm = potfit::Algorithm::LineSearch;
-        else if (alg != "lm") {
+        } else if (alg != "lm") {
           std::cerr << "unknown algorithm '" << alg
                     << "'; choose: lm | powell | de | ls\n";
           ret = 1;
           return {};
         }
 
-        const int status = potfit::run_optimizer(configs_vec, model, opts);
+        BOOST_LEAF_AUTO(status, session.optimize());
         std::cout << "optimizer finished with status " << status << "\n";
 
-        // Extract flat potentials for I/O and checkpointing (pair model only).
-        std::vector<potfit::Potential> result_pots;
-        std::visit(
-            [&](const auto &calc) {
-              using T = std::decay_t<decltype(calc)>;
-              if constexpr (std::is_same_v<T, potfit::PairForceCalculator>)
-                result_pots.assign(calc.pair.begin(), calc.pair.end());
-            },
-            model);
-
-        // ── Save checkpoint ───────────────────────────────────────────────
+        // ── Save checkpoint (pair model only) ─────────────────────────────
         if (has_checkpoint) {
-          if (auto r = potfit::CheckpointWriter(ckpt_prefix)
-                           .configs(configs_vec)
-                           .potentials(result_pots)
-                           .write();
-              !r)
-            return r.error();
+          BOOST_LEAF_AUTO(configs, session.configurations());
+          BOOST_LEAF_AUTO(model, session.model());
+          std::vector<potfit::Potential> result_pots;
+          std::visit(
+              [&](const auto &calc) {
+                using T = std::decay_t<decltype(calc)>;
+                if constexpr (std::is_same_v<T, potfit::PairForceCalculator>) {
+                  result_pots.assign(calc.pair.begin(), calc.pair.end());
+                }
+              },
+              *model);
+          const std::vector<potfit::Configuration> cfg_copy(configs.begin(),
+                                                            configs.end());
+          BOOST_LEAF_CHECK(potfit::CheckpointWriter(ckpt_prefix)
+                               .configs(cfg_copy)
+                               .potentials(result_pots)
+                               .write());
           std::cout << "checkpoint saved to " << ckpt_prefix << "\n";
         }
 
         // ── Write endpot ─────────────────────────────────────────────────
         const std::string fmt = vm["format"].as<std::string>();
         const std::string outp = vm["endpot"].as<std::string>();
-
-        const bool wrote = std::visit(
-            [&](const auto &calc) -> bool {
-              using T = std::decay_t<decltype(calc)>;
-              if constexpr (std::is_same_v<T, potfit::PairForceCalculator>) {
-                const std::vector<potfit::Potential> pots(calc.pair.begin(),
-                                                          calc.pair.end());
-                if (fmt == "lammps")
-                  potfit::io::write_lammps(outp, pots);
-                else if (fmt == "imd")
-                  potfit::io::write_imd(outp, pots);
-                else
-                  potfit::io::write_native(outp, pots);
-                return true;
-              } else if constexpr (std::is_same_v<T,
-                                                  potfit::EAMForceCalculator>) {
-                if (fmt != "native")
-                  std::cerr
-                      << "warning: '" << fmt
-                      << "' output unsupported for EAM; writing native JSON\n";
-                potfit::io::write_native_eam(outp, calc);
-                return true;
-              } else if constexpr (std::is_same_v<T,
-                                                  potfit::ADPForceCalculator>) {
-                if (fmt != "native")
-                  std::cerr
-                      << "warning: '" << fmt
-                      << "' output unsupported for ADP; writing native JSON\n";
-                potfit::io::write_native_adp(outp, calc);
-                return true;
-              } else if constexpr (std::is_same_v<
-                                       T, potfit::AngularForceCalculator>) {
-                if (fmt != "native")
-                  std::cerr << "warning: '" << fmt
-                            << "' output unsupported for angular; writing "
-                               "native JSON\n";
-                potfit::io::write_native_angular(outp, calc);
-                return true;
-              } else if constexpr (std::is_same_v<
-                                       T, potfit::TersoffForceCalculator>) {
-                if (fmt != "native")
-                  std::cerr << "warning: '" << fmt
-                            << "' output unsupported for tersoff; writing "
-                               "native JSON\n";
-                potfit::io::write_native_tersoff(outp, calc);
-                return true;
-              } else if constexpr (std::is_same_v<
-                                       T, potfit::StiwebForceCalculator>) {
-                if (fmt != "native")
-                  std::cerr << "warning: '" << fmt
-                            << "' output unsupported for stiweb; writing "
-                               "native JSON\n";
-                potfit::io::write_native_stiweb(outp, calc);
-                return true;
-              } else {
-                return false; // unknown model — no writer
-              }
-            },
-            model);
-
-        if (wrote)
-          std::cout << "wrote potential to " << outp << "\n";
-        else
-          std::cout << "output not yet implemented for this model; "
-                       "skipping endpot write\n";
+        BOOST_LEAF_CHECK(session.write(outp, fmt));
+        std::cout << "wrote potential to " << outp << "\n";
         return {};
       },
       [&](const potfit::io::ParseError &e) {

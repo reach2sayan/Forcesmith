@@ -5,10 +5,13 @@
 #include "potfit/core/species.hpp"
 #include "potfit/core/types.hpp"
 
+#include <boost/leaf/result.hpp>
 #include <boost/serialization/vector.hpp>
 #include <cmath>
+#include <filesystem>
 #include <functional>
 #include <numeric>
+#include <string_view>
 #include <vector>
 
 namespace potfit {
@@ -64,6 +67,19 @@ struct Configuration : Serializable<Configuration> {
   SymTens calc_stress = SymTens::Zero();
   double calc_limit =
       0.0; // accumulated F(ρ) out-of-range penalty (RESCALE-style)
+
+  // ── parsing factories (the object owns its parsing) ───────────────────────
+  // Build ONE configuration from a single JSON record (the same shape as one
+  // element of the config-file array): {X,Y,Z, E, [W], [S], atoms:[…]}. Atoms
+  // carry their Species by identity (symbol/Z from the static catalog); the
+  // compact table slot (Species::index) is assigned later by FitSession at
+  // freeze, so no registry is needed here. Defined in src/io/config_reader.cpp
+  // (keeps nlohmann out of this core header). Leaf-returning, not a throwing
+  // ctor — see feedback_error_handling.
+  [[nodiscard]] static boost::leaf::result<Configuration>
+  from_text(std::string_view json_record);
+  [[nodiscard]] static boost::leaf::result<Configuration>
+  from_file(const std::filesystem::path &path);
 };
 
 // Root-mean-square of the per-atom calculated forces over a configuration.

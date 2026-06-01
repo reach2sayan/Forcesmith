@@ -6,6 +6,7 @@
 #include <boost/leaf/error.hpp>
 #include <nlohmann/json.hpp>
 
+#include <fstream>
 #include <functional>
 #include <ranges>
 #include <span>
@@ -92,6 +93,62 @@ const Registry &registry() {
     return m;
   }();
   return reg;
+}
+
+// Build ONE potential from a single self-describing JSON spec:
+//   analytic  → object with a "type" key (looked up in the maker registry)
+//   tabulated → object with a "knots" array (uniform-grid SplinePotential)
+// Shared by Potential::from_text and the single-entry parse loop.
+leaf::result<Potential> one_potential(const json &p) {
+  auto fail = [](std::string msg) -> leaf::result<Potential> {
+    return leaf::new_error(ParseError{std::move(msg), 0});
+  };
+  if (!p.is_object())
+    return fail("potential spec must be a JSON object");
+
+  if (p.contains("type")) {
+    const std::string type_name = p["type"].get<std::string>();
+    const Registry &reg = registry();
+    auto it = reg.find(type_name);
+    if (it == reg.end())
+      return fail("unknown analytic function: " + type_name);
+    const auto &[nparams, param_names, make] = it->second;
+
+    const double rmin = p.at("rmin").get<double>();
+    const double rmax = p.at("rmax").get<double>();
+    std::vector<double> params;
+    params.reserve(static_cast<std::size_t>(nparams));
+    for (const auto &name : param_names) {
+      if (!p.contains(name))
+        return fail("missing parameter '" + name + "' for type " + type_name);
+      params.push_back(p[name].get<double>());
+    }
+    return make(params, rmin, rmax);
+  }
+
+  if (p.contains("knots")) {
+    const double rmin = p.at("rmin").get<double>();
+    const double rmax = p.at("rmax").get<double>();
+    const auto &knots_arr = p.at("knots");
+    if (!knots_arr.is_array() || knots_arr.size() < 2)
+      return fail("tabulated potential: 'knots' must be an array of >= 2 values");
+    const int n = static_cast<int>(knots_arr.size());
+    const double h = (rmax - rmin) / (n - 1);
+    std::vector<double> x(static_cast<std::size_t>(n));
+    std::vector<double> y(static_cast<std::size_t>(n));
+    for (auto [k, knot] : std::views::enumerate(knots_arr)) {
+      x[k] = rmin + static_cast<double>(k) * h;
+      y[k] = knot.get<double>();
+    }
+    SplinePotential sp(std::move(x), std::move(y));
+    if (p.value("fixed", false))
+      for (std::size_t k = 0; k < static_cast<std::size_t>(n); ++k)
+        sp.set_fixed(k, true);
+    return Potential(std::move(sp));
+  }
+
+  return fail("potential spec has neither 'type' (analytic) nor 'knots' "
+              "(tabulated)");
 }
 
 } // anonymous namespace
@@ -198,3 +255,32 @@ std::optional<std::size_t> analytic_param_index(std::string_view type,
 }
 
 } // namespace potfit::io
+
+namespace potfit {
+
+boost::leaf::result<Potential> Potential::from_text(std::string_view text) {
+  nlohmann::json j;
+  try {
+    j = nlohmann::json::parse(text);
+  } catch (const nlohmann::json::parse_error &e) {
+    return boost::leaf::new_error(io::ParseError{e.what(), 0});
+  }
+  try {
+    return io::one_potential(j);
+  } catch (const nlohmann::json::exception &e) {
+    return boost::leaf::new_error(io::ParseError{e.what(), 0});
+  }
+}
+
+boost::leaf::result<Potential>
+Potential::from_file(const std::filesystem::path &path) {
+  std::ifstream f(path);
+  if (!f)
+    return boost::leaf::new_error(
+        io::ParseError{"cannot open potential file: " + path.string(), 0});
+  std::string text((std::istreambuf_iterator<char>(f)),
+                   std::istreambuf_iterator<char>());
+  return Potential::from_text(text);
+}
+
+} // namespace potfit

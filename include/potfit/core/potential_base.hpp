@@ -3,8 +3,11 @@
 #include "potfit/core/erased.hpp"
 #include "potfit/potentials/curvature.hpp"
 #include <Eigen/Core>
+#include <boost/leaf/result.hpp>
 #include <concepts>
+#include <filesystem>
 #include <memory>
+#include <string_view>
 #include <utility>
 
 namespace potfit {
@@ -110,6 +113,17 @@ public:
                                   double weight) const {
     self_->write_smoothness(x, off, weight);
   }
+
+  // ── parsing factories (the object owns its parsing) ───────────────────────
+  // Build ONE potential from a single JSON spec. The spec is self-describing:
+  // an object with a "type" key is analytic (looked up in the maker registry);
+  // an object with a "knots" array is a tabulated SplinePotential. Defined in
+  // src/io/potential_reader.cpp (keeps nlohmann + the registry out of core).
+  // Leaf-returning, not a throwing ctor — see feedback_error_handling.
+  [[nodiscard]] static boost::leaf::result<Potential>
+  from_text(std::string_view json_spec);
+  [[nodiscard]] static boost::leaf::result<Potential>
+  from_file(const std::filesystem::path &path);
 };
 
 } // namespace potfit

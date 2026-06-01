@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <array>
 #include <cstddef>
+#include <fstream>
 #include <string>
 
 namespace potfit::io {
@@ -105,6 +106,60 @@ get_array_n(const json &arr, std::string_view ctx) {
   return a;
 }
 
+// Registry-free atom parse: resolve the element straight from the static
+// periodic-table catalog (Species::lookup). The compact table slot
+// (Species::index) is left at its default 0 — FitSession assigns the real slot
+// at freeze once the full element set is known. Used by Configuration::from_*.
+[[nodiscard]] leaf::result<Atom> parse_atom_catalog(const json &a_obj,
+                                                    std::string_view ctx) {
+  BOOST_LEAF_AUTO(elem, require_key(a_obj, "element", ctx));
+  BOOST_LEAF_AUTO(pos, require_vec3(a_obj, "position", ctx));
+
+  Atom a;
+  BOOST_LEAF_AUTO(sp, Species::lookup((*elem).get<std::string>()));
+  a.type = sp;
+  a.pos = pos;
+
+  if (a_obj.contains("force")) {
+    BOOST_LEAF_AUTO(f, get_vec3(a_obj["force"], std::string(ctx) + " 'force'"));
+    a.ref.force = f;
+  }
+  return a;
+}
+
+// Parse ONE configuration record using the catalog (no registry). Shared by
+// Configuration::from_text and (via re-serialised records) the streaming
+// loader in src/io/loaders.cpp.
+[[nodiscard]] leaf::result<Configuration> config_from_json(const json &obj) {
+  if (!obj.is_object())
+    return err("configuration must be a JSON object");
+
+  Configuration cfg;
+  BOOST_LEAF_AUTO(box, parse_box(obj, "configuration"));
+  cfg.bc = PeriodicBC(box);
+
+  BOOST_LEAF_AUTO(e, parse_energy(obj, "configuration"));
+  cfg.ref.energy = e;
+
+  cfg.weight = obj.value("W", 1.0);
+
+  BOOST_LEAF_AUTO(s, parse_stress(obj, "configuration"));
+  cfg.ref.stress = s;
+
+  BOOST_LEAF_AUTO(atoms, require_key(obj, "atoms", "configuration"));
+  if (!(*atoms).is_array())
+    return err("configuration: 'atoms' must be an array");
+
+  cfg.atoms.reserve((*atoms).size());
+  std::size_t ai = 0;
+  for (const auto &a_obj : *atoms) {
+    BOOST_LEAF_AUTO(atom, parse_atom_catalog(
+                              a_obj, "atom[" + std::to_string(ai++) + "]"));
+    cfg.atoms.push_back(std::move(atom));
+  }
+  return cfg;
+}
+
 [[nodiscard]] leaf::result<Configuration>
 parse_configuration(const json &obj, const SpeciesRegistry &registry,
                     std::string_view ctx) {
@@ -199,3 +254,33 @@ leaf::result<ParsedConfig> parse_config(std::string_view input) {
 }
 
 } // namespace potfit::io
+
+namespace potfit {
+
+boost::leaf::result<Configuration>
+Configuration::from_text(std::string_view text) {
+  nlohmann::json j;
+  try {
+    j = nlohmann::json::parse(text);
+  } catch (const nlohmann::json::parse_error &e) {
+    return boost::leaf::new_error(io::ParseError{e.what(), 0});
+  }
+  try {
+    return io::config_from_json(j);
+  } catch (const nlohmann::json::exception &e) {
+    return boost::leaf::new_error(io::ParseError{e.what(), 0});
+  }
+}
+
+boost::leaf::result<Configuration>
+Configuration::from_file(const std::filesystem::path &path) {
+  std::ifstream f(path);
+  if (!f)
+    return boost::leaf::new_error(
+        io::ParseError{"cannot open config file: " + path.string(), 0});
+  std::string text((std::istreambuf_iterator<char>(f)),
+                   std::istreambuf_iterator<char>());
+  return Configuration::from_text(text);
+}
+
+} // namespace potfit
