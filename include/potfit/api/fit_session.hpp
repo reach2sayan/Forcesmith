@@ -50,7 +50,6 @@ public:
 
   FitSession() = default;
 
-  // ── configurations (structural; mark dirty) ───────────────────────────────
   std::size_t
   add_configuration(BoundaryConditions bc = PeriodicBC(Mat3::Identity()));
   // Push a fully-built configuration (e.g. from Configuration::from_text). Its
@@ -61,7 +60,6 @@ public:
   boost::leaf::result<void> set_infinite(std::size_t cfg, double volume = 1.0);
   [[nodiscard]] std::size_t config_count() const { return configs_.size(); }
 
-  // ── atoms (structural; mark dirty) ─────────────────────────────────────────
   boost::leaf::result<std::size_t>
   add_atom(std::size_t cfg, std::string_view element, const Vec3 &pos);
   boost::leaf::result<void> remove_atom(std::size_t cfg, std::size_t atom);
@@ -82,10 +80,6 @@ public:
   // ── species (optional; lets an element with a potential but no atoms slot) ──
   boost::leaf::result<void> declare_element(std::string_view sym);
 
-  // ── potentials (symbol-keyed; mark dirty) ──────────────────────────────────
-  // Programmatic build is currently supported for the pair and EAM models
-  // (set_pair_potential alone ⇒ pair; adding density+embedding ⇒ EAM). Other
-  // models load via seed_force_model and are evaluated/optimized/written as-is.
   boost::leaf::result<void> set_pair_potential(std::string_view a,
                                                std::string_view b, Potential p);
   boost::leaf::result<void> set_density(std::string_view a, Potential p);
@@ -103,28 +97,29 @@ public:
   // decomposed back to symbol-keyed potentials if a later edit re-ranks slots.
   boost::leaf::result<void> seed_force_model(ForceCalculator model);
 
-  // ── optimizer options ──────────────────────────────────────────────────────
   OptimizerOptions &options() { return opts_; }
   [[nodiscard]] const OptimizerOptions &options() const { return opts_; }
 
-  // ── lifecycle ──────────────────────────────────────────────────────────────
-  // Optional: force the build now (surfaces missing-potential errors early).
   boost::leaf::result<void> freeze();
 
-  // ── run / IO (auto-freeze on entry) ─────────────────────────────────────────
   boost::leaf::result<force::EvalResult> evaluate(std::size_t cfg);
   boost::leaf::result<int> optimize();
   boost::leaf::result<void> write(const std::filesystem::path &path,
                                   std::string_view format = "native");
 
-  // ── accessors (auto-freeze; pointers into owned state) ──────────────────────
   boost::leaf::result<const SpeciesRegistry *> species();
   boost::leaf::result<std::span<const Configuration>> configurations();
   boost::leaf::result<const config_index::ConfigIndex *> index();
+  boost::leaf::result<Configuration *> config_by_name(std::string_view name);
   boost::leaf::result<const ForceCalculator *> model();
 
 private:
   boost::leaf::result<void> ensure_frozen();
+  // Decompose a seeded (file-loaded) model into the editable symbol-keyed spec
+  // and drop the seed, so the spec can be mutated. No-op when not seeded.
+  // `action` names the operation in the error surfaced when the seed cannot be
+  // decomposed (its original element ordering is unknown).
+  boost::leaf::result<void> detach_seeded(std::string_view action);
   boost::leaf::result<SpeciesRegistry> build_registry() const;
   boost::leaf::result<void> materialize_from_spec(); // pair / EAM
   boost::leaf::result<void>

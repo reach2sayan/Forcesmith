@@ -22,15 +22,23 @@ namespace {
   return leaf::new_error(io::ParseError{std::move(msg), 0});
 }
 
-// Visitor helpers over the ForceCalculator variant.
-[[nodiscard]] std::size_t ntypes_of(const ForceCalculator &m) {
+template <class Map>
+[[nodiscard]] leaf::result<typename Map::mapped_type>
+require(const Map &m, const typename Map::key_type &key, std::string what) {
+  if (auto it = m.find(key); it != m.end()) {
+    return it->second;
+  }
+  return err("missing " + std::move(what));
+}
+
+[[nodiscard]] constexpr std::size_t ntypes_of(const ForceCalculator &m) {
   return std::visit([](const auto &c) { return c.ntypes; }, m);
 }
-[[nodiscard]] double max_cutoff_of(const ForceCalculator &m) {
+[[nodiscard]] constexpr double max_cutoff_of(const ForceCalculator &m) {
   return std::visit([](const auto &c) { return c.max_cutoff(); }, m);
 }
 // Radial pair table (φ_ij) when the model has one; nullptr for tersoff/stiweb.
-[[nodiscard]] const PotentialPair *pair_table_of(const ForceCalculator &m) {
+[[nodiscard]] constexpr const PotentialPair *pair_table_of(const ForceCalculator &m) {
   return std::visit(
       [](const auto &c) -> const PotentialPair * {
         if constexpr (requires { c.pair; }) {
@@ -62,7 +70,6 @@ leaf::result<Configuration *> FitSession::config_at(std::size_t cfg) {
   return &configs_[cfg];
 }
 
-// ── configurations ──────────────────────────────────────────────────────────
 std::size_t FitSession::add_configuration(BoundaryConditions bc) {
   Configuration cfg;
   cfg.bc = std::move(bc);
@@ -99,7 +106,6 @@ leaf::result<void> FitSession::set_infinite(std::size_t cfg, double volume) {
   return {};
 }
 
-// ── atoms ────────────────────────────────────────────────────────────────────
 leaf::result<std::size_t> FitSession::add_atom(std::size_t cfg,
                                                std::string_view element,
                                                const Vec3 &pos) {
@@ -193,23 +199,12 @@ leaf::result<void> FitSession::declare_element(std::string_view sym) {
   return {};
 }
 
-// ── potentials ───────────────────────────────────────────────────────────────
-// If a model was seeded from a file, decompose it into the symbol-keyed spec so
-// programmatic edits compose with the loaded potentials instead of being lost.
 leaf::result<void> FitSession::set_pair_potential(std::string_view a,
                                                   std::string_view b,
                                                   Potential p) {
   BOOST_LEAF_CHECK(Species::lookup(a));
   BOOST_LEAF_CHECK(Species::lookup(b));
-  if (seeded_) {
-    if (!seeded_registry_) {
-      return err("cannot edit a seeded model: original element ordering "
-                 "unknown");
-    }
-    BOOST_LEAF_CHECK(decompose_seeded_into_spec(*seeded_registry_));
-    seeded_.reset();
-    seeded_registry_.reset();
-  }
+  BOOST_LEAF_CHECK(detach_seeded("edit"));
   pair_.insert_or_assign(norm_key(a, b), std::move(p));
   dirty_ = true;
   return {};
@@ -217,15 +212,7 @@ leaf::result<void> FitSession::set_pair_potential(std::string_view a,
 
 leaf::result<void> FitSession::set_density(std::string_view a, Potential p) {
   BOOST_LEAF_CHECK(Species::lookup(a));
-  if (seeded_) {
-    if (!seeded_registry_) {
-      return err("cannot edit a seeded model: original element ordering "
-                 "unknown");
-    }
-    BOOST_LEAF_CHECK(decompose_seeded_into_spec(*seeded_registry_));
-    seeded_.reset();
-    seeded_registry_.reset();
-  }
+  BOOST_LEAF_CHECK(detach_seeded("edit"));
   density_.insert_or_assign(std::string(a), std::move(p));
   dirty_ = true;
   return {};
@@ -233,15 +220,7 @@ leaf::result<void> FitSession::set_density(std::string_view a, Potential p) {
 
 leaf::result<void> FitSession::set_embedding(std::string_view a, Potential p) {
   BOOST_LEAF_CHECK(Species::lookup(a));
-  if (seeded_) {
-    if (!seeded_registry_) {
-      return err("cannot edit a seeded model: original element ordering "
-                 "unknown");
-    }
-    BOOST_LEAF_CHECK(decompose_seeded_into_spec(*seeded_registry_));
-    seeded_.reset();
-    seeded_registry_.reset();
-  }
+  BOOST_LEAF_CHECK(detach_seeded("edit"));
   embedding_.insert_or_assign(std::string(a), std::move(p));
   dirty_ = true;
   return {};
@@ -273,7 +252,6 @@ leaf::result<void> FitSession::set_pair_param(std::string_view a,
   return {};
 }
 
-// ── seeding ──────────────────────────────────────────────────────────────────
 leaf::result<void> FitSession::seed_force_model(ForceCalculator model) {
   // Capture the element ordering this model was built against, so a later edit
   // that re-ranks slots can still recover the per-symbol potentials.
@@ -297,24 +275,18 @@ leaf::result<SpeciesRegistry> FitSession::build_registry() const {
       syms.push_back(s);
     }
   };
-  for (const auto &cfg : configs_) {
-    for (const auto &a : cfg.atoms) {
-      add(a.type.symbol);
-    }
-  }
-  for (const auto &[k, p] : pair_) {
-    add(k.first);
-    add(k.second);
-  }
-  for (const auto &[k, p] : density_) {
-    add(k);
-  }
-  for (const auto &[k, p] : embedding_) {
-    add(k);
-  }
-  for (const auto &s : declared_) {
-    add(s);
-  }
+
+  std::ranges::for_each(
+    pair_ | std::views::keys,
+    [&](const auto& k) {
+        add(k.first);
+        add(k.second);
+    });
+
+  std::ranges::for_each(density_ | std::views::keys, add);
+  std::ranges::for_each(embedding_ | std::views::keys, add);
+  std::ranges::for_each(declared_, add);
+
   return build_species_registry(syms);
 }
 
@@ -330,12 +302,9 @@ leaf::result<void> FitSession::materialize_from_spec() {
       for (std::size_t tj = ti; tj < n; ++tj) {
         const PairKey key = norm_key(species_at(registry_, ti).symbol,
                                      species_at(registry_, tj).symbol);
-        auto it = pair_.find(key);
-        if (it == pair_.end()) {
-          return err("missing pair potential for " + key.first + "-" +
-                     key.second);
-        }
-        mat.emplace_back(it->second);
+        BOOST_LEAF_AUTO(p, require(pair_, key, "pair potential for " +
+                                                   key.first + "-" + key.second));
+        mat.emplace_back(std::move(p));
       }
     }
     return {};
@@ -359,20 +328,29 @@ leaf::result<void> FitSession::materialize_from_spec() {
   calc.embedding.reserve(n);
   for (std::size_t t = 0; t < n; ++t) {
     const std::string sym(species_at(registry_, t).symbol);
-    auto di = density_.find(sym);
-    if (di == density_.end()) {
-      return err("missing density (transfer) function for " + sym);
-    }
-    calc.density.emplace_back(di->second);
-    auto ei = embedding_.find(sym);
-    if (ei == embedding_.end()) {
-      return err("missing embedding function for " + sym);
-    }
-    calc.embedding.emplace_back(ei->second);
+    BOOST_LEAF_AUTO(d, require(density_, sym,
+                               "density (transfer) function for " + sym));
+    BOOST_LEAF_AUTO(e, require(embedding_, sym, "embedding function for " + sym));
+    calc.density.emplace_back(std::move(d));
+    calc.embedding.emplace_back(std::move(e));
   }
   calc.globals = globals_;
   calc.finalize_globals();
   model_ = std::move(calc);
+  return {};
+}
+
+leaf::result<void> FitSession::detach_seeded(std::string_view action) {
+  if (!seeded_) {
+    return {};
+  }
+  if (!seeded_registry_) {
+    return err("cannot " + std::string(action) +
+               " a seeded model: original element ordering unknown");
+  }
+  BOOST_LEAF_CHECK(decompose_seeded_into_spec(*seeded_registry_));
+  seeded_.reset();
+  seeded_registry_.reset();
   return {};
 }
 
@@ -400,7 +378,9 @@ FitSession::decompose_seeded_into_spec(const SpeciesRegistry &reg) {
             }
           }
           if constexpr (std::is_same_v<T, EAMForceCalculator>) {
-            for (std::size_t t = 0; t < n; ++t) {
+            for (const auto &[t, dens_emb] :
+                 std::views::zip(c.density, c.embedding) |
+                     std::views::enumerate) {
               const std::string sym(species_at(reg, t).symbol);
               density_.insert_or_assign(sym, c.density[t]);
               embedding_.insert_or_assign(sym, c.embedding[t]);
@@ -435,15 +415,9 @@ leaf::result<void> FitSession::ensure_frozen() {
   // Build the force model.
   if (seeded_) {
     if (ntypes_of(*seeded_) == n) {
-      model_ = *seeded_; // slot order == Z-sorted registry (potfit convention)
+      model_ = *seeded_;
     } else {
-      if (!seeded_registry_) {
-        return err("seeded model cannot be re-ranked: original element "
-                   "ordering unknown");
-      }
-      BOOST_LEAF_CHECK(decompose_seeded_into_spec(*seeded_registry_));
-      seeded_.reset();
-      seeded_registry_.reset();
+      BOOST_LEAF_CHECK(detach_seeded("re-rank"));
       BOOST_LEAF_CHECK(materialize_from_spec());
     }
   } else {
@@ -461,9 +435,31 @@ leaf::result<void> FitSession::ensure_frozen() {
     }
   }
 
-  // Auxiliary grouping index (configs_ must not be resized/reordered hereafter).
-  index_ = config_index::build_config_index(configs_);
+  // Assign default names to any unnamed config, then enforce uniqueness —
+  // names are the human-facing identifier and the by_name index is unique
+  // (it would otherwise silently drop a duplicate insert). Must happen before
+  // build_config_index, which views these owned strings.
+  for (std::size_t i = 0; i < configs_.size(); ++i) {
+    if (configs_[i].name.empty()) {
+      configs_[i].name = "config-" + std::to_string(i);
+    }
+  }
+  {
+    std::vector<std::string_view> names;
+    names.reserve(configs_.size());
+    for (const auto &cfg : configs_) {
+      names.push_back(cfg.name);
+    }
+    std::ranges::sort(names);
+    const auto dup = std::ranges::adjacent_find(names);
+    if (dup != names.end()) {
+      return err("duplicate configuration name '" + std::string(*dup) + "'");
+    }
+  }
 
+  // Auxiliary grouping index (configs_ must not be resized/reordered
+  // hereafter).
+  index_ = config_index::build_config_index(configs_);
   if (ntypes_of(model_) != n) {
     return err("model ntypes (" + std::to_string(ntypes_of(model_)) +
                ") does not match the " + std::to_string(n) +
@@ -513,6 +509,15 @@ leaf::result<std::span<const Configuration>> FitSession::configurations() {
 leaf::result<const config_index::ConfigIndex *> FitSession::index() {
   BOOST_LEAF_CHECK(ensure_frozen());
   return &index_.value();
+}
+
+leaf::result<Configuration *> FitSession::config_by_name(std::string_view name) {
+  BOOST_LEAF_CHECK(ensure_frozen());
+  Configuration *cfg = config_index::config_by_name(index_.value(), name);
+  if (cfg == nullptr) {
+    return err("no configuration named '" + std::string(name) + "'");
+  }
+  return cfg;
 }
 
 leaf::result<const ForceCalculator *> FitSession::model() {

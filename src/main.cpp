@@ -154,6 +154,7 @@ int main(int argc, char *argv[]) {
 
             double csq = 0.0;
             out << "    {\n      \"index\": " << i
+                << ",\n      \"name\": \"" << cfg.name << "\""
                 << ",\n      \"natoms\": " << cfg.atoms.size()
                 << ",\n      \"calc_energy\": " << r.energy
                 << ",\n      \"ref_energy\": " << cfg.ref.energy

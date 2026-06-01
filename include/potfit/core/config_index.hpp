@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <span>
+#include <string_view>
 #include <vector>
 
 // Auxiliary grouping/ordering index over Configuration objects.
@@ -38,6 +39,7 @@ struct ConfigRef {
   std::size_t order = 0;              // canonical index == residual block id
   CompositionKey composition;         // sorted distinct atom types
   std::uint64_t comp_mask = 0; // bit t set if type t present; 0 if type>=64
+  std::string_view name;       // view into cfg->name (owned); unique key
   [[nodiscard]] double energy() const { return cfg->ref.energy; }
   [[nodiscard]] double weight() const { return cfg->weight; }
 };
@@ -73,6 +75,7 @@ struct by_order {};
 struct by_composition {};
 struct by_energy {};
 struct by_weight {};
+struct by_name {};
 } // namespace detail
 
 namespace bmi = boost::multi_index;
@@ -93,7 +96,11 @@ using ConfigIndex = bmi::multi_index_container<
         // weight banding
         bmi::ordered_non_unique<
             bmi::tag<detail::by_weight>,
-            bmi::const_mem_fun<ConfigRef, double, &ConfigRef::weight>>>>;
+            bmi::const_mem_fun<ConfigRef, double, &ConfigRef::weight>>,
+        // unique human-facing identifier; string_view key into the owned name
+        bmi::ordered_unique<
+            bmi::tag<detail::by_name>,
+            bmi::member<ConfigRef, std::string_view, &ConfigRef::name>>>>;
 
 // Build the index from the owning configuration store. `order` is the position
 // in `configs`, which equals the residual block id used by the optimizer.
@@ -106,7 +113,8 @@ build_config_index(std::span<const Configuration> configs) {
     ordered.push_back(ConfigRef{.cfg = &c,
                                 .order = i,
                                 .composition = composition_of(c),
-                                .comp_mask = composition_mask(c)});
+                                .comp_mask = composition_mask(c),
+                                .name = c.name});
   }
   return idx;
 }
@@ -118,9 +126,9 @@ namespace detail {
 template <class It>
 [[nodiscard]] std::vector<Configuration *> gather(It first, It last) {
   std::vector<ConfigRef> refs(first, last);
-  std::sort(
-      refs.begin(), refs.end(),
-      [](const ConfigRef &a, const ConfigRef &b) { return a.order < b.order; });
+  std::ranges::sort(refs, [](const ConfigRef &a, const ConfigRef &b) {
+    return a.order < b.order;
+  });
   std::vector<Configuration *> out;
   out.reserve(refs.size());
   for (const ConfigRef &r : refs) {
@@ -167,6 +175,14 @@ configs_in_weight_band(const ConfigIndex &idx, double lo, double hi) {
 configs_in_energy_band(const ConfigIndex &idx, double lo, double hi) {
   const auto &by_e = idx.get<detail::by_energy>();
   return detail::gather(by_e.lower_bound(lo), by_e.upper_bound(hi));
+}
+
+// The config with the given unique name, or nullptr if none matches.
+[[nodiscard]] inline Configuration *config_by_name(const ConfigIndex &idx,
+                                                   std::string_view name) {
+  const auto &by_name = idx.get<detail::by_name>();
+  const auto it = by_name.find(name);
+  return it == by_name.end() ? nullptr : const_cast<Configuration *>(it->cfg);
 }
 
 } // namespace potfit::config_index

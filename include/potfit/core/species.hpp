@@ -41,9 +41,6 @@ struct Species {
 
   constexpr operator std::size_t() const noexcept { return index; }
 
-  // ── periodic-table catalog ────────────────────────────────────────────────
-  // Returned Species carry symbol/Z/mass with index defaulted to 0 (slot
-  // unassigned); SpeciesRegistry stamps the real slot.
   [[nodiscard]] static boost::optional<Species>
   find_by_symbol(std::string_view symbol) noexcept;
   [[nodiscard]] static boost::optional<Species>
@@ -152,7 +149,7 @@ inline boost::leaf::result<Species> Species::lookup(std::string_view sym) {
 }
 
 // ── SpeciesRegistry
-// ─────────────────────────────────────────────────────────── The model's
+// The model's
 // element↔slot table: a Boost.MultiIndex container of Species with Z-sorted
 // slots (so the by_Z index *is* the slot order), queried through free functions
 // — mirroring the config_index.hpp pattern. This is the single source of truth

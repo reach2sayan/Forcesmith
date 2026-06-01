@@ -6,11 +6,13 @@
 #include "potfit/core/types.hpp"
 
 #include <boost/leaf/result.hpp>
+#include <boost/serialization/string.hpp>
 #include <boost/serialization/vector.hpp>
 #include <cmath>
 #include <filesystem>
 #include <functional>
 #include <numeric>
+#include <string>
 #include <string_view>
 #include <vector>
 
@@ -56,6 +58,12 @@ struct Atom : Serializable<Atom> {
 struct Configuration : Serializable<Configuration> {
   std::vector<Atom> atoms;
   BoundaryConditions bc = PeriodicBC(Mat3::Identity());
+
+  // Unique, human-facing identifier. Empty on load → auto-filled "config-<order>"
+  // at freeze (see FitSession::ensure_frozen). The config_index holds a
+  // std::string_view into this owned string, so it is IMMUTABLE after freeze:
+  // reassigning it could reallocate the buffer and dangle every view.
+  std::string name;
 
   struct Reference {
     double energy = 0.0;
@@ -115,7 +123,8 @@ template <> struct Serializer<Atom> {
         s->index = idx;
         a.type = *s;
       } else {
-        a.type = Species{idx}; // synthetic atom (no element) round-trips by slot
+        a.type =
+            Species{idx}; // synthetic atom (no element) round-trips by slot
       }
     }
     ar & a.pos(0) & a.pos(1) & a.pos(2);
@@ -127,7 +136,7 @@ template <> struct Serializer<Atom> {
 template <> struct Serializer<Configuration> {
   template <class Archive>
   static void apply(Archive &ar, Configuration &c, unsigned int) {
-    ar & c.atoms & c.ref.energy & c.weight;
+    ar & c.atoms & c.ref.energy & c.weight & c.name;
     Mat3 box = std::holds_alternative<PeriodicBC>(c.bc)
                    ? std::get<PeriodicBC>(c.bc).box()
                    : Mat3::Identity();

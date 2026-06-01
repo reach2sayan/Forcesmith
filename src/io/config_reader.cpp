@@ -135,6 +135,7 @@ get_array_n(const json &arr, std::string_view ctx) {
     return err("configuration must be a JSON object");
 
   Configuration cfg;
+  cfg.name = obj.value("name", "");
   BOOST_LEAF_AUTO(box, parse_box(obj, "configuration"));
   cfg.bc = PeriodicBC(box);
 
@@ -167,6 +168,7 @@ parse_configuration(const json &obj, const SpeciesRegistry &registry,
     return err(std::string(ctx) + ": each configuration must be a JSON object");
 
   Configuration cfg;
+  cfg.name = obj.value("name", "");
 
   BOOST_LEAF_AUTO(box, parse_box(obj, ctx));
   cfg.bc = PeriodicBC(box);
