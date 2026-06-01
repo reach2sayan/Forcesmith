@@ -9,18 +9,6 @@ endif ()
 find_package(Boost 1.83 CONFIG REQUIRED COMPONENTS serialization program_options)
 
 find_package(TBB CONFIG REQUIRED)
-
-# Optional Intel MKL backend for Eigen.  We always use the *system* MKL (Debian
-# libmkl-dev), discovered through its pkg-config files.  Consumers link the
-# `potfit::eigen` target rather than Eigen3::Eigen directly so the backend choice
-# propagates from one place.
-#
-# The LP64 + sequential variant is the only one ABI-compatible with the project's
-# oneTBB (see find_package(TBB) above): MKL's mkl_tbb_thread is built against
-# *classic* TBB, which oneTBB 2021+ removed, and a second (iomp) pool would
-# oversubscribe against our bounded oneTBB arenas.  Eigen still routes its dense
-# BLAS/LAPACK through MKL's optimized kernels (EIGEN_USE_MKL_ALL — no source
-# changes); only MKL-internal threading is sequential.
 option(POTFIT_USE_MKL "Use system Intel MKL as Eigen's BLAS/LAPACK backend" ON)
 
 add_library(potfit_eigen INTERFACE)
@@ -46,12 +34,10 @@ else ()
     message(STATUS "Eigen backend: built-in kernels (POTFIT_USE_MKL=OFF)")
 endif ()
 
-# boost::parser is header-only and not yet in Ubuntu Boost packages;
-# fetch from the official Boost Git mirror.
 include(FetchContent)
 FetchContent_Declare(boost_parser
         GIT_REPOSITORY https://github.com/boostorg/parser.git
-        GIT_TAG boost-1.87.0
+        GIT_TAG boost-1.91.0
         GIT_SHALLOW TRUE
 )
 # Populate only (do not add_subdirectory — the parser has no CMake install rules
