@@ -8,6 +8,14 @@
 
 namespace potfit::io {
 
+// Open `path` for writing into a fresh std::ofstream named `var`, throwing if
+// the stream fails to open. Used by every writer below.
+#define OPEN_FILE_WITH_HANDLE(var, path)                                       \
+  std::ofstream var(path);                                                     \
+  if (!(var)) {                                                                \
+    throw std::runtime_error("cannot open " + (path).string());               \
+  }
+
 using json = nlohmann::json;
 
 // Sample one potential on a uniform grid over its span → {rmin,rmax,knots}.
@@ -18,8 +26,9 @@ static json sample_one(const Potential &p, int nknots) {
   pot["rmin"] = lo;
   pot["rmax"] = hi;
   pot["knots"] = json::array();
-  for (int k : std::views::iota(0, nknots))
+  for (int k : std::views::iota(0, nknots)) {
     pot["knots"].push_back(p.eval(lo + k * step));
+  }
   return pot;
 }
 
@@ -38,19 +47,14 @@ static json sample_section(const Range &pots, int nknots) {
 
 void write_native(const std::filesystem::path &path,
                   const std::vector<Potential> &potentials, int nknots) {
-  std::ofstream f(path);
-  if (!f)
-    throw std::runtime_error("cannot open " + path.string());
-
+  OPEN_FILE_WITH_HANDLE(f, path);
   json j = sample_section(potentials, nknots);
   f << j.dump(2) << "\n";
 }
 
 void write_native_eam(const std::filesystem::path &path,
                       const EAMForceCalculator &eam, int nknots) {
-  std::ofstream f(path);
-  if (!f)
-    throw std::runtime_error("cannot open " + path.string());
+  OPEN_FILE_WITH_HANDLE(f, path);
 
   json j;
   j["model"] = "eam";
@@ -64,10 +68,7 @@ void write_native_eam(const std::filesystem::path &path,
 
 void write_native_adp(const std::filesystem::path &path,
                       const ADPForceCalculator &adp, int nknots) {
-  std::ofstream f(path);
-  if (!f)
-    throw std::runtime_error("cannot open " + path.string());
-
+  OPEN_FILE_WITH_HANDLE(f, path);
   json j;
   j["model"] = "adp";
   j["ntypes"] = adp.density.size();
@@ -82,10 +83,7 @@ void write_native_adp(const std::filesystem::path &path,
 
 void write_native_angular(const std::filesystem::path &path,
                           const AngularForceCalculator &ang, int nknots) {
-  std::ofstream f(path);
-  if (!f)
-    throw std::runtime_error("cannot open " + path.string());
-
+  OPEN_FILE_WITH_HANDLE(f, path);
   json j;
   j["model"] = "angular";
   j["ntypes"] = ang.angular.size();
@@ -99,10 +97,7 @@ void write_native_angular(const std::filesystem::path &path,
 
 void write_native_tersoff(const std::filesystem::path &path,
                           const TersoffForceCalculator &ters) {
-  std::ofstream f(path);
-  if (!f)
-    throw std::runtime_error("cannot open " + path.string());
-
+  OPEN_FILE_WITH_HANDLE(f, path);
   json j;
   j["model"] = "tersoff";
   j["ntypes"] = ters.ntypes;
@@ -131,9 +126,7 @@ void write_native_tersoff(const std::filesystem::path &path,
 
 void write_native_stiweb(const std::filesystem::path &path,
                          const StiwebForceCalculator &sw) {
-  std::ofstream f(path);
-  if (!f)
-    throw std::runtime_error("cannot open " + path.string());
+  OPEN_FILE_WITH_HANDLE(f, path);
 
   json j;
   j["model"] = "stiweb";
@@ -161,9 +154,7 @@ void write_native_stiweb(const std::filesystem::path &path,
 
 void write_lammps(const std::filesystem::path &path,
                   const std::vector<Potential> &potentials) {
-  std::ofstream f(path);
-  if (!f)
-    throw std::runtime_error("cannot open " + path.string());
+  OPEN_FILE_WITH_HANDLE(f, path);
 
   for (auto [idx, p] : std::views::enumerate(potentials)) {
     auto [lo, hi] = p.span();
@@ -183,10 +174,7 @@ void write_lammps(const std::filesystem::path &path,
 
 void write_imd(const std::filesystem::path &path,
                const std::vector<Potential> &potentials) {
-  std::ofstream f(path);
-  if (!f) {
-    throw std::runtime_error("cannot open " + path.string());
-  }
+  OPEN_FILE_WITH_HANDLE(f, path);
 
   const int n = static_cast<int>(potentials.size());
   f << "#F 3 " << n << "\n";

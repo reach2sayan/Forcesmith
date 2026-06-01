@@ -30,8 +30,7 @@ boost::leaf::result<void> write_model(const ForceCalculator &model,
       [&](const auto &calc) -> bool {
         using T = std::decay_t<decltype(calc)>;
         if constexpr (std::is_same_v<T, PairForceCalculator>) {
-          const std::vector<Potential> pots(calc.pair.begin(),
-                                             calc.pair.end());
+          const std::vector<Potential> pots(calc.pair.begin(), calc.pair.end());
           if (fmt == "lammps") {
             write_lammps(path, pots);
           } else if (fmt == "imd") {

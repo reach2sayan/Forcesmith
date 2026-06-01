@@ -1,5 +1,7 @@
 #include "potfit/io/config_reader.hpp"
 
+#include "potfit/io/json_util.hpp"
+
 #include <boost/leaf/error.hpp>
 #include <nlohmann/json.hpp>
 
@@ -154,8 +156,8 @@ get_array_n(const json &arr, std::string_view ctx) {
   cfg.atoms.reserve((*atoms).size());
   std::size_t ai = 0;
   for (const auto &a_obj : *atoms) {
-    BOOST_LEAF_AUTO(atom, parse_atom_catalog(
-                              a_obj, "atom[" + std::to_string(ai++) + "]"));
+    BOOST_LEAF_AUTO(
+        atom, parse_atom_catalog(a_obj, "atom[" + std::to_string(ai++) + "]"));
     cfg.atoms.push_back(std::move(atom));
   }
   return cfg;
@@ -221,26 +223,22 @@ parse_configuration(const json &obj, const SpeciesRegistry &registry,
 } // namespace
 
 leaf::result<ParsedConfig> parse_config(std::string_view input) {
-  json j;
-  try {
-    j = json::parse(input);
-  } catch (const json::parse_error &e) {
-    return err(e.what());
-  }
+  return catch_json([&]() -> leaf::result<ParsedConfig> {
+    const json j = json::parse(input);
 
-  if (!j.is_array())
-    return err("top-level JSON must be an array of configurations");
+    if (!j.is_array()) {
+      return err("top-level JSON must be an array of configurations");
+    }
 
-  // Pass 1 — gather symbols and build the Z-sorted element↔slot registry.
-  const std::vector<std::string> sym_strings = collect_symbols(j);
-  std::vector<std::string_view> sym_views(sym_strings.begin(),
-                                          sym_strings.end());
-  BOOST_LEAF_AUTO(registry, build_species_registry(sym_views));
+    // Pass 1 — gather symbols and build the Z-sorted element↔slot registry.
+    const std::vector<std::string> sym_strings = collect_symbols(j);
+    std::vector<std::string_view> sym_views(sym_strings.begin(),
+                                            sym_strings.end());
+    BOOST_LEAF_AUTO(registry, build_species_registry(sym_views));
 
-  // Pass 2 — parse each configuration, stamping atoms through the registry.
-  std::vector<Configuration> configs;
-  configs.reserve(j.size());
-  try {
+    // Pass 2 — parse each configuration, stamping atoms through the registry.
+    std::vector<Configuration> configs;
+    configs.reserve(j.size());
     std::size_t ci = 0;
     for (const auto &obj : j) {
       BOOST_LEAF_AUTO(
@@ -248,11 +246,9 @@ leaf::result<ParsedConfig> parse_config(std::string_view input) {
                                    "config[" + std::to_string(ci++) + "]"));
       configs.push_back(std::move(cfg));
     }
-  } catch (const json::exception &e) {
-    return err(e.what());
-  }
 
-  return ParsedConfig{std::move(configs), std::move(registry)};
+    return ParsedConfig{std::move(configs), std::move(registry)};
+  });
 }
 
 } // namespace potfit::io
@@ -261,25 +257,19 @@ namespace potfit {
 
 boost::leaf::result<Configuration>
 Configuration::from_text(std::string_view text) {
-  nlohmann::json j;
-  try {
-    j = nlohmann::json::parse(text);
-  } catch (const nlohmann::json::parse_error &e) {
-    return boost::leaf::new_error(io::ParseError{e.what(), 0});
-  }
-  try {
+  return io::catch_json([&] {
+    auto j = nlohmann::json::parse(text);
     return io::config_from_json(j);
-  } catch (const nlohmann::json::exception &e) {
-    return boost::leaf::new_error(io::ParseError{e.what(), 0});
-  }
+  });
 }
 
 boost::leaf::result<Configuration>
 Configuration::from_file(const std::filesystem::path &path) {
   std::ifstream f(path);
-  if (!f)
+  if (!f) {
     return boost::leaf::new_error(
         io::ParseError{"cannot open config file: " + path.string(), 0});
+  }
   std::string text((std::istreambuf_iterator<char>(f)),
                    std::istreambuf_iterator<char>());
   return Configuration::from_text(text);

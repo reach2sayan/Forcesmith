@@ -2,6 +2,7 @@
 
 #include "potfit/io/config_reader.hpp" // ParseError
 #include "potfit/io/force_model_reader.hpp"
+#include "potfit/io/json_util.hpp"
 
 #include <boost/leaf/error.hpp>
 #include <nlohmann/json.hpp>
@@ -30,24 +31,19 @@ leaf::result<void> load_configs(const std::filesystem::path &path,
                                 PotFit &session) {
   BOOST_LEAF_AUTO(text, read_file(path));
 
-  nlohmann::json j;
-  try {
-    j = nlohmann::json::parse(text);
-  } catch (const nlohmann::json::parse_error &e) {
-    return leaf::new_error(ParseError{e.what(), 0});
-  }
-  if (!j.is_array()) {
-    return leaf::new_error(
-        ParseError{"top-level config JSON must be an array", 0});
-  }
+  return catch_json([&]() -> leaf::result<void> {
+    const nlohmann::json j = nlohmann::json::parse(text);
+    if (!j.is_array()) {
+      return leaf::new_error(
+          ParseError{"top-level config JSON must be an array", 0});
+    }
 
-  for (const auto &rec : j) {
-    // Each record is parsed by the object that owns it, then driven through the
-    // same API a programmatic caller uses.
-    BOOST_LEAF_AUTO(cfg, Configuration::from_text(rec.dump()));
-    session.add_configuration(std::move(cfg));
-  }
-  return {};
+    for (const auto &rec : j) {
+      BOOST_LEAF_AUTO(cfg, Configuration::from_text(rec.dump()));
+      session.add_configuration(std::move(cfg));
+    }
+    return {};
+  });
 }
 
 leaf::result<void> load_model(const std::filesystem::path &path,
