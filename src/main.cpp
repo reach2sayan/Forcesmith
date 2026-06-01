@@ -1,4 +1,5 @@
 #include "potfit/core/checkpoint.hpp"
+#include "potfit/core/config_index.hpp"
 #include "potfit/events/signals.hpp"
 #include "potfit/force/evaluate.hpp"
 #include "potfit/force/pair_force.hpp"
@@ -131,6 +132,13 @@ int main(int argc, char *argv[]) {
           ret = 1;
           return {};
         }
+
+        // Auxiliary grouping index over configs (composition / energy / weight).
+        // Derived data, rebuilt from configs_vec; configs_vec must not be resized
+        // or reordered after this point (see config_index.hpp invariant).
+        const auto config_idx =
+            potfit::config_index::build_config_index(configs_vec);
+        (void)config_idx;
         if (std::visit([](const auto &m) { return m.param_count(); }, model) ==
             0) {
           std::cerr << "error: no potentials loaded\n";
