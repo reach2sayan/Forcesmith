@@ -107,4 +107,25 @@ if (INTEGRATION_TEST_SOURCES)
     gtest_discover_tests(potfit_integration_tests)
 endif ()
 
+# ── Per-element UNEP EAM fit drivers (programmatic-API parallel of fit_eam.py) ──
+# One executable per metal, the element baked in via POTFIT_UNEP_ELEMENT. All are
+# built from the single self-contained source tests/unep/fit_eam_api.cpp.
+# Off by default; enable with -DPOTFIT_BUILD_UNEP_FITS=ON. The aggregate target
+# `unep_fits` builds every element at once.
+option(POTFIT_BUILD_UNEP_FITS "Build the per-element UNEP EAM fit executables" OFF)
+if (POTFIT_BUILD_UNEP_FITS)
+    set(POTFIT_UNEP_ELEMENTS
+            Ag Al Au Cr Cu Mg Mo Ni Pb Pd Pt Ta Ti V W Zr)
+    add_custom_target(unep_fits)
+    foreach (el IN LISTS POTFIT_UNEP_ELEMENTS)
+        string(TOLOWER "${el}" el_lc)
+        set(tgt "unep_fit_${el_lc}")
+        add_executable(${tgt} tests/unep/fit_eam_api.cpp)
+        target_include_directories(${tgt} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/include")
+        target_compile_definitions(${tgt} PRIVATE POTFIT_UNEP_ELEMENT="${el}")
+        target_link_libraries(${tgt} PRIVATE potfit_warnings potfit_lib Boost::program_options)
+        add_dependencies(unep_fits ${tgt})
+    endforeach ()
+endif ()
+
 include(ClangFormat)
