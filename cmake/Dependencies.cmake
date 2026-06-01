@@ -8,10 +8,43 @@ if (POLICY CMP0167)
 endif ()
 find_package(Boost 1.83 CONFIG REQUIRED COMPONENTS serialization program_options)
 
-# Intel oneTBB: drives the std::execution::par parallel algorithms (libstdc++
-# dispatches the parallel STL to TBB) and provides the task_arena / global_control
-# / enumerable_thread_specific used to bound and compose the nested parallelism.
 find_package(TBB CONFIG REQUIRED)
+
+# Optional Intel MKL backend for Eigen.  We always use the *system* MKL (Debian
+# libmkl-dev), discovered through its pkg-config files.  Consumers link the
+# `potfit::eigen` target rather than Eigen3::Eigen directly so the backend choice
+# propagates from one place.
+#
+# The LP64 + sequential variant is the only one ABI-compatible with the project's
+# oneTBB (see find_package(TBB) above): MKL's mkl_tbb_thread is built against
+# *classic* TBB, which oneTBB 2021+ removed, and a second (iomp) pool would
+# oversubscribe against our bounded oneTBB arenas.  Eigen still routes its dense
+# BLAS/LAPACK through MKL's optimized kernels (EIGEN_USE_MKL_ALL — no source
+# changes); only MKL-internal threading is sequential.
+option(POTFIT_USE_MKL "Use system Intel MKL as Eigen's BLAS/LAPACK backend" ON)
+
+add_library(potfit_eigen INTERFACE)
+add_library(potfit::eigen ALIAS potfit_eigen)
+target_link_libraries(potfit_eigen INTERFACE Eigen3::Eigen)
+
+if (POTFIT_USE_MKL)
+    find_package(PkgConfig QUIET)
+    if (PkgConfig_FOUND)
+        # IMPORTED_TARGET → PkgConfig::MKL carries the include dir (/usr/include/mkl)
+        # and the full -lmkl_intel_lp64 -lmkl_sequential -lmkl_core -lpthread -lm -ldl #link line
+        pkg_check_modules(MKL QUIET IMPORTED_TARGET mkl-dynamic-lp64-seq)
+    endif ()
+endif ()
+
+if (POTFIT_USE_MKL AND MKL_FOUND)
+    target_link_libraries(potfit_eigen INTERFACE PkgConfig::MKL)
+    target_compile_definitions(potfit_eigen INTERFACE EIGEN_USE_MKL_ALL)
+    message(STATUS "Eigen backend: system Intel MKL (lp64, sequential) via pkg-config")
+elseif (POTFIT_USE_MKL)
+    message(STATUS "Eigen backend: built-in kernels (system MKL pkg-config 'mkl-dynamic-lp64-seq' not found)")
+else ()
+    message(STATUS "Eigen backend: built-in kernels (POTFIT_USE_MKL=OFF)")
+endif ()
 
 # boost::parser is header-only and not yet in Ubuntu Boost packages;
 # fetch from the official Boost Git mirror.
@@ -46,7 +79,7 @@ FetchContent_MakeAvailable(nlohmann_json)
 # which was added in 1.84.  Fetch just the math headers at 1.87.
 FetchContent_Declare(boost_math
         GIT_REPOSITORY https://github.com/boostorg/math.git
-        GIT_TAG boost-1.87.0
+        GIT_TAG boost-1.91.0
         GIT_SHALLOW TRUE
 )
 FetchContent_GetProperties(boost_math)

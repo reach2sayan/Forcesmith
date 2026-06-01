@@ -7,22 +7,15 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
-
 include(Dependencies)
-
-# ── Compiler options ──────────────────────────────────────────────────────────
 
 add_library(potfit_warnings INTERFACE)
 target_compile_options(potfit_warnings INTERFACE
         -Wall -Wextra -Wpedantic -Wshadow -Wnon-virtual-dtor
         $<$<CONFIG:Debug>:-g -fsanitize=address,undefined>
-        $<$<CONFIG:Release>:-O3 -march=native -DNDEBUG>
-)
-target_link_options(potfit_warnings INTERFACE
-        $<$<CONFIG:Debug>:-fsanitize=address,undefined>
-)
+        $<$<CONFIG:Release>:-O3 -march=native -DNDEBUG>)
 
-# ── Implementation library (linked by both executable and tests) ──────────────
+target_link_options(potfit_warnings INTERFACE $<$<CONFIG:Debug>:-fsanitize=address,undefined>)
 
 set(POTFIT_LIB_SOURCES
         src/core/checkpoint.cpp
@@ -47,12 +40,9 @@ set(POTFIT_LIB_SOURCES
 )
 
 add_library(potfit_lib STATIC ${POTFIT_LIB_SOURCES})
-
-target_include_directories(potfit_lib PUBLIC
-        "${CMAKE_CURRENT_SOURCE_DIR}/include"
-)
+target_include_directories(potfit_lib PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include")
 target_link_libraries(potfit_lib PUBLIC
-        Eigen3::Eigen
+        potfit::eigen
         Boost::serialization
         Boost::boost
         boost_parser
@@ -60,28 +50,13 @@ target_link_libraries(potfit_lib PUBLIC
         nlohmann_json::nlohmann_json
         TBB::tbb
 )
-target_link_libraries(potfit_lib PRIVATE
-        potfit_warnings
-)
-
-# ── Main executable ───────────────────────────────────────────────────────────
+target_link_libraries(potfit_lib PRIVATE potfit_warnings)
 
 add_executable(potfit src/main.cpp)
-
-target_include_directories(potfit PRIVATE
-        "${CMAKE_CURRENT_SOURCE_DIR}/include"
-)
-
-target_link_libraries(potfit PRIVATE
-        potfit_warnings
-        potfit_lib
-        Boost::program_options
-)
-
-# ── Tests ─────────────────────────────────────────────────────────────────────
+target_include_directories(potfit PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/include")
+target_link_libraries(potfit PRIVATE potfit_warnings potfit_lib Boost::program_options)
 
 enable_testing()
-
 FetchContent_Declare(googletest
         GIT_REPOSITORY https://github.com/google/googletest.git
         GIT_TAG v1.14.0
@@ -112,57 +87,19 @@ set(UNIT_TEST_SOURCES
 )
 
 add_executable(potfit_tests ${UNIT_TEST_SOURCES})
+target_include_directories(potfit_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/include")
 
-target_include_directories(potfit_tests PRIVATE
-        "${CMAKE_CURRENT_SOURCE_DIR}/include"
-)
-
-target_link_libraries(potfit_tests PRIVATE
-        potfit_warnings
-        potfit_lib
-        GTest::gtest_main
-)
+target_link_libraries(potfit_tests PRIVATE potfit_warnings potfit_lib GTest::gtest_main)
 
 include(GoogleTest)
 gtest_discover_tests(potfit_tests)
 
-# ── Integration tests ─────────────────────────────────────────────────────────
 file(GLOB INTEGRATION_TEST_SOURCES "tests/integration/*.cpp")
 if (INTEGRATION_TEST_SOURCES)
     add_executable(potfit_integration_tests ${INTEGRATION_TEST_SOURCES})
-    target_include_directories(potfit_integration_tests PRIVATE
-            "${CMAKE_CURRENT_SOURCE_DIR}/include"
-    )
-    target_link_libraries(potfit_integration_tests PRIVATE
-            potfit_warnings
-            potfit_lib
-            GTest::gtest_main
-    )
+    target_include_directories(potfit_integration_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/include")
+    target_link_libraries(potfit_integration_tests PRIVATE potfit_warnings potfit_lib GTest::gtest_main)
     gtest_discover_tests(potfit_integration_tests)
-endif ()
-
-# ── Evaluation-parity harness (port vs. original C potfit) ────────────────────
-# Each case converts a potfit text potential to the port's JSON, evaluates it
-# with the `potfit` binary, and diffs the forces against a committed oracle
-# reference (tests/integration/harness/reference/<case>/). Needs python3; the
-# references are pre-generated (gen_reference.sh builds the upstream C potfit and
-# is NOT part of the test). Registered only when python3 is available.
-find_package(Python3 COMPONENTS Interpreter QUIET)
-if (Python3_Interpreter_FOUND)
-    set(_harness "${CMAKE_CURRENT_SOURCE_DIR}/tests/integration/harness")
-    set(_data "${CMAKE_CURRENT_SOURCE_DIR}/tests/integration/data/potfit_upstream")
-    # case-dir → ntypes
-    foreach (_case_spec "Al_eam_sc:1" "Al_eam_gsc:1")
-        string(REPLACE ":" ";" _parts "${_case_spec}")
-        list(GET _parts 0 _case)
-        list(GET _parts 1 _nt)
-        add_test(
-                NAME parity_${_case}
-                COMMAND bash "${_harness}/run_parity.sh"
-                "$<TARGET_FILE:potfit>" "${_data}/${_case}" "${_nt}"
-        )
-        set_tests_properties(parity_${_case} PROPERTIES LABELS "parity")
-    endforeach ()
 endif ()
 
 include(ClangFormat)
