@@ -197,12 +197,12 @@ build_species_registry(std::span<const std::string_view> symbols) {
   return reg;
 }
 
-[[nodiscard]] inline std::size_t ntypes(const SpeciesRegistry &r) {
+[[nodiscard]] constexpr FORCE_INLINE std::size_t ntypes(const SpeciesRegistry &r) {
   return r.size();
 }
 
 // The Species (with assigned slot) for a given element symbol; error if absent.
-[[nodiscard]] inline boost::leaf::result<Species>
+[[nodiscard]] constexpr FORCE_INLINE boost::leaf::result<Species>
 species_of(const SpeciesRegistry &r, std::string_view symbol) {
   const auto &idx = r.get<species_detail::by_symbol>();
   const auto it = idx.find(symbol);
@@ -214,7 +214,7 @@ species_of(const SpeciesRegistry &r, std::string_view symbol) {
 }
 
 // The Species occupying compact slot `slot`. Precondition: slot < ntypes(r).
-[[nodiscard]] inline Species species_at(const SpeciesRegistry &r,
+[[nodiscard]] constexpr FORCE_INLINE Species species_at(const SpeciesRegistry &r,
                                         std::size_t slot) {
   const auto &idx = r.get<species_detail::by_index>();
   return *idx.find(slot);

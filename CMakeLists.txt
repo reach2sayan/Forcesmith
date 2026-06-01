@@ -29,6 +29,7 @@ set(POTFIT_LIB_SOURCES
         src/force/stiweb_force.cpp
         src/force/tersoff_force.cpp
         src/force/evaluate.cpp
+        src/force/smoothness.cpp
         src/io/config_reader.cpp
         src/io/force_model_reader.cpp
         src/io/loaders.cpp

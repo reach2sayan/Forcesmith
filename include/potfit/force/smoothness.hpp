@@ -10,7 +10,6 @@
 // by iterating their public tables.
 
 #include "potfit/force/force_calculator.hpp"
-#include "potfit/force/force_calculator_concept.hpp"
 
 #include <Eigen/Core>
 
@@ -18,65 +17,37 @@
 
 namespace potfit {
 
-// Defaults: a calculator contributes no curvature residuals.
-template <typename M> std::size_t model_smoothness_count(const M &) {
-  return 0;
-}
+// Defaults: a calculator contributes no curvature residuals. Calculators with
+// no tabulated potentials (Tersoff/Stiweb) bind here through std::visit.
+template <typename M> constexpr std::size_t model_smoothness_count(const M &) { return 0; }
 template <typename M>
-void model_write_smoothness(const M &, Eigen::VectorXd &, std::size_t /*off*/,
+constexpr void model_write_smoothness(const M &, Eigen::VectorXd &, std::size_t /*off*/,
                             double /*weight*/) {}
 
+// Concrete overloads for the table-backed calculators (defined in
+// smoothness.cpp). These MUST be declared here so the std::visit dispatch in
+// potfit_functor.cpp binds EAM/Pair/ADP/Angular to these rather than silently
+// falling through to the zero-returning template above.
+
 // EAM: pair + density + embedding tables.
-inline std::size_t model_smoothness_count(const EAMForceCalculator &m) {
-  return smoothness_count_range(m.pair) + smoothness_count_range(m.density) +
-         smoothness_count_range(m.embedding);
-}
-inline void model_write_smoothness(const EAMForceCalculator &m,
-                                   Eigen::VectorXd &dst, std::size_t off,
-                                   double weight) {
-  write_smoothness_range(m.pair, dst, off, weight);
-  write_smoothness_range(m.density, dst, off, weight);
-  write_smoothness_range(m.embedding, dst, off, weight);
-}
+std::size_t model_smoothness_count(const EAMForceCalculator &m);
+void model_write_smoothness(const EAMForceCalculator &m, Eigen::VectorXd &dst,
+                            std::size_t off, double weight);
 
 // Pair: single pair table.
-inline std::size_t model_smoothness_count(const PairForceCalculator &m) {
-  return smoothness_count_range(m.pair);
-}
-inline void model_write_smoothness(const PairForceCalculator &m,
-                                   Eigen::VectorXd &dst, std::size_t off,
-                                   double weight) {
-  write_smoothness_range(m.pair, dst, off, weight);
-}
+std::size_t model_smoothness_count(const PairForceCalculator &m);
+void model_write_smoothness(const PairForceCalculator &m, Eigen::VectorXd &dst,
+                            std::size_t off, double weight);
 
 // ADP: pair + density + embedding + dipole + quadrupole tables.
-inline std::size_t model_smoothness_count(const ADPForceCalculator &m) {
-  return smoothness_count_range(m.pair) + smoothness_count_range(m.density) +
-         smoothness_count_range(m.embedding) +
-         smoothness_count_range(m.dipole) +
-         smoothness_count_range(m.quadrupole);
-}
-inline void model_write_smoothness(const ADPForceCalculator &m,
-                                   Eigen::VectorXd &dst, std::size_t off,
-                                   double weight) {
-  write_smoothness_range(m.pair, dst, off, weight);
-  write_smoothness_range(m.density, dst, off, weight);
-  write_smoothness_range(m.embedding, dst, off, weight);
-  write_smoothness_range(m.dipole, dst, off, weight);
-  write_smoothness_range(m.quadrupole, dst, off, weight);
-}
+std::size_t model_smoothness_count(const ADPForceCalculator &m);
+void model_write_smoothness(const ADPForceCalculator &m, Eigen::VectorXd &dst,
+                            std::size_t off, double weight);
 
 // Angular: pair + radial + angular tables.
-inline std::size_t model_smoothness_count(const AngularForceCalculator &m) {
-  return smoothness_count_range(m.pair) + smoothness_count_range(m.radial) +
-         smoothness_count_range(m.angular);
-}
-inline void model_write_smoothness(const AngularForceCalculator &m,
-                                   Eigen::VectorXd &dst, std::size_t off,
-                                   double weight) {
-  write_smoothness_range(m.pair, dst, off, weight);
-  write_smoothness_range(m.radial, dst, off, weight);
-  write_smoothness_range(m.angular, dst, off, weight);
-}
+std::size_t model_smoothness_count(const AngularForceCalculator &m);
+void model_write_smoothness(const AngularForceCalculator &m,
+                            Eigen::VectorXd &dst, std::size_t off,
+                            double weight);
 
 } // namespace potfit

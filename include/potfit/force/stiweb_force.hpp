@@ -58,18 +58,19 @@ struct StiwebForceCalculator : ForceCalculatorBase<StiwebForceCalculator> {
 
   // Upper-triangular slot for an unordered (j,k) pair, identical to
   // SymmetricMatrix::slot — keeps λ indexing consistent with `params`.
-  std::size_t pair_slot(std::size_t a, std::size_t b) const {
+  constexpr std::size_t pair_slot(std::size_t a, std::size_t b) const {
     if (a > b) {
       std::swap(a, b);
     }
     return a * ntypes - a * (a - 1) / 2 + (b - a);
   }
-  std::size_t lambda_index(std::size_t ti, std::size_t tj,
-                           std::size_t tk) const {
+  constexpr std::size_t lambda_index(std::size_t ti, std::size_t tj,
+                                     std::size_t tk) const {
     const std::size_t paircol = ntypes * (ntypes + 1) / 2;
     return ti * paircol + pair_slot(tj, tk);
   }
-  const Param &lambda_at(std::size_t ti, std::size_t tj, std::size_t tk) const {
+  constexpr const Param &lambda_at(std::size_t ti, std::size_t tj,
+                                   std::size_t tk) const {
     return lambda[lambda_index(ti, tj, tk)];
   }
 
