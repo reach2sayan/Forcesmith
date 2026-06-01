@@ -38,7 +38,7 @@ struct ConfigRef {
   std::size_t order = 0;              // canonical index == residual block id
   CompositionKey composition;         // sorted distinct atom types
   std::uint64_t comp_mask = 0; // bit t set if type t present; 0 if type>=64
-  [[nodiscard]] double energy() const { return cfg->energy; }
+  [[nodiscard]] double energy() const { return cfg->ref.energy; }
   [[nodiscard]] double weight() const { return cfg->weight; }
 };
 

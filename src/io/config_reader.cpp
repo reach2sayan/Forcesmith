@@ -15,18 +15,6 @@ namespace leaf = boost::leaf;
 
 namespace {
 
-// element symbol → Atom.type index; built dynamically, first seen = 0.
-struct ElementMap {
-  std::vector<std::string> syms;
-
-  int operator()(const std::string &s) {
-    if (auto it = std::ranges::find(syms, s); it != syms.end())
-      return static_cast<int>(it - syms.begin());
-    syms.push_back(s);
-    return static_cast<int>(syms.size()) - 1;
-  }
-};
-
 [[nodiscard]] leaf::error_id err(std::string msg) {
   return leaf::new_error(ParseError{std::move(msg), 0});
 }
@@ -99,24 +87,27 @@ get_array_n(const json &arr, std::string_view ctx) {
   return stress;
 }
 
-[[nodiscard]] leaf::result<Atom> parse_atom(const json &a_obj, ElementMap &emap,
+[[nodiscard]] leaf::result<Atom> parse_atom(const json &a_obj,
+                                            const SpeciesRegistry &registry,
                                             std::string_view ctx) {
   BOOST_LEAF_AUTO(elem, require_key(a_obj, "element", ctx));
   BOOST_LEAF_AUTO(pos, require_vec3(a_obj, "position", ctx));
 
   Atom a;
-  a.type = static_cast<std::size_t>(emap((*elem).get<std::string>()));
+  BOOST_LEAF_AUTO(sp, species_of(registry, (*elem).get<std::string>()));
+  a.type = sp;
   a.pos = pos;
 
   if (a_obj.contains("force")) {
     BOOST_LEAF_AUTO(f, get_vec3(a_obj["force"], std::string(ctx) + " 'force'"));
-    a.force = f;
+    a.ref.force = f;
   }
   return a;
 }
 
 [[nodiscard]] leaf::result<Configuration>
-parse_configuration(const json &obj, ElementMap &emap, std::string_view ctx) {
+parse_configuration(const json &obj, const SpeciesRegistry &registry,
+                    std::string_view ctx) {
   if (!obj.is_object())
     return err(std::string(ctx) + ": each configuration must be a JSON object");
 
@@ -126,12 +117,12 @@ parse_configuration(const json &obj, ElementMap &emap, std::string_view ctx) {
   cfg.bc = PeriodicBC(box);
 
   BOOST_LEAF_AUTO(e, parse_energy(obj, ctx));
-  cfg.energy = e;
+  cfg.ref.energy = e;
 
   cfg.weight = obj.value("W", 1.0);
 
   BOOST_LEAF_AUTO(s, parse_stress(obj, ctx));
-  cfg.stress = s;
+  cfg.ref.stress = s;
 
   BOOST_LEAF_AUTO(atoms, require_key(obj, "atoms", ctx));
   if (!(*atoms).is_array())
@@ -140,7 +131,7 @@ parse_configuration(const json &obj, ElementMap &emap, std::string_view ctx) {
   cfg.atoms.reserve((*atoms).size());
   std::size_t ai = 0;
   for (const auto &a_obj : *atoms) {
-    BOOST_LEAF_AUTO(atom, parse_atom(a_obj, emap,
+    BOOST_LEAF_AUTO(atom, parse_atom(a_obj, registry,
                                      std::string(ctx) + " atom[" +
                                          std::to_string(ai++) + "]"));
     cfg.atoms.push_back(std::move(atom));
@@ -148,9 +139,31 @@ parse_configuration(const json &obj, ElementMap &emap, std::string_view ctx) {
   return cfg;
 }
 
+// First pass: gather every distinct element symbol that appears in any atom, so
+// the Z-sorted registry is fixed before atoms are stamped. Lenient about
+// structure — full validation happens in the second pass.
+[[nodiscard]] std::vector<std::string> collect_symbols(const json &j) {
+  std::vector<std::string> syms;
+  if (!j.is_array())
+    return syms;
+  for (const auto &obj : j) {
+    if (!obj.is_object() || !obj.contains("atoms") || !obj["atoms"].is_array())
+      continue;
+    for (const auto &a_obj : obj["atoms"]) {
+      if (a_obj.is_object() && a_obj.contains("element") &&
+          a_obj["element"].is_string()) {
+        std::string s = a_obj["element"].get<std::string>();
+        if (std::ranges::find(syms, s) == syms.end())
+          syms.push_back(std::move(s));
+      }
+    }
+  }
+  return syms;
+}
+
 } // namespace
 
-leaf::result<std::vector<Configuration>> parse_config(std::string_view input) {
+leaf::result<ParsedConfig> parse_config(std::string_view input) {
   json j;
   try {
     j = json::parse(input);
@@ -161,15 +174,20 @@ leaf::result<std::vector<Configuration>> parse_config(std::string_view input) {
   if (!j.is_array())
     return err("top-level JSON must be an array of configurations");
 
-  ElementMap emap;
+  // Pass 1 — gather symbols and build the Z-sorted element↔slot registry.
+  const std::vector<std::string> sym_strings = collect_symbols(j);
+  std::vector<std::string_view> sym_views(sym_strings.begin(),
+                                          sym_strings.end());
+  BOOST_LEAF_AUTO(registry, build_species_registry(sym_views));
+
+  // Pass 2 — parse each configuration, stamping atoms through the registry.
   std::vector<Configuration> configs;
   configs.reserve(j.size());
-
   try {
     std::size_t ci = 0;
     for (const auto &obj : j) {
       BOOST_LEAF_AUTO(
-          cfg, parse_configuration(obj, emap,
+          cfg, parse_configuration(obj, registry,
                                    "config[" + std::to_string(ci++) + "]"));
       configs.push_back(std::move(cfg));
     }
@@ -177,7 +195,7 @@ leaf::result<std::vector<Configuration>> parse_config(std::string_view input) {
     return err(e.what());
   }
 
-  return configs;
+  return ParsedConfig{std::move(configs), std::move(registry)};
 }
 
 } // namespace potfit::io

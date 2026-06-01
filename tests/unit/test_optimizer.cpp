@@ -24,10 +24,10 @@ static Configuration make_lj_dimer(double eps, double sigma, double r) {
     const double sr6  = std::pow(sigma / r, 6);
     const double dvdr = 4.0 * eps * (-12.0 * sr6 * sr6 + 6.0 * sr6) / r;
 
-    a0.force = Vec3(dvdr, 0.0, 0.0);
-    a1.force = Vec3(-dvdr, 0.0, 0.0);
+    a0.ref.force = Vec3(dvdr, 0.0, 0.0);
+    a1.ref.force = Vec3(-dvdr, 0.0, 0.0);
 
-    cfg.energy = 4.0 * eps * (sr6 * sr6 - sr6);
+    cfg.ref.energy = 4.0 * eps * (sr6 * sr6 - sr6);
     cfg.atoms  = {a0, a1};
     return cfg;
 }

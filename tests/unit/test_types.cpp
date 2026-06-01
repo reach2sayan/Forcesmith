@@ -1,5 +1,5 @@
 #include "potfit/core/atom.hpp"
-#include "potfit/core/elements.hpp"
+#include "potfit/core/species.hpp"
 #include "potfit/core/types.hpp"
 
 #include <boost/leaf/handle_errors.hpp>
@@ -22,16 +22,16 @@ TEST(Atom, DefaultConstruction) {
     EXPECT_EQ(a.type, 0);
     EXPECT_EQ(a.conf, 0);
     EXPECT_DOUBLE_EQ(a.pos.norm(), 0.0);
-    EXPECT_DOUBLE_EQ(a.force.norm(), 0.0);
+    EXPECT_DOUBLE_EQ(a.ref.force.norm(), 0.0);
     EXPECT_TRUE(a.neighbors.empty());
 }
 
 TEST(Configuration, DefaultConstruction) {
     Configuration cfg;
     EXPECT_TRUE(cfg.atoms.empty());
-    EXPECT_DOUBLE_EQ(cfg.energy, 0.0);
+    EXPECT_DOUBLE_EQ(cfg.ref.energy, 0.0);
     EXPECT_DOUBLE_EQ(cfg.weight, 1.0);
-    EXPECT_DOUBLE_EQ(cfg.stress.sum(), 0.0);
+    EXPECT_DOUBLE_EQ(cfg.ref.stress.sum(), 0.0);
 }
 
 TEST(NeighborEntry, DefaultConstruction) {
@@ -56,11 +56,12 @@ TEST(Atom, EAMFieldsDefaultToZero) {
     EXPECT_DOUBLE_EQ(a.lambda.norm(), 0.0);
 }
 
-TEST(Elements, LookupCu) {
+TEST(Species, LookupCu) {
     boost::leaf::try_handle_all(
         []() -> boost::leaf::result<void> {
-            BOOST_LEAF_AUTO(e, potfit::elements::lookup("Cu"));
-            EXPECT_EQ(e.Z, 29);
+            BOOST_LEAF_AUTO(e, Species::lookup("Cu"));
+            EXPECT_EQ(e.Z, 29u);
+            EXPECT_EQ(e.symbol, "Cu");
             EXPECT_NEAR(e.mass_amu, 63.546, 0.001);
             return {};
         },
@@ -68,22 +69,22 @@ TEST(Elements, LookupCu) {
         []() { FAIL() << "unknown error"; });
 }
 
-TEST(Elements, LookupSi) {
+TEST(Species, LookupSi) {
     boost::leaf::try_handle_all(
         []() -> boost::leaf::result<void> {
-            BOOST_LEAF_AUTO(e, potfit::elements::lookup("Si"));
-            EXPECT_EQ(e.Z, 14);
+            BOOST_LEAF_AUTO(e, Species::lookup("Si"));
+            EXPECT_EQ(e.Z, 14u);
             return {};
         },
         [](const std::string& msg) { FAIL() << msg; },
         []() { FAIL() << "unknown error"; });
 }
 
-TEST(Elements, LookupUnknownReturnsError) {
+TEST(Species, LookupUnknownReturnsError) {
     bool got_error = false;
     boost::leaf::try_handle_all(
         [&]() -> boost::leaf::result<void> {
-            BOOST_LEAF_AUTO(e, potfit::elements::lookup("Xx"));
+            BOOST_LEAF_AUTO(e, Species::lookup("Xx"));
             (void)e;
             return {};
         },
@@ -92,22 +93,22 @@ TEST(Elements, LookupUnknownReturnsError) {
     EXPECT_TRUE(got_error);
 }
 
-TEST(Elements, AtomicNumber) {
+TEST(Species, AtomicNumber) {
     boost::leaf::try_handle_all(
         []() -> boost::leaf::result<void> {
-            BOOST_LEAF_AUTO(z, potfit::elements::atomic_number("Fe"));
-            EXPECT_EQ(z, 26);
+            BOOST_LEAF_AUTO(e, Species::lookup("Fe"));
+            EXPECT_EQ(e.Z, 26u);
             return {};
         },
         [](const std::string& msg) { FAIL() << msg; },
         []() { FAIL() << "unknown error"; });
 }
 
-TEST(Elements, AtomicMass) {
+TEST(Species, AtomicMass) {
     boost::leaf::try_handle_all(
         []() -> boost::leaf::result<void> {
-            BOOST_LEAF_AUTO(m, potfit::elements::atomic_mass("Au"));
-            EXPECT_NEAR(m, 196.967, 0.001);
+            BOOST_LEAF_AUTO(e, Species::lookup("Au"));
+            EXPECT_NEAR(e.mass_amu, 196.967, 0.001);
             return {};
         },
         [](const std::string& msg) { FAIL() << msg; },

@@ -80,6 +80,7 @@ set(UNIT_TEST_SOURCES
         tests/unit/test_optimizer.cpp
         tests/unit/test_potential_reader.cpp
         tests/unit/test_rescale.cpp
+        tests/unit/test_species.cpp
         tests/unit/test_spline.cpp
         tests/unit/test_stiweb_force.cpp
         tests/unit/test_tersoff_force.cpp

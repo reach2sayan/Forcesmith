@@ -128,12 +128,12 @@ make_training_set(double a0, int n_disp, double disp_sigma,
 
     for (auto& cfg : cfgs) {
         eam_true.eval_forces(cfg);
-        cfg.energy = cfg.calc_energy + en(rng_noise);
+        cfg.ref.energy = cfg.calc_energy + en(rng_noise);
         for (auto& at : cfg.atoms) {
-            at.force    = at.calc_force;
-            at.force[0] += fn(rng_noise);
-            at.force[1] += fn(rng_noise);
-            at.force[2] += fn(rng_noise);
+            at.ref.force    = at.calc_force;
+            at.ref.force[0] += fn(rng_noise);
+            at.ref.force[1] += fn(rng_noise);
+            at.ref.force[2] += fn(rng_noise);
         }
     }
     return cfgs;

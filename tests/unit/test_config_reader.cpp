@@ -19,9 +19,9 @@ static ParseResult run(std::string_view input) {
     ParseResult out;
     leaf::try_handle_all(
         [&]() -> leaf::result<void> {
-            BOOST_LEAF_AUTO(cfgs, parse_config(input));
+            BOOST_LEAF_AUTO(parsed, parse_config(input));
             out.ok      = true;
-            out.configs = std::move(cfgs);
+            out.configs = std::move(parsed.configs);
             return {};
         },
         [&](const ParseError& e) {
@@ -55,13 +55,13 @@ TEST(ConfigReader, SingleAtomNoForces) {
     ASSERT_EQ(r.configs.size(), 1u);
     const auto& cfg = r.configs[0];
     EXPECT_EQ(cfg.atoms.size(), 1u);
-    EXPECT_DOUBLE_EQ(cfg.energy, -1.5);
+    EXPECT_DOUBLE_EQ(cfg.ref.energy, -1.5);
     EXPECT_DOUBLE_EQ(cfg.weight, 2.0);
     EXPECT_EQ(cfg.atoms[0].type, 0);
     EXPECT_DOUBLE_EQ(cfg.atoms[0].pos.x(), 1.0);
     EXPECT_DOUBLE_EQ(cfg.atoms[0].pos.y(), 2.0);
     EXPECT_DOUBLE_EQ(cfg.atoms[0].pos.z(), 3.0);
-    EXPECT_DOUBLE_EQ(cfg.atoms[0].force.norm(), 0.0);
+    EXPECT_DOUBLE_EQ(cfg.atoms[0].ref.force.norm(), 0.0);
 }
 
 TEST(ConfigReader, TwoAtomsWithForces) {
@@ -81,15 +81,16 @@ TEST(ConfigReader, TwoAtomsWithForces) {
     ASSERT_EQ(r.configs.size(), 1u);
     const auto& cfg = r.configs[0];
     EXPECT_EQ(cfg.atoms.size(), 2u);
-    EXPECT_DOUBLE_EQ(cfg.energy, -3.14);
-    // atom 0
-    EXPECT_EQ(cfg.atoms[0].type, 0);
-    EXPECT_NEAR(cfg.atoms[0].force.x(),  0.1, 1e-12);
-    EXPECT_NEAR(cfg.atoms[0].force.z(),  0.3, 1e-12);
-    // atom 1
-    EXPECT_EQ(cfg.atoms[1].type, 1);
+    EXPECT_DOUBLE_EQ(cfg.ref.energy, -3.14);
+    // Slots are Z-sorted: Fe(26) → 0, Cu(29) → 1.
+    // atom 0 is Cu → slot 1
+    EXPECT_EQ(cfg.atoms[0].type, 1);
+    EXPECT_NEAR(cfg.atoms[0].ref.force.x(),  0.1, 1e-12);
+    EXPECT_NEAR(cfg.atoms[0].ref.force.z(),  0.3, 1e-12);
+    // atom 1 is Fe → slot 0
+    EXPECT_EQ(cfg.atoms[1].type, 0);
     EXPECT_DOUBLE_EQ(cfg.atoms[1].pos.x(), 2.5);
-    EXPECT_NEAR(cfg.atoms[1].force.x(), -0.1, 1e-12);
+    EXPECT_NEAR(cfg.atoms[1].ref.force.x(), -0.1, 1e-12);
 }
 
 TEST(ConfigReader, BoxVectorsStored) {
@@ -129,7 +130,7 @@ TEST(ConfigReader, StressTensorStored) {
       }
     ])");
     ASSERT_TRUE(r.ok) << r.error.message;
-    const auto& s = r.configs[0].stress;
+    const auto& s = r.configs[0].ref.stress;
     EXPECT_DOUBLE_EQ(s(0,0), 1.1);
     EXPECT_DOUBLE_EQ(s(1,1), 2.2);
     EXPECT_DOUBLE_EQ(s(2,2), 3.3);
@@ -158,14 +159,15 @@ TEST(ConfigReader, MultipleConfigurations) {
     ASSERT_TRUE(r.ok) << r.error.message;
     ASSERT_EQ(r.configs.size(), 2u);
     EXPECT_EQ(r.configs[0].atoms.size(), 1u);
-    EXPECT_DOUBLE_EQ(r.configs[0].energy, -1.0);
+    EXPECT_DOUBLE_EQ(r.configs[0].ref.energy, -1.0);
     EXPECT_EQ(r.configs[1].atoms.size(), 2u);
-    EXPECT_DOUBLE_EQ(r.configs[1].energy, -2.0);
+    EXPECT_DOUBLE_EQ(r.configs[1].ref.energy, -2.0);
 }
 
 TEST(ConfigReader, ElementTypeMapping) {
     // Cu appears in both configs; Fe appears only in cfg[1].
-    // Type indices must be consistent: Cu=0, Fe=1.
+    // Slots are Z-sorted across the whole dataset and consistent everywhere:
+    // Fe(26)=0, Cu(29)=1 — independent of which config a symbol first appears in.
     auto r = run(R"([
       {
         "X": [4.0, 0.0, 0.0], "Y": [0.0, 4.0, 0.0], "Z": [0.0, 0.0, 4.0],
@@ -182,9 +184,9 @@ TEST(ConfigReader, ElementTypeMapping) {
       }
     ])");
     ASSERT_TRUE(r.ok) << r.error.message;
-    EXPECT_EQ(r.configs[0].atoms[0].type, 0);   // Cu → 0
-    EXPECT_EQ(r.configs[1].atoms[0].type, 1);   // Fe → 1
-    EXPECT_EQ(r.configs[1].atoms[1].type, 0);   // Cu → 0 (same as first config)
+    EXPECT_EQ(r.configs[0].atoms[0].type, 1);   // Cu → 1
+    EXPECT_EQ(r.configs[1].atoms[0].type, 0);   // Fe → 0
+    EXPECT_EQ(r.configs[1].atoms[1].type, 1);   // Cu → 1 (same as first config)
 }
 
 TEST(ConfigReader, DefaultWeightIsOne) {
@@ -209,7 +211,7 @@ TEST(ConfigReader, MinifiedJsonParsed) {
     auto r = run(R"([{"X":[4,0,0],"Y":[0,4,0],"Z":[0,0,4],"E":-1.0,"atoms":[{"element":"Cu","position":[0,0,0]}]}])");
     ASSERT_TRUE(r.ok) << r.error.message;
     ASSERT_EQ(r.configs.size(), 1u);
-    EXPECT_DOUBLE_EQ(r.configs[0].energy, -1.0);
+    EXPECT_DOUBLE_EQ(r.configs[0].ref.energy, -1.0);
 }
 
 // ── Error-path tests ──────────────────────────────────────────────────────────

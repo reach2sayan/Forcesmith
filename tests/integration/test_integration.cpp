@@ -354,7 +354,7 @@ TEST(Integration, OptimizerLJ_ConvergesFromWrongParams) {
     double eps_final = 0.0, sig_final = 0.0;
     leaf::try_handle_all(
         [&]() -> leaf::result<void> {
-            BOOST_LEAF_AUTO(configs, parse_config(cfg_json));
+            BOOST_LEAF_AUTO(parsed, parse_config(cfg_json));
             BOOST_LEAF_AUTO(pots, parse_potential(pot_json));
             ForceCalculator model = make_pair_force_calculator(std::move(pots));
 
@@ -362,7 +362,7 @@ TEST(Integration, OptimizerLJ_ConvergesFromWrongParams) {
             opts.max_iter = 500;
             opts.energy_weight = 1.0;
 
-            run_optimizer(configs, model, opts);
+            run_optimizer(parsed.configs, model, opts);
 
             const auto& pair_calc = std::get<PairForceCalculator>(model);
             Eigen::VectorXd x(pair_calc.pair[std::size_t{0}, std::size_t{0}].param_count());
@@ -535,8 +535,10 @@ TEST(Integration, OptimizerEAM_ConvergesFromWrongParams) {
             };
             for (auto &cfg : configs) {
                 eam_true.eval_forces(cfg);
-                for (auto &a : cfg.atoms) a.force = a.calc_force;
-                cfg.energy = cfg.calc_energy;
+                for (auto &a : cfg.atoms) {
+                  a.ref.force = a.calc_force;
+                }
+                cfg.ref.energy = cfg.calc_energy;
             }
 
             // Reference at r=2.5 for comparison
@@ -605,8 +607,8 @@ TEST(Integration, OptimizerTersoff_ConvergesFromWrongParams) {
     };
     for (auto &cfg : configs) {
         tc_true.eval_forces(cfg);
-        for (auto &a : cfg.atoms) a.force = a.calc_force;
-        cfg.energy = cfg.calc_energy;
+        for (auto &a : cfg.atoms) a.ref.force = a.calc_force;
+        cfg.ref.energy = cfg.calc_energy;
     }
 
     // Perturbed: A=2100, B=580; all other 9 params fixed

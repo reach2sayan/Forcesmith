@@ -71,24 +71,24 @@ void eval_into(std::span<Configuration> configs, ForceCalculator &model,
 
         int row = row_offset[c];
         for (const auto &atom : cfg.atoms) {
-          fvec[row++] = atom.calc_force[0] - atom.force[0];
-          fvec[row++] = atom.calc_force[1] - atom.force[1];
-          fvec[row++] = atom.calc_force[2] - atom.force[2];
+          fvec[row++] = atom.calc_force[0] - atom.ref.force[0];
+          fvec[row++] = atom.calc_force[1] - atom.ref.force[1];
+          fvec[row++] = atom.calc_force[2] - atom.ref.force[2];
         }
-        fvec[row++] = energy_weight * (cfg.calc_energy - cfg.energy);
+        fvec[row++] = energy_weight * (cfg.calc_energy - cfg.ref.energy);
         if (stress_weight > 0.0) {
           fvec[row++] =
-              stress_weight * (cfg.calc_stress(0, 0) - cfg.stress(0, 0));
+              stress_weight * (cfg.calc_stress(0, 0) - cfg.ref.stress(0, 0));
           fvec[row++] =
-              stress_weight * (cfg.calc_stress(1, 1) - cfg.stress(1, 1));
+              stress_weight * (cfg.calc_stress(1, 1) - cfg.ref.stress(1, 1));
           fvec[row++] =
-              stress_weight * (cfg.calc_stress(2, 2) - cfg.stress(2, 2));
+              stress_weight * (cfg.calc_stress(2, 2) - cfg.ref.stress(2, 2));
           fvec[row++] =
-              stress_weight * (cfg.calc_stress(0, 1) - cfg.stress(0, 1));
+              stress_weight * (cfg.calc_stress(0, 1) - cfg.ref.stress(0, 1));
           fvec[row++] =
-              stress_weight * (cfg.calc_stress(0, 2) - cfg.stress(0, 2));
+              stress_weight * (cfg.calc_stress(0, 2) - cfg.ref.stress(0, 2));
           fvec[row++] =
-              stress_weight * (cfg.calc_stress(1, 2) - cfg.stress(1, 2));
+              stress_weight * (cfg.calc_stress(1, 2) - cfg.ref.stress(1, 2));
         }
         // EAM/ADP out-of-range ρ punishment (already weighted; squared by the
         // LM objective → matches potfit's dsquare(limit_p)). Zero for models

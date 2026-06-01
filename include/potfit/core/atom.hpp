@@ -2,6 +2,7 @@
 
 #include "potfit/core/boundary_conditions.hpp"
 #include "potfit/core/serialization.hpp"
+#include "potfit/core/species.hpp"
 #include "potfit/core/types.hpp"
 
 #include <boost/serialization/vector.hpp>
@@ -22,10 +23,14 @@ struct NeighborEntry : Serializable<NeighborEntry> {
 };
 
 struct Atom : Serializable<Atom> {
-  std::size_t type = 0;
+  Species type{}; // element identity + compact slot (implicitly indexes tables)
   std::size_t conf = 0;
   Vec3 pos = Vec3::Zero();
-  Vec3 force = Vec3::Zero();      // reference (target) force
+
+  struct Reference {
+    Vec3 force = Vec3::Zero(); // target force from input data
+  } ref;
+
   Vec3 calc_force = Vec3::Zero(); // written by ForceCalculator
   std::vector<NeighborEntry> neighbors;
 
@@ -48,9 +53,13 @@ struct Atom : Serializable<Atom> {
 struct Configuration : Serializable<Configuration> {
   std::vector<Atom> atoms;
   BoundaryConditions bc = PeriodicBC(Mat3::Identity());
-  double energy = 0.0;
-  double weight = 1.0;
-  SymTens stress = SymTens::Zero();
+
+  struct Reference {
+    double energy = 0.0;
+    SymTens stress = SymTens::Zero();
+  } ref;
+
+  double weight = 1.0; // fitting weight (not a target — stays flat)
   double calc_energy = 0.0;
   SymTens calc_stress = SymTens::Zero();
   double calc_limit =
@@ -80,9 +89,21 @@ template <> struct Serializer<NeighborEntry> {
 template <> struct Serializer<Atom> {
   template <class Archive>
   static void apply(Archive &ar, Atom &a, unsigned int) {
-    ar & a.type & a.conf;
+    // Species::symbol is a string_view into static storage — persist Z + slot
+    // and re-derive symbol/mass from the catalog on load.
+    std::size_t Z = a.type.Z;
+    std::size_t idx = a.type.index;
+    ar & Z & idx & a.conf;
+    if constexpr (Archive::is_loading::value) {
+      if (auto s = Species::find_by_Z(Z)) {
+        s->index = idx;
+        a.type = *s;
+      } else {
+        a.type = Species{idx}; // synthetic atom (no element) round-trips by slot
+      }
+    }
     ar & a.pos(0) & a.pos(1) & a.pos(2);
-    ar & a.force(0) & a.force(1) & a.force(2);
+    ar & a.ref.force(0) & a.ref.force(1) & a.ref.force(2);
     ar & a.neighbors;
   }
 };
@@ -90,7 +111,7 @@ template <> struct Serializer<Atom> {
 template <> struct Serializer<Configuration> {
   template <class Archive>
   static void apply(Archive &ar, Configuration &c, unsigned int) {
-    ar & c.atoms & c.energy & c.weight;
+    ar & c.atoms & c.ref.energy & c.weight;
     Mat3 box = std::holds_alternative<PeriodicBC>(c.bc)
                    ? std::get<PeriodicBC>(c.bc).box()
                    : Mat3::Identity();
@@ -99,7 +120,7 @@ template <> struct Serializer<Configuration> {
     }
     c.bc = PeriodicBC(box); // no-op on save; restores correctly on load
     for (auto [i, j] : tensor3D_indices) {
-      ar & c.stress(i, j);
+      ar & c.ref.stress(i, j);
     }
   }
 };

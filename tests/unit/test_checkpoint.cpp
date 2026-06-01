@@ -18,13 +18,13 @@ using namespace potfit;
 static Configuration make_test_config() {
     Configuration cfg;
     cfg.bc     = PeriodicBC(5.0 * Mat3::Identity());
-    cfg.energy = -1.23;
+    cfg.ref.energy = -1.23;
     cfg.weight = 2.0;
-    cfg.stress(0, 0) = 0.1;
+    cfg.ref.stress(0, 0) = 0.1;
     Atom a;
     a.type  = 0;
     a.pos   = Vec3(1.0, 2.0, 3.0);
-    a.force = Vec3(0.1, -0.2, 0.3);
+    a.ref.force = Vec3(0.1, -0.2, 0.3);
     cfg.atoms.push_back(a);
     return cfg;
 }
@@ -81,11 +81,11 @@ TEST(Checkpoint, SplinePotentialRoundTrip) {
 
     // Configuration fields preserved.
     ASSERT_EQ(cfgs2.size(), 1u);
-    EXPECT_NEAR(cfgs2[0].energy, -1.23, 1e-12);
+    EXPECT_NEAR(cfgs2[0].ref.energy, -1.23, 1e-12);
     EXPECT_NEAR(cfgs2[0].weight, 2.0,   1e-12);
     ASSERT_EQ(cfgs2[0].atoms.size(), 1u);
     EXPECT_NEAR(cfgs2[0].atoms[0].pos.x(), 1.0,  1e-12);
-    EXPECT_NEAR(cfgs2[0].atoms[0].force.z(), 0.3, 1e-12);
+    EXPECT_NEAR(cfgs2[0].atoms[0].ref.force.z(), 0.3, 1e-12);
 
     // Potential values reproduced within grid sampling tolerance.
     ASSERT_EQ(pots2.size(), 1u);
@@ -120,7 +120,7 @@ TEST(Checkpoint, BoxMatrixPreserved) {
            0.0, 0.0, 5.0;
     Configuration cfg;
     cfg.bc = PeriodicBC(box);
-    cfg.energy = 0.0;
+    cfg.ref.energy = 0.0;
     Atom a; a.type = 0; a.pos = Vec3::Zero();
     cfg.atoms.push_back(a);
 
@@ -144,7 +144,7 @@ TEST(Checkpoint, MultipleConfigurations) {
     std::vector<Configuration> configs_in;
     for (int i : std::views::iota(0, 3)) {
         auto cfg = make_test_config();
-        cfg.energy = static_cast<double>(i) * -0.5;
+        cfg.ref.energy = static_cast<double>(i) * -0.5;
         cfg.weight = static_cast<double>(i + 1);
         configs_in.push_back(cfg);
     }
@@ -157,7 +157,7 @@ TEST(Checkpoint, MultipleConfigurations) {
 
     ASSERT_EQ(cfgs2.size(), 3u);
     for (auto [i, cfg] : std::views::enumerate(cfgs2)) {
-        EXPECT_NEAR(cfg.energy, static_cast<double>(i) * -0.5, 1e-12);
+        EXPECT_NEAR(cfg.ref.energy, static_cast<double>(i) * -0.5, 1e-12);
         EXPECT_NEAR(cfg.weight, static_cast<double>(i + 1),    1e-12);
     }
 }

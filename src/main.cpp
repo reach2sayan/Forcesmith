@@ -116,7 +116,8 @@ int main(int argc, char *argv[]) {
           auto r_cfg = potfit::io::parse_config(conf_text);
           if (!r_cfg)
             return r_cfg.error();
-          configs_vec = std::move(*r_cfg);
+          configs_vec = std::move(r_cfg->configs);
+          const potfit::SpeciesRegistry registry = std::move(r_cfg->registry);
 
           // ── Parse startpot ───────────────────────────────────────────
           const std::string pot_text =
@@ -125,6 +126,19 @@ int main(int argc, char *argv[]) {
           if (!r_pot)
             return r_pot.error();
           model = std::move(*r_pot);
+
+          // The Z-sorted registry defines the type-slot layout; the potential
+          // tables must declare exactly that many element types, or slots and
+          // configurations are misaligned.
+          const std::size_t model_ntypes =
+              std::visit([](const auto &m) { return m.ntypes; }, model);
+          const std::size_t cfg_ntypes = potfit::ntypes(registry);
+          if (model_ntypes != cfg_ntypes)
+            return leaf::new_error(potfit::io::ParseError{
+                "potential ntypes (" + std::to_string(model_ntypes) +
+                    ") does not match the " + std::to_string(cfg_ntypes) +
+                    " element type(s) present in the configurations",
+                0});
         }
 
         if (configs_vec.empty()) {
@@ -198,17 +212,17 @@ int main(int argc, char *argv[]) {
             out << "    {\n      \"index\": " << i
                 << ",\n      \"natoms\": " << cfg.atoms.size()
                 << ",\n      \"calc_energy\": " << r.energy
-                << ",\n      \"ref_energy\": " << cfg.energy
+                << ",\n      \"ref_energy\": " << cfg.ref.energy
                 << ",\n      \"calc_stress\": [";
             stress6(r.stress, out);
             out << "],\n"
                 << "      \"ref_stress\": [";
-            stress6(cfg.stress, out);
+            stress6(cfg.ref.stress, out);
             out << "],\n"
                 << "      \"atoms\": [\n";
             for (std::size_t a = 0; a < cfg.atoms.size(); ++a) {
               const auto &cf = r.forces[a];
-              const auto &rf = cfg.atoms[a].force;
+              const auto &rf = cfg.atoms[a].ref.force;
               for (int k = 0; k < 3; ++k) {
                 const double d = cf[k] - rf[k];
                 csq += d * d;
@@ -218,10 +232,10 @@ int main(int argc, char *argv[]) {
                   << rf[1] << ", " << rf[2] << "]}"
                   << (a + 1 < cfg.atoms.size() ? "," : "") << "\n";
             }
-            const double de = ew * (r.energy - cfg.energy);
+            const double de = ew * (r.energy - cfg.ref.energy);
             csq += de * de;
             if (sw > 0.0) {
-              const potfit::SymTens ds = r.stress - cfg.stress;
+              const potfit::SymTens ds = r.stress - cfg.ref.stress;
               const double comps[6] = {ds(0, 0), ds(1, 1), ds(2, 2),
                                        ds(0, 1), ds(1, 2), ds(0, 2)};
               for (double c : comps)
