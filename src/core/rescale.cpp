@@ -203,7 +203,7 @@ double rescale_rho_axis(EAMForceCalculator &calc,
 }
 
 void embed_shift(EAMForceCalculator &calc, std::span<const double> rho_ref) {
-  const int n = calc.ntypes;
+  const std::size_t n = calc.ntypes;
 
   // slope_t = F_t′(rho_ref_t)
   std::vector<double> slope(n, 0.0);
@@ -224,19 +224,17 @@ void embed_shift(EAMForceCalculator &calc, std::span<const double> rho_ref) {
 
   // Compensate pairs: φ_{αβ}(r) → φ_{αβ}(r) + slope_α × g_β(r) + slope_β ×
   // g_α(r)
-  for (int ti = 0; ti < n; ++ti) {
-    for (int tj = ti; tj < n; ++tj) {
-      const double ca = slope[ti];
-      const double cb = slope[tj];
-      if (std::abs(ca) < 1e-14 && std::abs(cb) < 1e-14) {
-        continue;
-      }
-      calc.pair[ti, tj] = Potential(CompensatedPairPotential{
-          std::move(calc.pair[ti, tj]),
-          calc.density[ti], // g_alpha: density contributed by type ti
-          calc.density[tj], // g_beta:  density contributed by type tj
-          ca, cb});
+  for (auto [ti, tj] : calc.pair.indices()) {
+    const double ca = slope[ti];
+    const double cb = slope[tj];
+    if (std::abs(ca) < 1e-14 && std::abs(cb) < 1e-14) {
+      continue;
     }
+    calc.pair[ti, tj] = Potential(CompensatedPairPotential{
+        std::move(calc.pair[ti, tj]),
+        calc.density[ti], // g_alpha: density contributed by type ti
+        calc.density[tj], // g_beta:  density contributed by type tj
+        ca, cb});
   }
 }
 

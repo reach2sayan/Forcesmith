@@ -298,14 +298,12 @@ leaf::result<void> FitSession::materialize_from_spec() {
 
   auto build_pair = [&](PotentialPair &mat) -> leaf::result<void> {
     mat.reserve(n);
-    for (std::size_t ti = 0; ti < n; ++ti) {
-      for (std::size_t tj = ti; tj < n; ++tj) {
-        const PairKey key = norm_key(species_at(registry_, ti).symbol,
-                                     species_at(registry_, tj).symbol);
-        BOOST_LEAF_AUTO(p, require(pair_, key, "pair potential for " +
-                                                   key.first + "-" + key.second));
-        mat.emplace_back(std::move(p));
-      }
+    for (auto [ti, tj] : mat.indices()) {
+      const PairKey key = norm_key(species_at(registry_, ti).symbol,
+                                   species_at(registry_, tj).symbol);
+      BOOST_LEAF_AUTO(p, require(pair_, key, "pair potential for " + key.first +
+                                                 "-" + key.second));
+      mat.emplace_back(std::move(p));
     }
     return {};
   };
@@ -369,13 +367,10 @@ FitSession::decompose_seeded_into_spec(const SpeciesRegistry &reg) {
                        "after a re-rank is not supported; set potentials "
                        "programmatically");
           }
-          const std::size_t n = c.ntypes;
-          for (std::size_t ti = 0; ti < n; ++ti) {
-            for (std::size_t tj = ti; tj < n; ++tj) {
-              const PairKey key = norm_key(species_at(reg, ti).symbol,
-                                           species_at(reg, tj).symbol);
-              pair_.insert_or_assign(key, c.pair[ti, tj]);
-            }
+          for (auto [ti, tj] : c.pair.indices()) {
+            const PairKey key = norm_key(species_at(reg, ti).symbol,
+                                         species_at(reg, tj).symbol);
+            pair_.insert_or_assign(key, c.pair[ti, tj]);
           }
           if constexpr (std::is_same_v<T, EAMForceCalculator>) {
             for (const auto &[t, dens_emb] :

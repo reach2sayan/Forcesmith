@@ -4,10 +4,25 @@
 
 #include <boost/stl_interfaces/iterator_interface.hpp>
 
+#include <concepts>
 #include <cstddef>
+#include <ranges>
+#include <utility>
 #include <vector>
 
 namespace potfit {
+
+// (ti, tj) pairs with 0 <= ti <= tj < n, row-major — the unique entries of an
+// n×n symmetric type×type table. Lazy; structured-binding friendly, replacing
+// the nested `for (ti) for (tj = ti)` idiom:
+//   for (auto [ti, tj] : upper_triangle(n)) ...
+template <std::integral I> constexpr auto upper_triangle(I n) {
+  return std::views::iota(I{0}, n) | std::views::transform([n](I ti) {
+           return std::views::iota(ti, n) |
+                  std::views::transform([ti](I tj) { return std::pair{ti, tj}; });
+         }) |
+         std::views::join;
+}
 
 // Random-access iterator over the contiguous storage of TypeArray<T>.
 // boost::stl_interfaces::iterator_interface derives all iterator operations
@@ -40,6 +55,17 @@ template <typename T> class SymmetricMatrix {
     }
     return a * ntypes_ - a * (a - 1) / 2 + (b - a);
   }
+  // Keep ntypes_ consistent with the stored count: data_ holds n(n+1)/2 entries
+  // for an n×n symmetric matrix, so n is recoverable. Called on every append so
+  // ntypes()/indices() are correct even when the matrix is filled without a
+  // preceding reserve().
+  constexpr void sync_ntypes() noexcept {
+    std::size_t n = 0;
+    while (n * (n + 1) / 2 < data_.size()) {
+      ++n;
+    }
+    ntypes_ = n;
+  }
 
 public:
   // Reserve capacity for ntypes element types. Populate with emplace_back
@@ -50,11 +76,18 @@ public:
   }
   template <typename U> constexpr void emplace_back(U &&u) {
     data_.emplace_back(std::forward<U>(u));
+    sync_ntypes();
   }
   // value_type / push_back let SymmetricMatrix satisfy back_inserter's needs.
   using value_type = T;
-  constexpr void push_back(const T &t) { data_.push_back(t); }
-  constexpr void push_back(T &&t) { data_.push_back(std::move(t)); }
+  constexpr void push_back(const T &t) {
+    data_.push_back(t);
+    sync_ntypes();
+  }
+  constexpr void push_back(T &&t) {
+    data_.push_back(std::move(t));
+    sync_ntypes();
+  }
   constexpr const T &operator[](std::size_t ti, std::size_t tj) const {
     return data_[slot(ti, tj)];
   }
@@ -63,6 +96,10 @@ public:
   }
   constexpr std::size_t ntypes() const noexcept { return ntypes_; }
   constexpr std::size_t size() const noexcept { return data_.size(); }
+
+  // The (ti, tj) index domain of this matrix, for
+  //   for (auto [ti, tj] : mat.indices()) use(mat[ti, tj]);
+  constexpr auto indices() const { return upper_triangle(ntypes_); }
 
   auto begin() { return data_.begin(); }
   auto end() { return data_.end(); }
