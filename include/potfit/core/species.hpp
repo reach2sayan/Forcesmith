@@ -27,7 +27,8 @@ namespace potfit {
 // slot lets synthetic atoms keep saying `a.type = 0` (symbol empty, identity
 // unset — only the slot matters, which is all the kernels read).
 struct Species {
-  std::string_view symbol; // "" for a raw/synthetic slot; else into static catalog
+  std::string_view
+      symbol; // "" for a raw/synthetic slot; else into static catalog
   std::size_t Z = 0;
   double mass_amu = 0.0;
   std::size_t index = 0; // compact 0..ntypes-1 slot for dense-table indexing
@@ -45,8 +46,10 @@ struct Species {
   // unassigned); SpeciesRegistry stamps the real slot.
   [[nodiscard]] static boost::optional<Species>
   find_by_symbol(std::string_view symbol) noexcept;
-  [[nodiscard]] static boost::optional<Species> find_by_Z(std::size_t Z) noexcept;
-  [[nodiscard]] static boost::leaf::result<Species> lookup(std::string_view sym);
+  [[nodiscard]] static boost::optional<Species>
+  find_by_Z(std::size_t Z) noexcept;
+  [[nodiscard]] static boost::leaf::result<Species>
+  lookup(std::string_view sym);
 };
 
 namespace detail {
@@ -145,14 +148,15 @@ inline boost::leaf::result<Species> Species::lookup(std::string_view sym) {
     return *s;
   }
   return boost::leaf::new_error(std::string("unknown element symbol: ") +
-                               std::string(sym));
+                                std::string(sym));
 }
 
-// ── SpeciesRegistry ───────────────────────────────────────────────────────────
-// The model's element↔slot table: a Boost.MultiIndex container of Species with
-// Z-sorted slots (so the by_Z index *is* the slot order), queried through free
-// functions — mirroring the config_index.hpp pattern. This is the single source
-// of truth tying configurations and potential tables to the same element layout.
+// ── SpeciesRegistry
+// ─────────────────────────────────────────────────────────── The model's
+// element↔slot table: a Boost.MultiIndex container of Species with Z-sorted
+// slots (so the by_Z index *is* the slot order), queried through free functions
+// — mirroring the config_index.hpp pattern. This is the single source of truth
+// tying configurations and potential tables to the same element layout.
 namespace species_detail {
 struct by_index {};
 struct by_symbol {};
@@ -164,18 +168,17 @@ namespace bmi = boost::multi_index;
 using SpeciesRegistry = bmi::multi_index_container<
     Species,
     bmi::indexed_by<
-        bmi::ordered_unique<
-            bmi::tag<species_detail::by_index>,
-            bmi::member<Species, std::size_t, &Species::index>>,
+        bmi::ordered_unique<bmi::tag<species_detail::by_index>,
+                            bmi::member<Species, std::size_t, &Species::index>>,
         bmi::ordered_unique<bmi::tag<species_detail::by_Z>,
                             bmi::member<Species, std::size_t, &Species::Z>>,
         bmi::hashed_unique<
             bmi::tag<species_detail::by_symbol>,
             bmi::member<Species, std::string_view, &Species::symbol>>>>;
 
-// Build from a set of element symbols: look each up in the catalog, de-duplicate,
-// sort by atomic number Z, and assign index = rank. Returns an error (via leaf)
-// on the first unknown symbol.
+// Build from a set of element symbols: look each up in the catalog,
+// de-duplicate, sort by atomic number Z, and assign index = rank. Returns an
+// error (via leaf) on the first unknown symbol.
 [[nodiscard]] inline boost::leaf::result<SpeciesRegistry>
 build_species_registry(std::span<const std::string_view> symbols) {
   std::vector<Species> elems;
@@ -206,8 +209,8 @@ species_of(const SpeciesRegistry &r, std::string_view symbol) {
   const auto &idx = r.get<species_detail::by_symbol>();
   const auto it = idx.find(symbol);
   if (it == idx.end()) {
-    return boost::leaf::new_error(
-        std::string("species not registered: ") + std::string(symbol));
+    return boost::leaf::new_error(std::string("species not registered: ") +
+                                  std::string(symbol));
   }
   return *it;
 }
