@@ -17,7 +17,6 @@ struct DEOptions {
   double crossover_probability = 0.5;
   std::size_t NP_factor = 15;
   std::size_t max_generations = 1000;
-  unsigned threads = 0;             // 0 → hardware_concurrency
   std::vector<double> lower_bounds; // empty → auto from current x
   std::vector<double> upper_bounds;
 };

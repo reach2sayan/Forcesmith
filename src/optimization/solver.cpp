@@ -8,7 +8,6 @@
 #include <optional>
 #include <random>
 #include <ranges>
-#include <thread>
 #include <vector>
 
 namespace potfit {
@@ -132,7 +131,13 @@ int BoostDESolver::minimize(Eigen::VectorXd &x, ResidualFn f,
   params.crossover_probability = crossover_probability;
   params.NP = NP_factor * static_cast<std::size_t>(D);
   params.max_generations = max_generations;
-  params.threads = threads > 0 ? threads : std::thread::hardware_concurrency();
+  // Population-level threading MUST stay serial: the cost below calls the shared
+  // residual `f`, whose PotfitFunctor scatters params into one shared model and
+  // writes forces into the shared configs on every call. Letting Boost evaluate
+  // population members concurrently races those mutations and corrupts the heap
+  // (double free). Parallelism is preserved one level down — each `f(ev)` fans
+  // out over configurations via the functor's internal TBB arena.
+  params.threads = 1;
 
   std::vector<double> ig(x.data(), x.data() + D);
   params.initial_guess = &ig;

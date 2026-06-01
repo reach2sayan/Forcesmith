@@ -89,8 +89,9 @@ struct BoostDESolver {
   double crossover_probability = 0.5;
   std::size_t NP_factor = 15; // NP = NP_factor × D
   std::size_t max_generations = 1000;
-  unsigned threads = 0; // 0 → hardware_concurrency
-  unsigned seed = 0;    // 0 → std::random_device
+  // Population evaluation is intentionally serial — see BoostDESolver::minimize.
+  // Parallelism comes one level down, from the functor's per-config TBB loop.
+  unsigned seed = 42;
   int minimize(Eigen::VectorXd &x, ResidualFn f, JacobianFn jac,
                int n_vals) const;
 };

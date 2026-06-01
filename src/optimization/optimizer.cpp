@@ -48,7 +48,6 @@ Solver make_solver(const OptimizerOptions &opts) {
     s.crossover_probability = opts.de.crossover_probability;
     s.NP_factor = opts.de.NP_factor;
     s.max_generations = opts.de.max_generations;
-    s.threads = opts.de.threads;
     s.seed = opts.seed;
     s.lower_bounds = opts.de.lower_bounds;
     s.upper_bounds = opts.de.upper_bounds;
