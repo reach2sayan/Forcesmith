@@ -29,7 +29,6 @@ struct NeighborEntry : Serializable<NeighborEntry> {
 
 struct Atom : Serializable<Atom> {
   Species type{}; // element identity + compact slot (implicitly indexes tables)
-  std::size_t conf = 0;
   Vec3 pos = Vec3::Zero();
 
   struct Reference {
@@ -117,7 +116,7 @@ template <> struct Serializer<Atom> {
     // and re-derive symbol/mass from the catalog on load.
     std::size_t Z = a.type.Z;
     std::size_t idx = a.type.index;
-    ar & Z & idx & a.conf;
+    ar & Z & idx;
     if constexpr (Archive::is_loading::value) {
       if (auto s = Species::find_by_Z(Z)) {
         s->index = idx;

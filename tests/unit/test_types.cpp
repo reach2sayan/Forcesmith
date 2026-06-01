@@ -20,7 +20,6 @@ TEST(Types, SymTensZero) {
 TEST(Atom, DefaultConstruction) {
     Atom a;
     EXPECT_EQ(a.type, 0);
-    EXPECT_EQ(a.conf, 0);
     EXPECT_DOUBLE_EQ(a.pos.norm(), 0.0);
     EXPECT_DOUBLE_EQ(a.ref.force.norm(), 0.0);
     EXPECT_TRUE(a.neighbors.empty());
