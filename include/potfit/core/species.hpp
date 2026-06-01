@@ -1,5 +1,6 @@
 #pragma once
 
+#include <algorithm>
 #include <boost/leaf/error.hpp>
 #include <boost/leaf/result.hpp>
 #include <boost/multi_index/hashed_index.hpp>
@@ -7,9 +8,8 @@
 #include <boost/multi_index/ordered_index.hpp>
 #include <boost/multi_index_container.hpp>
 #include <boost/optional.hpp>
-
-#include <algorithm>
 #include <cstddef>
+#include <ranges>
 #include <span>
 #include <string>
 #include <string_view>
@@ -180,19 +180,20 @@ using SpeciesRegistry = bmi::multi_index_container<
 build_species_registry(std::span<const std::string_view> symbols) {
   std::vector<Species> elems;
   elems.reserve(symbols.size());
-  for (const std::string_view sym : symbols) {
+
+  for (std::string_view sym : symbols) {
     BOOST_LEAF_AUTO(s, Species::lookup(sym));
     elems.push_back(s);
   }
   std::ranges::sort(elems, {}, &Species::Z);
-  const auto dup = std::ranges::unique(elems, {}, &Species::Z);
-  elems.erase(dup.begin(), dup.end());
+  elems.erase(std::ranges::unique(elems, {}, &Species::Z).begin(), elems.end());
 
   SpeciesRegistry reg;
-  for (std::size_t i = 0; i < elems.size(); ++i) {
-    elems[i].index = i;
-    reg.insert(elems[i]);
+  for (auto &&[i, elem] : std::views::enumerate(elems)) {
+    elem.index = i;
+    reg.insert(elem);
   }
+
   return reg;
 }
 

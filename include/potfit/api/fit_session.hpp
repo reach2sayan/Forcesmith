@@ -116,9 +116,6 @@ public:
 private:
   boost::leaf::result<void> ensure_frozen();
   // Decompose a seeded (file-loaded) model into the editable symbol-keyed spec
-  // and drop the seed, so the spec can be mutated. No-op when not seeded.
-  // `action` names the operation in the error surfaced when the seed cannot be
-  // decomposed (its original element ordering is unknown).
   boost::leaf::result<void> detach_seeded(std::string_view action);
   boost::leaf::result<SpeciesRegistry> build_registry() const;
   boost::leaf::result<void> materialize_from_spec(); // pair / EAM
