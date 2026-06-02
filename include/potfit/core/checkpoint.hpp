@@ -1,7 +1,7 @@
 #pragma once
 
 #include "potfit/core/atom.hpp"
-#include "potfit/core/potential_base.hpp"
+#include "potfit/force/force_calculator.hpp"
 
 #include <boost/leaf/result.hpp>
 #include <filesystem>
@@ -18,12 +18,13 @@ struct CheckpointError {
 //
 //   CheckpointWriter("run42")
 //       .configs(cfg_vec)
-//       .potentials(pot_vec)
+//       .model(force_calculator)
 //       .write();
 //
 // Files written:
-// <prefix>.cfg.bin  — binary-archived vector<Configuration>
-// <prefix>.pot      — native format-3 tabulated potential file
+// <prefix>.cfg.bin    — binary-archived vector<Configuration>
+// <prefix>.model.json — native JSON force model (any family: pair, EAM, ADP,
+//                       angular, tersoff, stiweb), via io::write_model
 
 class CheckpointWriter {
 public:
@@ -35,8 +36,8 @@ public:
     return *this;
   }
 
-  CheckpointWriter &potentials(const std::vector<Potential> &p) {
-    pots_ = &p;
+  CheckpointWriter &model(const ForceCalculator &m) {
+    model_ = &m;
     return *this;
   }
 
@@ -45,11 +46,11 @@ public:
 private:
   std::filesystem::path prefix_;
   const std::vector<Configuration> *configs_ = nullptr;
-  const std::vector<Potential> *pots_ = nullptr;
+  const ForceCalculator *model_ = nullptr;
 };
 
 // Builder for loading a checkpoint.
-// CheckpointReader("run42").read(cfg_vec, pot_vec);
+// CheckpointReader("run42").read(cfg_vec, model);
 
 class CheckpointReader {
 public:
@@ -57,8 +58,7 @@ public:
       : prefix_(std::move(prefix)) {}
 
   [[nodiscard]] boost::leaf::result<void>
-  read(std::vector<Configuration> &configs,
-       std::vector<Potential> &potentials) const;
+  read(std::vector<Configuration> &configs, ForceCalculator &model) const;
 
 private:
   std::filesystem::path prefix_;

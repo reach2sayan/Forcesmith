@@ -484,6 +484,15 @@ leaf::result<SpeciesRegistry> PotFit::build_registry() const {
   });
   std::ranges::for_each(declared_, add);
 
+  // Elements present in the loaded configurations. A model seeded from a file
+  // (load_model) leaves the editable spec maps empty, so the config atoms are
+  // the only source of element symbols in that path.
+  for (const auto &cfg : configs_) {
+    for (const auto &a : cfg.atoms) {
+      add(a.type.symbol);
+    }
+  }
+
   return build_species_registry(syms);
 }
 

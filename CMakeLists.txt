@@ -75,9 +75,17 @@ target_link_libraries(potfit PRIVATE potfit_warnings)
 # ── CLI ─────────────────────────────────────────────────────────────────────
 # Target renamed to potfit_cli so the `potfit` name is free for the library; the
 # user-facing binary is still called `potfit` (libpotfit.so vs potfit — no clash).
-add_executable(potfit_cli src/main.cpp)
+# main.cpp is a thin entry point; the CLI logic lives in src/cli/ (private to the
+# executable, so headers resolve as "cli/<file>.hpp" via the src/ include path).
+add_executable(potfit_cli
+        src/main.cpp
+        src/cli/options.cpp
+        src/cli/evaluate_report.cpp
+        src/cli/app.cpp)
 set_target_properties(potfit_cli PROPERTIES OUTPUT_NAME potfit)
-target_include_directories(potfit_cli PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/include")
+target_include_directories(potfit_cli PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}/include"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src")
 target_link_libraries(potfit_cli PRIVATE potfit_warnings potfit Boost::program_options)
 
 enable_testing()

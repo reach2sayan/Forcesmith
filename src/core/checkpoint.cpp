@@ -1,6 +1,6 @@
 #include "potfit/core/checkpoint.hpp"
-#include "potfit/io/output_writer.hpp"
-#include "potfit/io/potential_reader.hpp"
+#include "potfit/io/force_model_reader.hpp"
+#include "potfit/io/write_model.hpp"
 
 #include <boost/archive/binary_iarchive.hpp>
 #include <boost/archive/binary_oarchive.hpp>
@@ -31,8 +31,8 @@ namespace {
 [[nodiscard]] std::filesystem::path cfg_path(const std::filesystem::path &p) {
   return std::filesystem::path(p.string() + ".cfg.bin");
 }
-[[nodiscard]] std::filesystem::path pot_path(const std::filesystem::path &p) {
-  return std::filesystem::path(p.string() + ".pot");
+[[nodiscard]] std::filesystem::path model_path(const std::filesystem::path &p) {
+  return std::filesystem::path(p.string() + ".model.json");
 }
 
 // Open a stream, mapping failure into the result channel.
@@ -58,14 +58,9 @@ save_configs(const std::filesystem::path &path,
 }
 
 [[nodiscard]] leaf::result<void>
-save_potentials(const std::filesystem::path &path,
-                const std::vector<Potential> &pots) {
-  try {
-    io::write_native(path, pots);
-  } catch (const std::exception &e) {
-    return err(e.what());
-  }
-  return {};
+save_model(const std::filesystem::path &path, const ForceCalculator &model) {
+  // Native JSON model output handles every force-calculator family.
+  return io::write_model(model, path, "native");
 }
 
 [[nodiscard]] leaf::result<void>
@@ -83,13 +78,12 @@ load_configs(const std::filesystem::path &path,
 }
 
 [[nodiscard]] leaf::result<void>
-load_potentials(const std::filesystem::path &path,
-                std::vector<Potential> &potentials) {
+load_model(const std::filesystem::path &path, ForceCalculator &model) {
   BOOST_LEAF_AUTO(f, open_file<std::ifstream>(path, std::ios::in, "reading"));
   std::string text{std::istreambuf_iterator<char>(f),
                    std::istreambuf_iterator<char>{}};
-  BOOST_LEAF_AUTO(pots, io::parse_potential(text));
-  potentials = std::move(pots);
+  BOOST_LEAF_AUTO(m, io::parse_force_model(text));
+  model = std::move(m);
   return {};
 }
 
@@ -99,20 +93,20 @@ leaf::result<void> CheckpointWriter::write() const {
   if (!configs_) {
     return err("write() called without configs()");
   }
-  if (!pots_) {
-    return err("write() called without potentials()");
+  if (!model_) {
+    return err("write() called without model()");
   }
 
   BOOST_LEAF_CHECK(save_configs(cfg_path(prefix_), *configs_));
-  BOOST_LEAF_CHECK(save_potentials(pot_path(prefix_), *pots_));
+  BOOST_LEAF_CHECK(save_model(model_path(prefix_), *model_));
   return {};
 }
 
 leaf::result<void>
 CheckpointReader::read(std::vector<Configuration> &configs,
-                       std::vector<Potential> &potentials) const {
+                       ForceCalculator &model) const {
   BOOST_LEAF_CHECK(load_configs(cfg_path(prefix_), configs));
-  BOOST_LEAF_CHECK(load_potentials(pot_path(prefix_), potentials));
+  BOOST_LEAF_CHECK(load_model(model_path(prefix_), model));
   return {};
 }
 

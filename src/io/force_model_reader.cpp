@@ -441,7 +441,24 @@ leaf::result<ForceCalculator> parse_force_model(std::string_view input) {
   return catch_json([&]() -> leaf::result<ForceCalculator> {
     json j = json::parse(input);
     if (!j.contains("model")) {
-      return fail("missing 'model' key");
+      // Legacy bare pair section ({format, potentials}) with no model wrapper —
+      // as emitted by io::write_native. Treat it as a pair model, inferring
+      // ntypes from the potential count (paircol = ntypes*(ntypes+1)/2). This
+      // keeps write_native ↔ parse_force_model symmetric (checkpoints and pair
+      // endpots round-trip).
+      const std::size_t count =
+          (j.contains("potentials") && j["potentials"].is_array())
+              ? j["potentials"].size()
+              : 0;
+      std::size_t ntypes = 1;
+      while (ntypes * (ntypes + 1) / 2 < count) {
+        ++ntypes;
+      }
+      if (ntypes * (ntypes + 1) / 2 != count) {
+        return fail("bare pair file: " + std::to_string(count) +
+                    " potentials is not a valid pair count for any ntypes");
+      }
+      return build_pair(j, ntypes);
     }
 
     const std::string model = j["model"].get<std::string>();

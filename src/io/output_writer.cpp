@@ -2,6 +2,7 @@
 
 #include <nlohmann/json.hpp>
 
+#include <cmath>
 #include <fstream>
 #include <ranges>
 #include <stdexcept>
@@ -27,7 +28,18 @@ static json sample_one(const Potential &p, int nknots) {
   pot["rmax"] = hi;
   pot["knots"] = json::array();
   for (int k : std::views::iota(0, nknots)) {
-    pot["knots"].push_back(p.eval(lo + k * step));
+    const double r = lo + k * step;
+    const double v = p.eval(r);
+    // JSON renders NaN/Inf as `null`, silently producing a file that cannot be
+    // parsed back. Refuse instead — a non-finite value means the potential is
+    // ill-defined over its span (e.g. a sqrt embedding with a zero scale).
+    if (!std::isfinite(v)) {
+      throw std::runtime_error("non-finite potential value (" +
+                               std::to_string(v) + ") at r=" +
+                               std::to_string(r) +
+                               "; cannot tabulate potential for output");
+    }
+    pot["knots"].push_back(v);
   }
   return pot;
 }

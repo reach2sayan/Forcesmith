@@ -1,8 +1,14 @@
 #include "potfit/io/force_model_reader.hpp"
+#include "potfit/io/write_model.hpp"
 
 #include <boost/leaf/handle_errors.hpp>
 #include <gtest/gtest.h>
+#include <chrono>
 #include <cmath>
+#include <filesystem>
+#include <fstream>
+#include <iterator>
+#include <string>
 
 namespace leaf = boost::leaf;
 using namespace potfit;
@@ -227,10 +233,29 @@ TEST(ForceModelReader, Angular_SingleType) {
 
 // ── error paths ───────────────────────────────────────────────────────────────
 
-TEST(ForceModelReader, Error_MissingModelKey) {
-    auto r = run(R"({"format": "analytic", "potentials": []})");
+// A bare potential section (no "model" wrapper), as written by io::write_native,
+// is accepted as a pair model with ntypes inferred from the potential count.
+TEST(ForceModelReader, BarePairSection_TreatedAsPairModel) {
+    auto r = run(R"({
+      "format": "tabulated",
+      "potentials": [ {"rmin": 1.5, "rmax": 6.0, "knots": [2.0, 1.0, 0.0, 1.0, 2.0]} ]
+    })");
+    ASSERT_TRUE(r.ok) << r.error.message;
+    ASSERT_TRUE(std::holds_alternative<PairForceCalculator>(r.model));
+    EXPECT_EQ(std::get<PairForceCalculator>(r.model).ntypes, 1u);
+}
+
+// A bare section whose potential count is not a valid paircol (n*(n+1)/2) errors.
+TEST(ForceModelReader, BarePairSection_InvalidCount) {
+    auto r = run(R"({
+      "format": "tabulated",
+      "potentials": [
+        {"rmin": 1.5, "rmax": 6.0, "knots": [2.0, 1.0, 0.0]},
+        {"rmin": 1.5, "rmax": 6.0, "knots": [1.0, 0.5, 0.0]}
+      ]
+    })");
     EXPECT_FALSE(r.ok);
-    EXPECT_NE(r.error.message.find("model"), std::string::npos);
+    EXPECT_FALSE(r.error.message.empty());
 }
 
 TEST(ForceModelReader, Error_UnknownModel) {
@@ -359,4 +384,84 @@ TEST(ForceModelReader, EAM_GlobalH_BroadcastReachesAllLinks) {
     // Both linked potentials must see the new h (their cutoff factor changed).
     EXPECT_NE(phi.eval(rt), phi0);
     EXPECT_NE(rho.eval(rt), rho0);
+}
+
+// ── write_model round-trip / robustness ────────────────────────────────────────
+
+namespace {
+// Unique temp model path (RAII cleanup).
+struct TmpModel {
+    std::filesystem::path path;
+    explicit TmpModel(const char* tag) {
+        auto ns = static_cast<long long>(
+            std::chrono::steady_clock::now().time_since_epoch().count());
+        path = std::filesystem::temp_directory_path() /
+               ("potfit_fm_" + std::string(tag) + "_" + std::to_string(ns) + ".json");
+    }
+    ~TmpModel() { std::error_code ec; std::filesystem::remove(path, ec); }
+};
+
+// write_model(model, path, "native") → result.
+static leaf::result<void> write_native_model(const ForceCalculator& m,
+                                             const std::filesystem::path& p) {
+    return write_model(m, p, "native");
+}
+} // namespace
+
+// A valid analytic embedding (sqrt with a nonzero scale) writes finite knots and
+// parses back as a well-formed EAM model — no `null` in the output.
+TEST(WriteModel, EAM_AnalyticEmbedding_RoundTrips) {
+    auto parsed = run(R"({
+      "model": "eam", "ntypes": 1,
+      "pair":      { "format": "tabulated", "potentials": [ {"rmin":1.5,"rmax":6.0,"knots":[2.0,1.0,0.0,1.0,2.0]} ] },
+      "density":   { "format": "tabulated", "potentials": [ {"rmin":1.5,"rmax":6.0,"knots":[1.0,0.5,0.0,0.0,0.0]} ] },
+      "embedding": { "format": "analytic", "potentials": [ {"type":"sqrt","rmin":0.0,"rmax":5.0,"A":-1.0,"B":1.0} ] }
+    })");
+    ASSERT_TRUE(parsed.ok) << parsed.error.message;
+
+    TmpModel tmp("emb_ok");
+    bool wrote = false, reok = false;
+    leaf::try_handle_all(
+        [&]() -> leaf::result<void> {
+            BOOST_LEAF_CHECK(write_native_model(parsed.model, tmp.path));
+            wrote = true;
+            std::ifstream f(tmp.path);
+            const std::string s{std::istreambuf_iterator<char>(f),
+                                std::istreambuf_iterator<char>{}};
+            EXPECT_EQ(s.find("null"), std::string::npos) << "writer emitted null knots";
+            BOOST_LEAF_AUTO(m, parse_force_model(s));
+            reok = std::holds_alternative<EAMForceCalculator>(m);
+            return {};
+        },
+        [&](const ParseError& e) { ADD_FAILURE() << "ParseError: " << e.message; },
+        [&]()                    { ADD_FAILURE() << "unknown error"; });
+    EXPECT_TRUE(wrote);
+    EXPECT_TRUE(reok);
+}
+
+// A degenerate analytic embedding (sqrt scale B=0 → A*sqrt(r/0) = inf) must make
+// the writer FAIL with a clear error rather than silently emit `null` knots that
+// can never be parsed back.
+TEST(WriteModel, NonFiniteKnots_FailsLoudly) {
+    auto parsed = run(R"({
+      "model": "eam", "ntypes": 1,
+      "pair":      { "format": "tabulated", "potentials": [ {"rmin":1.5,"rmax":6.0,"knots":[2.0,1.0,0.0,1.0,2.0]} ] },
+      "density":   { "format": "tabulated", "potentials": [ {"rmin":1.5,"rmax":6.0,"knots":[1.0,0.5,0.0,0.0,0.0]} ] },
+      "embedding": { "format": "analytic", "potentials": [ {"type":"sqrt","rmin":0.5,"rmax":5.0,"A":-1.0,"B":0.0} ] }
+    })");
+    ASSERT_TRUE(parsed.ok) << parsed.error.message;
+
+    TmpModel tmp("emb_bad");
+    bool failed = false;
+    leaf::try_handle_all(
+        [&]() -> leaf::result<void> {
+            BOOST_LEAF_CHECK(write_native_model(parsed.model, tmp.path));
+            return {};
+        },
+        [&](const ParseError& e) {
+            failed = true;
+            EXPECT_NE(e.message.find("non-finite"), std::string::npos) << e.message;
+        },
+        [&]() { ADD_FAILURE() << "expected a ParseError, got unknown error"; });
+    EXPECT_TRUE(failed) << "write_model should reject non-finite tabulation";
 }
