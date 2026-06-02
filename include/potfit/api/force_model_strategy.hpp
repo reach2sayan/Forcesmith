@@ -1,17 +1,6 @@
 #ifndef POTFIT_API_FORCE_MODEL_STRATEGY_HPP
 #define POTFIT_API_FORCE_MODEL_STRATEGY_HPP
 
-// ── model-family strategy registry ───────────────────────────────────────────
-// Each force-calculator family is a strategy that knows (a) when it applies to
-// the editable spec, (b) how to build itself from the spec, and (c) how to
-// decompose a built model back into the spec. The forward direction is selected
-// by probing `applies` in priority order; the inverse is selected by the
-// variant alternative. Globals are handled uniformly through the
-// WithGlobals/NoGlobals mixin interface (set_globals / finalize_globals /
-// globals_empty), so no family special-cases them.
-//
-// This is an internal detail header included only by src/api/potfit.cpp.
-
 #include "potfit/api/potfit.hpp"
 #include "potfit/force/adp_force.hpp"
 #include "potfit/force/angular_force.hpp"
@@ -110,7 +99,8 @@ build_type_array(const std::map<std::string, Potential> &src,
 // Stiweb λ flat vector, in the calculator's own order: ti outer, then the
 // unordered neighbour pair in upper-triangular slot order (== lambda_index).
 [[nodiscard]] inline leaf::result<std::vector<Param>>
-build_lambda(const std::map<LambdaKey, Param> &src, const SpeciesRegistry &reg) {
+build_lambda(const std::map<LambdaKey, Param> &src,
+             const SpeciesRegistry &reg) {
   const std::size_t n = ntypes(reg);
   std::vector<Param> lam;
   lam.reserve(n * n * (n + 1) / 2);
@@ -138,7 +128,8 @@ void dump_pair_table(const SymmetricMatrix<V> &mat, const SpeciesRegistry &reg,
   }
 }
 
-inline void dump_type_array(const PotentialArray &arr, const SpeciesRegistry &reg,
+inline void dump_type_array(const PotentialArray &arr,
+                            const SpeciesRegistry &reg,
                             std::map<std::string, Potential> &dst) {
   for (std::size_t t = 0; t < ntypes(reg); ++t) {
     dst.insert_or_assign(std::string(species_at(reg, t).symbol), arr[t]);
@@ -164,13 +155,13 @@ inline constexpr char kGlobalsRerankError[] =
     "decomposing a seeded model with global parameters after a re-rank is not "
     "supported; set potentials programmatically";
 
-// ── per-family strategies ────────────────────────────────────────────────────
 template <class Calc> struct PotentialType; // primary left undefined
 
 template <> struct PotentialType<PairForceCalculator> {
   static bool applies(const SpecRef &) {
     return true;
   } // unconditional fallback
+
   static leaf::result<ForceCalculator> materialize(const SpecRef &s) {
     if (s.pair.empty()) {
       return err("no pair potentials set");
@@ -311,6 +302,7 @@ template <> struct PotentialType<StiwebForceCalculator> {
   static bool applies(const SpecRef &s) {
     return !s.stiweb.empty() || !s.lambda.empty();
   }
+
   static leaf::result<ForceCalculator> materialize(const SpecRef &s) {
     StiwebForceCalculator calc;
     calc.ntypes = ntypes(s.registry);
@@ -323,6 +315,7 @@ template <> struct PotentialType<StiwebForceCalculator> {
     calc.finalize_globals();     // no-op
     return ForceCalculator{std::move(calc)};
   }
+
   static leaf::result<void> decompose(const StiwebForceCalculator &c,
                                       const SpeciesRegistry &reg, SpecRef &s) {
     dump_pair_table(c.params, reg, s.stiweb);
@@ -331,12 +324,11 @@ template <> struct PotentialType<StiwebForceCalculator> {
   }
 };
 
-// Forward registry: probed in priority order — most specific family first, the
-// pair fallback last. ADP precedes EAM because ADP also populates
-// density/embedding; angular precedes the analytic families on its own tables.
 struct Probe {
-  bool (*applies)(const SpecRef &);
-  leaf::result<ForceCalculator> (*materialize)(const SpecRef &);
+  using apply_fn = bool (*)(const SpecRef &);
+  using materialize_fn = leaf::result<ForceCalculator> (*)(const SpecRef &);
+  apply_fn applies;
+  materialize_fn materialize;
 };
 
 template <class Calc> constexpr Probe probe_for() {

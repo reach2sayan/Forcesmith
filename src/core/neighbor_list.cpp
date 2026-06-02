@@ -3,7 +3,6 @@
 
 #include <algorithm>
 #include <cmath>
-#include <ranges>
 #include <variant>
 #include <vector>
 
@@ -11,13 +10,24 @@ namespace potfit {
 
 namespace {
 
-// Resolve the pair potential for a (type_i, type_j) pair, if a table is given.
 const Potential *resolve_pot(const PotentialPair *pots, const Atom &ai,
                              const Atom &aj) {
   if (pots && ai.type < pots->ntypes() && aj.type < pots->ntypes()) {
     return &(*pots)[ai.type, aj.type];
   }
   return nullptr;
+}
+
+void add_neighbor(Configuration &cfg, const PotentialPair *pots, std::size_t i,
+                  std::size_t j, const Vec3 &d, double rcut2) {
+  if (d.squaredNorm() > rcut2) {
+    return;
+  }
+  NeighborEntry entry;
+  entry.neighbor = &cfg.atoms[j];
+  entry.pot = resolve_pot(pots, cfg.atoms[i], cfg.atoms[j]);
+  entry.dist = d;
+  cfg.atoms[i].neighbors.push_back(entry);
 }
 
 // Periodic build: replicate the cell out to ceil(rcut / box_height) image
@@ -42,8 +52,8 @@ void build_periodic(Configuration &cfg, double rcut, double rcut2,
   // Wrap positions into the unit cell so the base separation is minimal and
   // the image shells above are guaranteed to cover the cutoff sphere.
   std::vector<Vec3> wpos(cfg.atoms.size());
-  for (std::size_t k = 0; k < cfg.atoms.size(); ++k)
-    wpos[k] = pbc.wrap(cfg.atoms[k].pos);
+  std::ranges::transform(cfg.atoms, wpos.begin(),
+                         [&](const Atom &atom) { return pbc.wrap(atom.pos); });
 
   for (std::size_t i = 0; i < cfg.atoms.size(); ++i) {
     for (std::size_t j = 0; j < cfg.atoms.size(); ++j) {
@@ -54,15 +64,8 @@ void build_periodic(Configuration &cfg, double rcut, double rcut2,
             if (i == j && ix == 0 && iy == 0 && iz == 0) {
               continue; // skip an atom paired with itself in the home cell
             }
-            const Vec3 d = base + ix * a + iy * b + iz * c;
-            if (d.squaredNorm() > rcut2) {
-              continue; // inclusive r <= rcut (config.c:1130)
-            }
-            NeighborEntry entry;
-            entry.neighbor = &cfg.atoms[j];
-            entry.pot = resolve_pot(pots, cfg.atoms[i], cfg.atoms[j]);
-            entry.dist = d;
-            cfg.atoms[i].neighbors.push_back(entry);
+            add_neighbor(cfg, pots, i, j, base + ix * a + iy * b + iz * c,
+                         rcut2);
           }
     }
   }
@@ -73,16 +76,10 @@ void build_infinite(Configuration &cfg, double rcut2,
                     const PotentialPair *pots) {
   for (std::size_t i = 0; i < cfg.atoms.size(); ++i)
     for (std::size_t j = 0; j < cfg.atoms.size(); ++j) {
-      if (i == j)
+      if (i == j) {
         continue;
-      const Vec3 d = cfg.atoms[j].pos - cfg.atoms[i].pos;
-      if (d.squaredNorm() > rcut2)
-        continue; // inclusive r <= rcut (config.c:1130)
-      NeighborEntry entry;
-      entry.neighbor = &cfg.atoms[j];
-      entry.pot = resolve_pot(pots, cfg.atoms[i], cfg.atoms[j]);
-      entry.dist = d;
-      cfg.atoms[i].neighbors.push_back(entry);
+      }
+      add_neighbor(cfg, pots, i, j, cfg.atoms[j].pos - cfg.atoms[i].pos, rcut2);
     }
 }
 

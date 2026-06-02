@@ -27,8 +27,7 @@ namespace potfit {
 // slot lets synthetic atoms keep saying `a.type = 0` (symbol empty, identity
 // unset — only the slot matters, which is all the kernels read).
 struct Species {
-  std::string_view
-      symbol; // "" for a raw/synthetic slot; else into static catalog
+  std::string_view symbol;
   std::size_t Z = 0;
   double mass_amu = 0.0;
   std::size_t index = 0; // compact 0..ntypes-1 slot for dense-table indexing
@@ -197,12 +196,17 @@ build_species_registry(std::span<const std::string_view> symbols) {
   return reg;
 }
 
-[[nodiscard]] constexpr FORCE_INLINE std::size_t ntypes(const SpeciesRegistry &r) {
+// Not constexpr: these query a boost::multi_index SpeciesRegistry
+// (size()/find() are not constexpr) and boost::leaf::result is not a literal
+// type, so none can ever be constant-evaluated — marking them constexpr is an
+// error under clang
+// (-Winvalid-constexpr / non-literal return). They remain FORCE_INLINE.
+[[nodiscard]] FORCE_INLINE std::size_t ntypes(const SpeciesRegistry &r) {
   return r.size();
 }
 
 // The Species (with assigned slot) for a given element symbol; error if absent.
-[[nodiscard]] constexpr FORCE_INLINE boost::leaf::result<Species>
+[[nodiscard]] FORCE_INLINE boost::leaf::result<Species>
 species_of(const SpeciesRegistry &r, std::string_view symbol) {
   const auto &idx = r.get<species_detail::by_symbol>();
   const auto it = idx.find(symbol);
@@ -214,8 +218,9 @@ species_of(const SpeciesRegistry &r, std::string_view symbol) {
 }
 
 // The Species occupying compact slot `slot`. Precondition: slot < ntypes(r).
-[[nodiscard]] constexpr FORCE_INLINE Species species_at(const SpeciesRegistry &r,
-                                        std::size_t slot) {
+[[nodiscard]] FORCE_INLINE Species species_at(const SpeciesRegistry &r,
+                                              std::size_t slot) {
+  BOOST_ASSERT_MSG(slot < ntypes(r), "invalid species slot");
   const auto &idx = r.get<species_detail::by_index>();
   return *idx.find(slot);
 }
