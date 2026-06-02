@@ -7,6 +7,7 @@
 #include "potfit/force/force_calculator.hpp"
 #include "potfit/io/config_reader.hpp"
 #include "potfit/io/loaders.hpp"
+#include "potfit/optimization/solver.hpp"
 
 #include <boost/leaf/handle_errors.hpp>
 #include <iostream>
@@ -19,15 +20,24 @@ namespace leaf = boost::leaf;
 namespace potfit::cli {
 namespace {
 
-std::optional<potfit::Algorithm> select_algorithm(const std::string &alg) {
-  if (alg == "lm") {
-    return potfit::Algorithm::LM;
-  } else if (alg == "powell") {
-    return potfit::Algorithm::Powell;
-  } else if (alg == "de") {
-    return potfit::Algorithm::DE;
-  } else if (alg == "ls") {
-    return potfit::Algorithm::LineSearch;
+// Build the configured solver named by --algorithm. The solver carries its own
+// tuning (iteration cap, DE parameters, seed), so the choice is materialised
+// here as a Solver and injected into the session. nullopt → unknown name.
+std::optional<potfit::Solver> build_solver(const CliOptions &o) {
+  if (o.algorithm == "lm") {
+    return potfit::Solver{potfit::EigenLMSolver{o.max_iter}};
+  } else if (o.algorithm == "powell") {
+    return potfit::Solver{potfit::EigenHybridSolver{o.max_iter}};
+  } else if (o.algorithm == "ls") {
+    return potfit::Solver{potfit::LineSearchSolver{o.max_iter}};
+  } else if (o.algorithm == "de") {
+    potfit::BoostDESolver s;
+    s.mutation_factor = o.de_F;
+    s.crossover_probability = o.de_CR;
+    s.NP_factor = static_cast<std::size_t>(o.de_np);
+    s.max_generations = static_cast<std::size_t>(o.de_gen);
+    s.seed = o.seed;
+    return potfit::Solver{std::move(s)};
   }
   return std::nullopt;
 }
@@ -110,18 +120,12 @@ int run(const CliOptions &o) {
     }
 
     potfit::OptimizerOptions &opts = session.options();
-    opts.max_iter = o.max_iter;
     opts.energy_weight = o.energy_weight;
     opts.stress_weight = o.stress_weight;
     opts.smooth_weight = o.smooth_weight;
-    opts.seed = o.seed;
-    opts.de.mutation_factor = o.de_F;
-    opts.de.crossover_probability = o.de_CR;
-    opts.de.NP_factor = static_cast<std::size_t>(o.de_np);
-    opts.de.max_generations = static_cast<std::size_t>(o.de_gen);
 
-    if (auto alg = select_algorithm(o.algorithm)) {
-      opts.algorithm = *alg;
+    if (auto solver = build_solver(o)) {
+      session.set_solver(std::move(*solver));
     } else {
       std::cerr << "unknown algorithm '" << o.algorithm
                 << "'; choose: lm | powell | de | ls\n";

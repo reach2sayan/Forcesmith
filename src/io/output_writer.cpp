@@ -30,9 +30,6 @@ static json sample_one(const Potential &p, int nknots) {
   for (int k : std::views::iota(0, nknots)) {
     const double r = lo + k * step;
     const double v = p.eval(r);
-    // JSON renders NaN/Inf as `null`, silently producing a file that cannot be
-    // parsed back. Refuse instead — a non-finite value means the potential is
-    // ill-defined over its span (e.g. a sqrt embedding with a zero scale).
     if (!std::isfinite(v)) {
       throw std::runtime_error("non-finite potential value (" +
                                std::to_string(v) + ") at r=" +
@@ -44,8 +41,6 @@ static json sample_one(const Potential &p, int nknots) {
   return pot;
 }
 
-// Build a {format:"tabulated", potentials:[...]} section from a range of
-// Potentials (works for the flat vector and for PotentialPair/PotentialArray).
 template <typename Range>
 static json sample_section(const Range &pots, int nknots) {
   json sec;

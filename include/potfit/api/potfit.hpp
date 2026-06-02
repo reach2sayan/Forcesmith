@@ -163,6 +163,12 @@ public:
   OptimizerOptions &options() { return opts_; }
   [[nodiscard]] const OptimizerOptions &options() const { return opts_; }
 
+  // Inject a fully-built solver to use for optimize(). The Solver value-type
+  // erases any SolverImpl together with its own tuning, so a client supplies a
+  // custom algorithm simply as `set_solver(Solver{MySolver{...}})`. With none
+  // set, optimize() falls back to the default Levenberg–Marquardt solver.
+  void set_solver(Solver s) { solver_.emplace(std::move(s)); }
+
   boost::leaf::result<force::EvalResult> evaluate(std::size_t cfg);
   boost::leaf::result<int> optimize();
   boost::leaf::result<void> write(const std::filesystem::path &path,
@@ -216,6 +222,8 @@ private:
   std::vector<GlobalParam> globals_;
   std::vector<std::string> declared_;
   OptimizerOptions opts_;
+  // Optional client-supplied solver; empty → default LM at optimize().
+  std::optional<Solver> solver_;
 
   // Seeded-from-file path: a fully-built model plus the element ordering it was
   // built against (for decomposition on re-rank).

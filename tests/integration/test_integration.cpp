@@ -359,10 +359,10 @@ TEST(Integration, OptimizerLJ_ConvergesFromWrongParams) {
             ForceCalculator model = make_pair_force_calculator(std::move(pots));
 
             OptimizerOptions opts;
-            opts.max_iter = 500;
             opts.energy_weight = 1.0;
 
-            run_optimizer(parsed.configs, model, opts);
+            run_optimizer(parsed.configs, model, opts,
+                          Solver{EigenLMSolver{500}});
 
             const auto& pair_calc = std::get<PairForceCalculator>(model);
             Eigen::VectorXd x(pair_calc.pair[std::size_t{0}, std::size_t{0}].param_count());
@@ -552,9 +552,9 @@ TEST(Integration, OptimizerEAM_ConvergesFromWrongParams) {
             // Optimise the perturbed model
             BOOST_LEAF_AUTO(fm_pert, parse_force_model(kEAMPert));
             OptimizerOptions opts;
-            opts.max_iter      = 300;
             opts.energy_weight = 1.0;
-            run_optimizer(configs, fm_pert, opts);
+            run_optimizer(configs, fm_pert, opts,
+                          Solver{EigenLMSolver{300}});
 
             // Evaluate with optimised params
             auto &eam_opt = std::get<EAMForceCalculator>(fm_pert);
@@ -616,9 +616,9 @@ TEST(Integration, OptimizerTersoff_ConvergesFromWrongParams) {
     // param_count() == 2: only A and B are free
 
     OptimizerOptions opts;
-    opts.max_iter      = 400;
     opts.energy_weight = 1.0;
-    run_optimizer(configs, fc, opts);
+    run_optimizer(configs, fc, opts,
+                  Solver{EigenLMSolver{400}});
 
     // Recover A and B
     Eigen::VectorXd x(2);

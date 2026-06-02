@@ -77,15 +77,13 @@ TEST(Optimizer, ConvergesFromPerturbedEpsilon) {
 
     // With energy_weight = 1.0 we have 2 force + 1 energy equation for 2 unknowns (ε, σ).
     OptimizerOptions opts;
-    opts.max_iter      = 2000;
-    opts.xtol          = 1e-10;
-    opts.ftol          = 1e-10;
     opts.energy_weight = 1.0;
 
     const double res_before = eval_residual(configs, model, opts.energy_weight);
     EXPECT_GT(res_before, 1e-4) << "residual should be large before optimization";
 
-    int status = run_optimizer(configs, model, opts);
+    int status = run_optimizer(configs, model, opts,
+                               Solver{EigenLMSolver{2000, 1e-10, 1e-10}});
 
     // LM success codes: 1=RelErr, 2=FuncEps, 3=XtolReached, 4=GradEps.
     EXPECT_GE(status, 1) << "LM returned failure code " << status;
@@ -109,9 +107,9 @@ TEST(Optimizer, ResidualDecreasesOrStays) {
     const double res_before = eval_residual(configs, model, 1.0);
 
     OptimizerOptions opts;
-    opts.max_iter      = 5;  // just a few iterations
     opts.energy_weight = 1.0;
-    run_optimizer(configs, model, opts);
+    run_optimizer(configs, model, opts,
+                  Solver{EigenLMSolver{5}}); // just a few iterations
 
     const double res_after = eval_residual(configs, model, 1.0);
     EXPECT_LE(res_after, res_before * 1.01)  // allow 1% tolerance for numerical noise

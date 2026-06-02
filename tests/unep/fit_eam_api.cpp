@@ -26,6 +26,7 @@
 
 #include "potfit/api/potfit.hpp"
 #include "potfit/io/config_reader.hpp" // io::ParseError
+#include "potfit/optimization/solver.hpp"
 
 #include <boost/leaf/handle_errors.hpp>
 #include <boost/program_options.hpp>
@@ -238,18 +239,18 @@ leaf::result<void> add_configs(PotFit &s, const json &configs) {
 
 void apply_options(PotFit &s, const Args &a, double smooth_weight) {
   OptimizerOptions &o = s.options();
-  o.max_iter = a.maxiter;
   o.energy_weight = a.eweight;
   o.stress_weight = a.stress_weight;
   o.smooth_weight = smooth_weight;
+
   if (a.algorithm == "powell")
-    o.algorithm = Algorithm::Powell;
+    s.set_solver(Solver{EigenHybridSolver{a.maxiter}});
   else if (a.algorithm == "de")
-    o.algorithm = Algorithm::DE;
+    s.set_solver(Solver{BoostDESolver{}});
   else if (a.algorithm == "ls")
-    o.algorithm = Algorithm::LineSearch;
+    s.set_solver(Solver{LineSearchSolver{a.maxiter}});
   else
-    o.algorithm = Algorithm::LM;
+    s.set_solver(Solver{EigenLMSolver{a.maxiter}});
 }
 
 // Per-atom force-component RMSE (eV/Å) of the session's current model against

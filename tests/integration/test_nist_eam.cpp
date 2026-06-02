@@ -204,9 +204,9 @@ TEST(NIST_EAM, Cu_Optimizer_Recovers_Predictive_Quality_From_Perturbed_Pair) {
 
             BOOST_LEAF_AUTO(fm_pert, parse_force_model(kCuPerturbed));
             OptimizerOptions opts;
-            opts.max_iter      = 500;
             opts.energy_weight = 1.0;
-            run_optimizer(cfgs, fm_pert, opts);
+            run_optimizer(cfgs, fm_pert, opts,
+                          Solver{EigenLMSolver{500}});
 
             // Evaluate both models on a held-out displaced cell
             std::mt19937 rng_val(77);
@@ -249,9 +249,9 @@ TEST(NIST_EAM, Al_Optimizer_Recovers_Predictive_Quality_From_Perturbed_Pair) {
 
             BOOST_LEAF_AUTO(fm_pert, parse_force_model(kAlPerturbed));
             OptimizerOptions opts;
-            opts.max_iter      = 500;
             opts.energy_weight = 1.0;
-            run_optimizer(cfgs, fm_pert, opts);
+            run_optimizer(cfgs, fm_pert, opts,
+                          Solver{EigenLMSolver{500}});
 
             std::mt19937 rng_val(77);
             auto cfg_val = make_displaced_fcc(4.046, rng_val, 0.05);

@@ -152,14 +152,6 @@ int PotfitFunctor::operator()(const Eigen::VectorXd &x,
 
 int PotfitFunctor::df(const Eigen::VectorXd &x, Eigen::MatrixXd &fjac) const {
   constexpr double delta = 1e-5;
-
-  // Central finite-difference Jacobian. Columns are evaluated SERIALLY (no
-  // per-thread copies): the LM solver calls operator() then df() sequentially,
-  // so reusing the shared model_/configs_ is safe, and operator() re-scatters
-  // params on its next entry, making the post-df perturbed state harmless.
-  // Parallelism comes for free inside each column: eval_into still evaluates
-  // the configurations in parallel. (Column-level parallelism is deliberately
-  // left for later — it only helps when #configs < #cores.)
   Eigen::VectorXd fp(values_), fm(values_), xp = x;
   shared_arena().execute([&] {
     for (int j = 0; j < inputs_; ++j) {

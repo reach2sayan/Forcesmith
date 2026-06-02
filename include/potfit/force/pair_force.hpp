@@ -9,9 +9,6 @@
 namespace potfit {
 
 // ── 2-body pipeline ─────────────────────────────────────────────────────────
-// Each i–j bond is threaded through the stages; an empty std::optional (atoms
-// coincident, or r outside the potential's own range) short-circuits the chain,
-// mirroring adp/tersoff/stiweb.
 struct PairBond {
   Atom *ai;                  // central atom
   const Potential *pot;      // i–j pair potential φ

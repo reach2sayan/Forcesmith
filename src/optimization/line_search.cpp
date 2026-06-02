@@ -20,8 +20,6 @@ bracket_minimum(const std::function<double(double)> &g, double initial_step,
   double b = initial_step;
   double fb = g(b);
 
-  // Ensure we step in the decreasing direction; if g already rises, bracket is
-  // [0,b].
   if (fb >= fa) {
     return {0.0, b};
   }
@@ -30,7 +28,7 @@ bracket_minimum(const std::function<double(double)> &g, double initial_step,
     double c = std::min(b * phi, max_step);
     double fc = g(c);
     if (fc >= fb) {
-      return {a, c}; // minimum is between a and c
+      return {a, c};
     }
     a = b;
     fa = fb;
@@ -40,7 +38,6 @@ bracket_minimum(const std::function<double(double)> &g, double initial_step,
       break;
     }
   }
-  // Monotone descent up to max_step — return largest bracket found.
   return {a, b};
 }
 

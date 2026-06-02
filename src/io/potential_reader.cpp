@@ -179,9 +179,6 @@ leaf::result<Potential> make_tabulated(const json &p) {
   return Potential(std::move(sp));
 }
 
-// Error policy for the potential-format factory: an unknown format string maps
-// to potfit's existing "unsupported potential format" message. (The generic
-// Factory lives in potfit/io/factory.hpp.)
 template <class IdentifierType, class AbstractProduct>
 struct UnsupportedFormatError {
   static leaf::result<AbstractProduct> OnUnknownType(const IdentifierType &id) {

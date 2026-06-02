@@ -175,13 +175,6 @@ leaf::result<std::vector<GlobalParam>> build_globals(
   return globals;
 }
 
-// ── Per-model builders ──────────────────────────────────────────────────────
-// Each builds ONE ForceCalculator from the (mutable) top-level JSON object and
-// the resolved ntypes. `j` is mutable because the globals pass rewrites
-// global-references into seed numbers in place. These are the concrete products
-// the model factory hands out.
-
-// ── pair ──
 leaf::result<ForceCalculator> build_pair(json &j, std::size_t ntypes) {
   // Resolve globals in place (pair potentials live at top-level j), then
   // parse the mutated j (not the raw input string).
@@ -211,7 +204,6 @@ leaf::result<ForceCalculator> build_pair(json &j, std::size_t ntypes) {
   return ForceCalculator{std::move(calc)};
 }
 
-// ── eam ──
 leaf::result<ForceCalculator> build_eam(json &j, std::size_t ntypes) {
   auto rk = require_keys(j, {"pair", "density", "embedding"}, "eam");
   if (!rk) {
@@ -249,7 +241,6 @@ leaf::result<ForceCalculator> build_eam(json &j, std::size_t ntypes) {
   return ForceCalculator{std::move(calc)};
 }
 
-// ── adp ──
 leaf::result<ForceCalculator> build_adp(json &j, std::size_t ntypes) {
   auto rk = require_keys(
       j, {"pair", "density", "embedding", "dipole", "quadrupole"}, "adp");

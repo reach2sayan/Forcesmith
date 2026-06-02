@@ -1,14 +1,8 @@
 #include "potfit/api/potfit.hpp"
 
+#include "potfit/api/force_model_strategy.hpp"
 #include "potfit/core/neighbor_list.hpp"
-#include "potfit/force/adp_force.hpp"
-#include "potfit/force/angular_force.hpp"
-#include "potfit/force/eam_force.hpp"
-#include "potfit/force/pair_force.hpp"
 #include "potfit/force/potential_table.hpp"
-#include "potfit/force/stiweb_force.hpp"
-#include "potfit/force/tersoff_force.hpp"
-#include "potfit/io/config_reader.hpp" // ParseError
 #include "potfit/io/write_model.hpp"
 
 #include <algorithm>
@@ -25,20 +19,15 @@ namespace potfit {
 
 namespace leaf = boost::leaf;
 
+// The model-family strategy registry (SpecRef, build_*/dump_* helpers, and the
+// per-family PotentialType specializations) lives in this detail header.
+using detail::err;
+using detail::PotentialType;
+using detail::Probe;
+using detail::probe_for;
+using detail::SpecRef;
+
 namespace {
-
-[[nodiscard]] leaf::error_id err(std::string msg) {
-  return leaf::new_error(io::ParseError{std::move(msg), 0});
-}
-
-template <class Map>
-[[nodiscard]] leaf::result<typename Map::mapped_type>
-require(const Map &m, const typename Map::key_type &key, std::string what) {
-  if (auto it = m.find(key); it != m.end()) {
-    return it->second;
-  }
-  return err("missing " + std::move(what));
-}
 
 [[nodiscard]] constexpr std::size_t ntypes_of(const ForceCalculator &m) {
   return std::visit([](const auto &c) { return c.ntypes; }, m);
@@ -490,315 +479,6 @@ leaf::result<SpeciesRegistry> PotFit::build_registry() const {
   return build_species_registry(syms);
 }
 
-namespace {
-
-// ── model-family strategy registry ───────────────────────────────────────────
-// Each force-calculator family is a strategy that knows (a) when it applies to
-// the editable spec, (b) how to build itself from the spec, and (c) how to
-// decompose a built model back into the spec. The forward direction is selected
-// by probing `applies` in priority order; the inverse is selected by the
-// variant alternative. Globals are handled uniformly through the
-// WithGlobals/NoGlobals mixin interface (set_globals / finalize_globals /
-// globals_empty), so no family special-cases them.
-
-using LambdaKey = std::tuple<std::string, std::string, std::string>;
-
-// Mutable references to the symbol-keyed spec maps + globals, bundled so the
-// free strategies can read (materialize) and write (decompose) them.
-struct SpecRef {
-  const SpeciesRegistry &registry;
-  std::map<PotFit::PairKey, Potential> &pair;
-  std::map<std::string, Potential> &density;
-  std::map<std::string, Potential> &embedding;
-  std::map<PotFit::PairKey, Potential> &dipole;
-  std::map<PotFit::PairKey, Potential> &quadrupole;
-  std::map<PotFit::PairKey, Potential> &radial;
-  std::map<std::string, Potential> &angular;
-  std::map<PotFit::PairKey, TersoffParams> &tersoff;
-  std::map<PotFit::PairKey, SWParams> &stiweb;
-  std::map<LambdaKey, Param> &lambda;
-  const std::vector<GlobalParam> &globals;
-};
-
-[[nodiscard]] PotFit::PairKey norm_key(std::string_view a, std::string_view b) {
-  std::string sa(a), sb(b);
-  if (sb < sa) {
-    std::swap(sa, sb);
-  }
-  return {std::move(sa), std::move(sb)};
-}
-
-// ── generic builders (spec → table) ──────────────────────────────────────────
-template <class V>
-[[nodiscard]] leaf::result<SymmetricMatrix<V>>
-build_pair_table(const std::map<PotFit::PairKey, V> &src,
-                 const SpeciesRegistry &reg, std::string_view what) {
-  SymmetricMatrix<V> mat;
-  mat.reserve(ntypes(reg));
-  for (auto [ti, tj] : mat.indices()) {
-    const auto key =
-        norm_key(species_at(reg, ti).symbol, species_at(reg, tj).symbol);
-    BOOST_LEAF_AUTO(
-        v, require(src, key,
-                   std::string(what) + " for " + key.first + "-" + key.second));
-    mat.emplace_back(std::move(v));
-  }
-  return mat;
-}
-
-[[nodiscard]] leaf::result<PotentialArray>
-build_type_array(const std::map<std::string, Potential> &src,
-                 const SpeciesRegistry &reg, std::string_view what) {
-  PotentialArray arr;
-  const std::size_t n = ntypes(reg);
-  arr.reserve(n);
-  for (std::size_t t = 0; t < n; ++t) {
-    const std::string sym(species_at(reg, t).symbol);
-    BOOST_LEAF_AUTO(p, require(src, sym, std::string(what) + " for " + sym));
-    arr.emplace_back(std::move(p));
-  }
-  return arr;
-}
-
-// Stiweb λ flat vector, in the calculator's own order: ti outer, then the
-// unordered neighbour pair in upper-triangular slot order (== lambda_index).
-[[nodiscard]] leaf::result<std::vector<Param>>
-build_lambda(const std::map<LambdaKey, Param> &src,
-             const SpeciesRegistry &reg) {
-  const std::size_t n = ntypes(reg);
-  std::vector<Param> lam;
-  lam.reserve(n * n * (n + 1) / 2);
-  for (std::size_t ti = 0; ti < n; ++ti) {
-    const std::string ci(species_at(reg, ti).symbol);
-    for (auto [tj, tk] : upper_triangle(n)) {
-      const auto nb =
-          norm_key(species_at(reg, tj).symbol, species_at(reg, tk).symbol);
-      BOOST_LEAF_AUTO(v, require(src, LambdaKey{ci, nb.first, nb.second},
-                                 "stiweb lambda for " + ci + ":" + nb.first +
-                                     "-" + nb.second));
-      lam.push_back(v);
-    }
-  }
-  return lam;
-}
-
-// ── generic dumpers (table → spec) ───────────────────────────────────────────
-template <class V>
-void dump_pair_table(const SymmetricMatrix<V> &mat, const SpeciesRegistry &reg,
-                     std::map<PotFit::PairKey, V> &dst) {
-  for (auto [ti, tj] : upper_triangle(ntypes(reg))) {
-    dst.insert_or_assign(
-        norm_key(species_at(reg, ti).symbol, species_at(reg, tj).symbol),
-        mat[ti, tj]);
-  }
-}
-
-void dump_type_array(const PotentialArray &arr, const SpeciesRegistry &reg,
-                     std::map<std::string, Potential> &dst) {
-  for (std::size_t t = 0; t < ntypes(reg); ++t) {
-    dst.insert_or_assign(std::string(species_at(reg, t).symbol), arr[t]);
-  }
-}
-
-void dump_lambda(const StiwebForceCalculator &c, const SpeciesRegistry &reg,
-                 std::map<LambdaKey, Param> &dst) {
-  const std::size_t n = ntypes(reg);
-  for (std::size_t ti = 0; ti < n; ++ti) {
-    const std::string ci(species_at(reg, ti).symbol);
-    for (auto [tj, tk] : upper_triangle(n)) {
-      const auto nb =
-          norm_key(species_at(reg, tj).symbol, species_at(reg, tk).symbol);
-      dst.insert_or_assign(LambdaKey{ci, nb.first, nb.second},
-                           c.lambda_at(ti, tj, tk));
-    }
-  }
-}
-
-constexpr char kGlobalsRerankError[] =
-    "decomposing a seeded model with global parameters after a re-rank is not "
-    "supported; set potentials programmatically";
-
-// ── per-family strategies ────────────────────────────────────────────────────
-template <class Calc> struct Family; // primary left undefined
-
-template <> struct Family<PairForceCalculator> {
-  static bool applies(const SpecRef &) {
-    return true;
-  } // unconditional fallback
-  static leaf::result<ForceCalculator> materialize(const SpecRef &s) {
-    if (s.pair.empty()) {
-      return err("no pair potentials set");
-    }
-    PairForceCalculator calc;
-    calc.ntypes = ntypes(s.registry);
-    BOOST_LEAF_AUTO(pt, build_pair_table(s.pair, s.registry, "pair potential"));
-    calc.pair = std::move(pt);
-    calc.set_globals(s.globals);
-    calc.finalize_globals();
-    return ForceCalculator{std::move(calc)};
-  }
-  static leaf::result<void> decompose(const PairForceCalculator &c,
-                                      const SpeciesRegistry &reg, SpecRef &s) {
-    if (!c.globals_empty()) {
-      return err(kGlobalsRerankError);
-    }
-    dump_pair_table(c.pair, reg, s.pair);
-    return {};
-  }
-};
-
-template <> struct Family<EAMForceCalculator> {
-  static bool applies(const SpecRef &s) {
-    return !s.density.empty() || !s.embedding.empty();
-  }
-  static leaf::result<ForceCalculator> materialize(const SpecRef &s) {
-    EAMForceCalculator calc;
-    calc.ntypes = ntypes(s.registry);
-    BOOST_LEAF_AUTO(pt, build_pair_table(s.pair, s.registry, "pair potential"));
-    calc.pair = std::move(pt);
-    BOOST_LEAF_AUTO(d, build_type_array(s.density, s.registry,
-                                        "density (transfer) function"));
-    calc.density = std::move(d);
-    BOOST_LEAF_AUTO(
-        e, build_type_array(s.embedding, s.registry, "embedding function"));
-    calc.embedding = std::move(e);
-    calc.set_globals(s.globals);
-    calc.finalize_globals();
-    return ForceCalculator{std::move(calc)};
-  }
-  static leaf::result<void> decompose(const EAMForceCalculator &c,
-                                      const SpeciesRegistry &reg, SpecRef &s) {
-    if (!c.globals_empty()) {
-      return err(kGlobalsRerankError);
-    }
-    dump_pair_table(c.pair, reg, s.pair);
-    dump_type_array(c.density, reg, s.density);
-    dump_type_array(c.embedding, reg, s.embedding);
-    return {};
-  }
-};
-
-template <> struct Family<ADPForceCalculator> {
-  static bool applies(const SpecRef &s) {
-    return !s.dipole.empty() || !s.quadrupole.empty();
-  }
-  static leaf::result<ForceCalculator> materialize(const SpecRef &s) {
-    ADPForceCalculator calc;
-    calc.ntypes = ntypes(s.registry);
-    BOOST_LEAF_AUTO(pt, build_pair_table(s.pair, s.registry, "pair potential"));
-    calc.pair = std::move(pt);
-    BOOST_LEAF_AUTO(d, build_type_array(s.density, s.registry,
-                                        "density (transfer) function"));
-    calc.density = std::move(d);
-    BOOST_LEAF_AUTO(
-        e, build_type_array(s.embedding, s.registry, "embedding function"));
-    calc.embedding = std::move(e);
-    BOOST_LEAF_AUTO(u,
-                    build_pair_table(s.dipole, s.registry, "dipole function"));
-    calc.dipole = std::move(u);
-    BOOST_LEAF_AUTO(
-        w, build_pair_table(s.quadrupole, s.registry, "quadrupole function"));
-    calc.quadrupole = std::move(w);
-    calc.set_globals(s.globals); // no-op
-    calc.finalize_globals();     // no-op
-    return ForceCalculator{std::move(calc)};
-  }
-  static leaf::result<void> decompose(const ADPForceCalculator &c,
-                                      const SpeciesRegistry &reg, SpecRef &s) {
-    dump_pair_table(c.pair, reg, s.pair);
-    dump_type_array(c.density, reg, s.density);
-    dump_type_array(c.embedding, reg, s.embedding);
-    dump_pair_table(c.dipole, reg, s.dipole);
-    dump_pair_table(c.quadrupole, reg, s.quadrupole);
-    return {};
-  }
-};
-
-template <> struct Family<AngularForceCalculator> {
-  static bool applies(const SpecRef &s) {
-    return !s.radial.empty() || !s.angular.empty();
-  }
-  static leaf::result<ForceCalculator> materialize(const SpecRef &s) {
-    AngularForceCalculator calc;
-    calc.ntypes = ntypes(s.registry);
-    BOOST_LEAF_AUTO(pt, build_pair_table(s.pair, s.registry, "pair potential"));
-    calc.pair = std::move(pt);
-    BOOST_LEAF_AUTO(r,
-                    build_pair_table(s.radial, s.registry, "radial function"));
-    calc.radial = std::move(r);
-    BOOST_LEAF_AUTO(
-        g, build_type_array(s.angular, s.registry, "angular function"));
-    calc.angular = std::move(g);
-    calc.set_globals(s.globals); // no-op
-    calc.finalize_globals();     // no-op
-    return ForceCalculator{std::move(calc)};
-  }
-  static leaf::result<void> decompose(const AngularForceCalculator &c,
-                                      const SpeciesRegistry &reg, SpecRef &s) {
-    dump_pair_table(c.pair, reg, s.pair);
-    dump_pair_table(c.radial, reg, s.radial);
-    dump_type_array(c.angular, reg, s.angular);
-    return {};
-  }
-};
-
-template <> struct Family<TersoffForceCalculator> {
-  static bool applies(const SpecRef &s) { return !s.tersoff.empty(); }
-  static leaf::result<ForceCalculator> materialize(const SpecRef &s) {
-    TersoffForceCalculator calc;
-    calc.ntypes = ntypes(s.registry);
-    BOOST_LEAF_AUTO(
-        p, build_pair_table(s.tersoff, s.registry, "tersoff parameters"));
-    calc.params = std::move(p);
-    calc.set_globals(s.globals); // no-op
-    calc.finalize_globals();     // no-op
-    return ForceCalculator{std::move(calc)};
-  }
-  static leaf::result<void> decompose(const TersoffForceCalculator &c,
-                                      const SpeciesRegistry &reg, SpecRef &s) {
-    dump_pair_table(c.params, reg, s.tersoff);
-    return {};
-  }
-};
-
-template <> struct Family<StiwebForceCalculator> {
-  static bool applies(const SpecRef &s) {
-    return !s.stiweb.empty() || !s.lambda.empty();
-  }
-  static leaf::result<ForceCalculator> materialize(const SpecRef &s) {
-    StiwebForceCalculator calc;
-    calc.ntypes = ntypes(s.registry);
-    BOOST_LEAF_AUTO(
-        p, build_pair_table(s.stiweb, s.registry, "stiweb parameters"));
-    calc.params = std::move(p);
-    BOOST_LEAF_AUTO(lam, build_lambda(s.lambda, s.registry));
-    calc.lambda = std::move(lam);
-    calc.set_globals(s.globals); // no-op
-    calc.finalize_globals();     // no-op
-    return ForceCalculator{std::move(calc)};
-  }
-  static leaf::result<void> decompose(const StiwebForceCalculator &c,
-                                      const SpeciesRegistry &reg, SpecRef &s) {
-    dump_pair_table(c.params, reg, s.stiweb);
-    dump_lambda(c, reg, s.lambda);
-    return {};
-  }
-};
-
-// Forward registry: probed in priority order — most specific family first, the
-// pair fallback last. ADP precedes EAM because ADP also populates
-// density/embedding; angular precedes the analytic families on its own tables.
-struct Probe {
-  bool (*applies)(const SpecRef &);
-  leaf::result<ForceCalculator> (*materialize)(const SpecRef &);
-};
-
-template <class Calc> constexpr Probe probe_for() {
-  return {&Family<Calc>::applies, &Family<Calc>::materialize};
-}
-
-} // namespace
-
 leaf::result<void> PotFit::materialize_from_spec() {
   SpecRef spec{registry_, pair_,    density_, embedding_, dipole_, quadrupole_,
                radial_,   angular_, tersoff_, stiweb_,    lambda_, globals_};
@@ -839,7 +519,7 @@ PotFit::decompose_seeded_into_spec(const SpeciesRegistry &reg) {
                radial_,   angular_, tersoff_, stiweb_,    lambda_, globals_};
   return std::visit(
       [&](auto &c) -> leaf::result<void> {
-        return Family<std::decay_t<decltype(c)>>::decompose(c, reg, spec);
+        return PotentialType<std::decay_t<decltype(c)>>::decompose(c, reg, spec);
       },
       *seeded_);
 }
@@ -899,7 +579,6 @@ leaf::result<void> PotFit::ensure_frozen() {
   return {};
 }
 
-// ── run / IO ─────────────────────────────────────────────────────────────────
 leaf::result<force::EvalResult> PotFit::evaluate(std::size_t cfg) {
   BOOST_LEAF_CHECK(ensure_frozen());
   if (cfg >= configs_.size()) {
@@ -913,6 +592,10 @@ leaf::result<int> PotFit::optimize() {
   if (configs_.empty()) {
     return err("no configurations to optimize against");
   }
+  if (solver_) {
+    return run_optimizer(std::span<Configuration>(configs_), model_, opts_,
+                         *solver_);
+  }
   return run_optimizer(std::span<Configuration>(configs_), model_, opts_);
 }
 
@@ -922,7 +605,6 @@ leaf::result<void> PotFit::write(const std::filesystem::path &path,
   return io::write_model(model_, path, format);
 }
 
-// ── accessors ────────────────────────────────────────────────────────────────
 leaf::result<const SpeciesRegistry *> PotFit::species() {
   BOOST_LEAF_CHECK(ensure_frozen());
   return &registry_;
