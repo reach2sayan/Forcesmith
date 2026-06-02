@@ -1,7 +1,7 @@
 #ifndef POTFIT_CLI_EVALUATE_REPORT_HPP
 #define POTFIT_CLI_EVALUATE_REPORT_HPP
 
-#include "cli/options.hpp"
+#include "potfit/cli/options.hpp"
 #include "potfit/api/potfit.hpp"
 
 #include <boost/leaf/result.hpp>

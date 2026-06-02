@@ -1,5 +1,5 @@
-#include "cli/app.hpp"
-#include "cli/options.hpp"
+#include "potfit/cli/app.hpp"
+#include "potfit/cli/options.hpp"
 
 // Entry point. All work lives in the cli/ module: parse the arguments, then —
 // unless help was shown or parsing failed — drive the PotFit API via cli::run.

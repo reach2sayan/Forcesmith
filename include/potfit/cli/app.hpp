@@ -1,7 +1,7 @@
 #ifndef POTFIT_CLI_APP_HPP
 #define POTFIT_CLI_APP_HPP
 
-#include "cli/options.hpp"
+#include "potfit/cli/options.hpp"
 
 namespace potfit::cli {
 

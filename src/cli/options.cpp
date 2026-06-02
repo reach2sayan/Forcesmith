@@ -1,4 +1,4 @@
-#include "cli/options.hpp"
+#include "potfit/cli/options.hpp"
 
 #include <boost/program_options.hpp>
 #include <iostream>

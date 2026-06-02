@@ -62,8 +62,7 @@ pair_table_of(const ForceCalculator &m) {
 
 } // namespace
 
-PotFit::PairKey PotFit::norm_key(std::string_view a,
-                                         std::string_view b) {
+PotFit::PairKey PotFit::norm_key(std::string_view a, std::string_view b) {
   std::string sa(a);
   std::string sb(b);
   if (sb < sa) {
@@ -164,9 +163,8 @@ leaf::result<void> PotFit::set_infinite(std::size_t cfg, double volume) {
   return {};
 }
 
-leaf::result<std::size_t> PotFit::add_atom(std::size_t cfg,
-                                               std::string_view element,
-                                               const Vec3 &pos) {
+leaf::result<std::size_t>
+PotFit::add_atom(std::size_t cfg, std::string_view element, const Vec3 &pos) {
   BOOST_LEAF_AUTO(c, config_at(cfg));
   BOOST_LEAF_AUTO(sp, Species::lookup(element));
   Atom a;
@@ -188,7 +186,7 @@ leaf::result<void> PotFit::remove_atom(std::size_t cfg, std::size_t atom) {
 }
 
 leaf::result<void> PotFit::set_position(std::size_t cfg, std::size_t atom,
-                                            const Vec3 &pos) {
+                                        const Vec3 &pos) {
   BOOST_LEAF_AUTO(c, config_at(cfg));
   if (atom >= c->atoms.size()) {
     return err("atom index out of range");
@@ -199,7 +197,7 @@ leaf::result<void> PotFit::set_position(std::size_t cfg, std::size_t atom,
 }
 
 leaf::result<void> PotFit::set_element(std::size_t cfg, std::size_t atom,
-                                           std::string_view element) {
+                                       std::string_view element) {
   BOOST_LEAF_AUTO(c, config_at(cfg));
   if (atom >= c->atoms.size()) {
     return err("atom index out of range");
@@ -218,8 +216,8 @@ leaf::result<std::size_t> PotFit::atom_count(std::size_t cfg) const {
 }
 
 // ── reference data (no dirty) ────────────────────────────────────────────────
-leaf::result<void>
-PotFit::write_ref_force(std::size_t cfg, std::size_t atom, const Vec3 &f) {
+leaf::result<void> PotFit::write_ref_force(std::size_t cfg, std::size_t atom,
+                                           const Vec3 &f) {
   BOOST_LEAF_AUTO(c, config_at(cfg));
   if (atom >= c->atoms.size()) {
     return err("atom index out of range");
@@ -234,8 +232,7 @@ leaf::result<void> PotFit::set_ref_energy(std::size_t cfg, double e) {
   return {};
 }
 
-leaf::result<void> PotFit::set_ref_stress(std::size_t cfg,
-                                              const SymTens &s) {
+leaf::result<void> PotFit::set_ref_stress(std::size_t cfg, const SymTens &s) {
   BOOST_LEAF_AUTO(c, config_at(cfg));
   c->ref.stress = s;
   return {};
@@ -253,8 +250,8 @@ leaf::result<void> PotFit::set_ref_force(const Atom &atom, const Vec3 &f) {
   return write_ref_force(ci, ai, f);
 }
 
-leaf::result<void> PotFit::set_ref_force(std::string_view cfg,
-                                             std::size_t atom, const Vec3 &f) {
+leaf::result<void> PotFit::set_ref_force(std::string_view cfg, std::size_t atom,
+                                         const Vec3 &f) {
   BOOST_LEAF_AUTO(ci, get_configuration_index(cfg));
   return write_ref_force(ci, atom, f);
 }
@@ -264,20 +261,19 @@ leaf::result<void> PotFit::set_ref_energy(std::string_view cfg, double e) {
   return set_ref_energy(ci, e);
 }
 
-leaf::result<void> PotFit::set_ref_energy(const Configuration &cfg,
-                                              double e) {
+leaf::result<void> PotFit::set_ref_energy(const Configuration &cfg, double e) {
   BOOST_LEAF_AUTO(ci, get_configuration_index(cfg));
   return set_ref_energy(ci, e);
 }
 
 leaf::result<void> PotFit::set_ref_stress(std::string_view cfg,
-                                              const SymTens &s) {
+                                          const SymTens &s) {
   BOOST_LEAF_AUTO(ci, get_configuration_index(cfg));
   return set_ref_stress(ci, s);
 }
 
 leaf::result<void> PotFit::set_ref_stress(const Configuration &cfg,
-                                              const SymTens &s) {
+                                          const SymTens &s) {
   BOOST_LEAF_AUTO(ci, get_configuration_index(cfg));
   return set_ref_stress(ci, s);
 }
@@ -302,8 +298,7 @@ leaf::result<void> PotFit::declare_element(std::string_view sym) {
 }
 
 leaf::result<void> PotFit::set_pair_potential(std::string_view a,
-                                                  std::string_view b,
-                                                  Potential p) {
+                                              std::string_view b, Potential p) {
   BOOST_LEAF_CHECK(Species::lookup(a));
   BOOST_LEAF_CHECK(Species::lookup(b));
   BOOST_LEAF_CHECK(detach_seeded("edit"));
@@ -333,8 +328,8 @@ void PotFit::set_global(GlobalParam g) {
   dirty_ = true;
 }
 
-leaf::result<void> PotFit::set_dipole(std::string_view a,
-                                          std::string_view b, Potential p) {
+leaf::result<void> PotFit::set_dipole(std::string_view a, std::string_view b,
+                                      Potential p) {
   BOOST_LEAF_CHECK(Species::lookup(a));
   BOOST_LEAF_CHECK(Species::lookup(b));
   BOOST_LEAF_CHECK(detach_seeded("edit"));
@@ -344,7 +339,7 @@ leaf::result<void> PotFit::set_dipole(std::string_view a,
 }
 
 leaf::result<void> PotFit::set_quadrupole(std::string_view a,
-                                              std::string_view b, Potential p) {
+                                          std::string_view b, Potential p) {
   BOOST_LEAF_CHECK(Species::lookup(a));
   BOOST_LEAF_CHECK(Species::lookup(b));
   BOOST_LEAF_CHECK(detach_seeded("edit"));
@@ -353,8 +348,8 @@ leaf::result<void> PotFit::set_quadrupole(std::string_view a,
   return {};
 }
 
-leaf::result<void> PotFit::set_radial(std::string_view a,
-                                          std::string_view b, Potential p) {
+leaf::result<void> PotFit::set_radial(std::string_view a, std::string_view b,
+                                      Potential p) {
   BOOST_LEAF_CHECK(Species::lookup(a));
   BOOST_LEAF_CHECK(Species::lookup(b));
   BOOST_LEAF_CHECK(detach_seeded("edit"));
@@ -372,8 +367,8 @@ leaf::result<void> PotFit::set_angular(std::string_view a, Potential p) {
 }
 
 leaf::result<void> PotFit::set_tersoff_params(std::string_view a,
-                                                  std::string_view b,
-                                                  TersoffParams params) {
+                                              std::string_view b,
+                                              TersoffParams params) {
   BOOST_LEAF_CHECK(Species::lookup(a));
   BOOST_LEAF_CHECK(Species::lookup(b));
   BOOST_LEAF_CHECK(detach_seeded("edit"));
@@ -383,8 +378,8 @@ leaf::result<void> PotFit::set_tersoff_params(std::string_view a,
 }
 
 leaf::result<void> PotFit::set_stiweb_params(std::string_view a,
-                                                 std::string_view b,
-                                                 SWParams params) {
+                                             std::string_view b,
+                                             SWParams params) {
   BOOST_LEAF_CHECK(Species::lookup(a));
   BOOST_LEAF_CHECK(Species::lookup(b));
   BOOST_LEAF_CHECK(detach_seeded("edit"));
@@ -394,9 +389,8 @@ leaf::result<void> PotFit::set_stiweb_params(std::string_view a,
 }
 
 leaf::result<void> PotFit::set_stiweb_lambda(std::string_view central,
-                                                 std::string_view a,
-                                                 std::string_view b,
-                                                 Param value) {
+                                             std::string_view a,
+                                             std::string_view b, Param value) {
   BOOST_LEAF_CHECK(Species::lookup(central));
   BOOST_LEAF_CHECK(Species::lookup(a));
   BOOST_LEAF_CHECK(Species::lookup(b));
@@ -409,8 +403,8 @@ leaf::result<void> PotFit::set_stiweb_lambda(std::string_view central,
 }
 
 leaf::result<void> PotFit::set_pair_param(std::string_view a,
-                                              std::string_view b, std::size_t i,
-                                              double v) {
+                                          std::string_view b, std::size_t i,
+                                          double v) {
   BOOST_LEAF_CHECK(ensure_frozen());
   const PotentialPair *pt = pair_table_of(model_);
   if (pt == nullptr) {
@@ -526,8 +520,7 @@ struct SpecRef {
   const std::vector<GlobalParam> &globals;
 };
 
-[[nodiscard]] PotFit::PairKey norm_key(std::string_view a,
-                                           std::string_view b) {
+[[nodiscard]] PotFit::PairKey norm_key(std::string_view a, std::string_view b) {
   std::string sa(a), sb(b);
   if (sb < sa) {
     std::swap(sa, sb);
@@ -924,7 +917,7 @@ leaf::result<int> PotFit::optimize() {
 }
 
 leaf::result<void> PotFit::write(const std::filesystem::path &path,
-                                     std::string_view format) {
+                                 std::string_view format) {
   BOOST_LEAF_CHECK(ensure_frozen());
   return io::write_model(model_, path, format);
 }
@@ -945,8 +938,7 @@ leaf::result<const config_index::ConfigIndex *> PotFit::index() {
   return &index_.value();
 }
 
-leaf::result<Configuration *>
-PotFit::config_by_name(std::string_view name) {
+leaf::result<Configuration *> PotFit::config_by_name(std::string_view name) {
   BOOST_LEAF_CHECK(ensure_frozen());
   Configuration *cfg = config_index::config_by_name(index_.value(), name);
   if (cfg == nullptr) {

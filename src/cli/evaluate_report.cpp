@@ -1,4 +1,4 @@
-#include "cli/evaluate_report.hpp"
+#include "potfit/cli/evaluate_report.hpp"
 
 #include <boost/leaf/handle_errors.hpp>
 #include <cstddef>
@@ -41,8 +41,8 @@ leaf::result<void> write_evaluate_report(potfit::PotFit &session,
     BOOST_LEAF_AUTO(r, session.evaluate(i));
 
     double csq = 0.0;
-    out << "    {\n      \"index\": " << i << ",\n      \"name\": \"" << cfg.name
-        << "\""
+    out << "    {\n      \"index\": " << i << ",\n      \"name\": \""
+        << cfg.name << "\""
         << ",\n      \"natoms\": " << cfg.atoms.size()
         << ",\n      \"calc_energy\": " << r.energy
         << ",\n      \"ref_energy\": " << cfg.ref.energy
@@ -75,8 +75,9 @@ leaf::result<void> write_evaluate_report(potfit::PotFit &session,
     csq += r.limit * r.limit;
     total_sumsq += csq;
 
-    out << "      ],\n      \"limit\": " << r.limit << ",\n      \"sumsq\": "
-        << csq << "\n    }" << (i + 1 < configs.size() ? "," : "") << "\n";
+    out << "      ],\n      \"limit\": " << r.limit
+        << ",\n      \"sumsq\": " << csq << "\n    }"
+        << (i + 1 < configs.size() ? "," : "") << "\n";
   }
 
   out << "  ],\n  \"total_sumsq\": " << total_sumsq << "\n}\n";
