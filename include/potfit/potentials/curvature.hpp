@@ -7,12 +7,6 @@
 // (e.g. pair-potential radii between neighbour shells). The optimizer is free
 // to dump arbitrary spikes into that null space. A small Tikhonov penalty on
 // the curvature (second difference) of the free knots removes the ambiguity.
-//
-// This is a Sean-Parent-style customization point: the default reports that a
-// potential contributes no curvature residuals (analytic potentials are
-// intrinsically smooth and carry no free knots). Tabulated potentials overload
-// `curvature_count` / `write_curvature` to participate. The erased `Potential`
-// dispatches to these via ADL.
 
 #include <Eigen/Core>
 
