@@ -40,9 +40,9 @@ int run_with_solver(std::span<Configuration> configs, ForceCalculator &model,
 
 int run_optimizer(std::span<Configuration> configs, ForceCalculator &model,
                   const OptimizerOptions &opts) {
-  // No solver supplied: fit with the default Levenberg–Marquardt solver. Callers
-  // wanting a different algorithm or non-default tuning build a Solver and pass
-  // it to the overload below (e.g. via PotFit::set_solver).
+  // No solver supplied: fit with the default Levenberg–Marquardt solver.
+  // Callers wanting a different algorithm or non-default tuning build a Solver
+  // and pass it to the overload below (e.g. via PotFit::set_solver).
   return run_with_solver(configs, model, opts, make_default_solver());
 }
 

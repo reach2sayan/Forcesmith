@@ -14,7 +14,7 @@ namespace potfit::io {
 #define OPEN_FILE_WITH_HANDLE(var, path)                                       \
   std::ofstream var(path);                                                     \
   if (!(var)) {                                                                \
-    throw std::runtime_error("cannot open " + (path).string());               \
+    throw std::runtime_error("cannot open " + (path).string());                \
   }
 
 using json = nlohmann::json;
@@ -32,8 +32,8 @@ static json sample_one(const Potential &p, int nknots) {
     const double v = p.eval(r);
     if (!std::isfinite(v)) {
       throw std::runtime_error("non-finite potential value (" +
-                               std::to_string(v) + ") at r=" +
-                               std::to_string(r) +
+                               std::to_string(v) +
+                               ") at r=" + std::to_string(r) +
                                "; cannot tabulate potential for output");
     }
     pot["knots"].push_back(v);

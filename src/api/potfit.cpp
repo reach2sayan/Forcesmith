@@ -519,7 +519,8 @@ PotFit::decompose_seeded_into_spec(const SpeciesRegistry &reg) {
                radial_,   angular_, tersoff_, stiweb_,    lambda_, globals_};
   return std::visit(
       [&](auto &c) -> leaf::result<void> {
-        return PotentialType<std::decay_t<decltype(c)>>::decompose(c, reg, spec);
+        return PotentialType<std::decay_t<decltype(c)>>::decompose(c, reg,
+                                                                   spec);
       },
       *seeded_);
 }

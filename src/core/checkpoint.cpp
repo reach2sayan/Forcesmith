@@ -57,8 +57,8 @@ save_configs(const std::filesystem::path &path,
   return {};
 }
 
-[[nodiscard]] leaf::result<void>
-save_model(const std::filesystem::path &path, const ForceCalculator &model) {
+[[nodiscard]] leaf::result<void> save_model(const std::filesystem::path &path,
+                                            const ForceCalculator &model) {
   // Native JSON model output handles every force-calculator family.
   return io::write_model(model, path, "native");
 }
@@ -77,8 +77,8 @@ load_configs(const std::filesystem::path &path,
   return {};
 }
 
-[[nodiscard]] leaf::result<void>
-load_model(const std::filesystem::path &path, ForceCalculator &model) {
+[[nodiscard]] leaf::result<void> load_model(const std::filesystem::path &path,
+                                            ForceCalculator &model) {
   BOOST_LEAF_AUTO(f, open_file<std::ifstream>(path, std::ios::in, "reading"));
   std::string text{std::istreambuf_iterator<char>(f),
                    std::istreambuf_iterator<char>{}};
@@ -102,9 +102,8 @@ leaf::result<void> CheckpointWriter::write() const {
   return {};
 }
 
-leaf::result<void>
-CheckpointReader::read(std::vector<Configuration> &configs,
-                       ForceCalculator &model) const {
+leaf::result<void> CheckpointReader::read(std::vector<Configuration> &configs,
+                                          ForceCalculator &model) const {
   BOOST_LEAF_CHECK(load_configs(cfg_path(prefix_), configs));
   BOOST_LEAF_CHECK(load_model(model_path(prefix_), model));
   return {};
