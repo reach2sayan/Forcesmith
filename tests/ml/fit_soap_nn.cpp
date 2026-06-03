@@ -23,15 +23,19 @@
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
+#include <atomic>
 #include <cctype>
+#include <chrono>
 #include <cmath>
 #include <cstdint>
+#include <execution>
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
 #include <iostream>
 #include <iterator>
 #include <limits>
+#include <numeric>
 #include <optional>
 #include <sstream>
 #include <string>
@@ -177,16 +181,46 @@ void apply_options(PotFit &s, const Args &a) {
 
 leaf::result<double> force_rmse(PotFit &s) {
   BOOST_LEAF_AUTO(configs, s.configurations());
-  double sumsq = 0.0;
-  std::size_t n = 0;
-  for (std::size_t i = 0; i < configs.size(); ++i) {
-    BOOST_LEAF_AUTO(r, s.evaluate(i));
-    for (std::size_t a = 0; a < configs[i].atoms.size(); ++a) {
-      const Vec3 d = r.forces[a] - configs[i].atoms[a].ref.force;
-      sumsq += d.squaredNorm();
-      n += 3;
-    }
+  if (configs.empty()) {
+    return std::numeric_limits<double>::quiet_NaN();
   }
+  // The uncached predict path is expensive for SOAP (FD-over-energy), so evaluate
+  // the configs in parallel. Freeze once here first: thereafter ensure_frozen is a
+  // read-only no-op and concurrent s.evaluate is safe (model + configs read-only;
+  // force::evaluate uses a private scratch).
+  BOOST_LEAF_CHECK(s.evaluate(0));
+
+  std::vector<std::size_t> idx(configs.size());
+  std::iota(idx.begin(), idx.end(), 0);
+  std::vector<double> partial_sq(configs.size(), 0.0);
+  std::vector<std::size_t> partial_n(configs.size(), 0);
+  std::atomic<bool> ok{true};
+
+  std::for_each(std::execution::par, idx.begin(), idx.end(), [&](std::size_t i) {
+    auto r = s.evaluate(i);
+    if (!r) {
+      ok.store(false);
+      return;
+    }
+    double ss = 0.0;
+    std::size_t nn = 0;
+    for (std::size_t a = 0; a < configs[i].atoms.size(); ++a) {
+      const Vec3 d = r->forces[a] - configs[i].atoms[a].ref.force;
+      ss += d.squaredNorm();
+      nn += 3;
+    }
+    partial_sq[i] = ss;
+    partial_n[i] = nn;
+  });
+  if (!ok.load()) {
+    return leaf::new_error(
+        io::ParseError{"evaluate failed during force_rmse", 0});
+  }
+
+  const double sumsq =
+      std::accumulate(partial_sq.begin(), partial_sq.end(), 0.0);
+  const std::size_t n =
+      std::accumulate(partial_n.begin(), partial_n.end(), std::size_t{0});
   return n ? std::sqrt(sumsq / static_cast<double>(n))
            : std::numeric_limits<double>::quiet_NaN();
 }
@@ -249,10 +283,30 @@ leaf::result<Result> fit_element(const Args &a) {
   res.params = std::visit([](const auto &m) { return m.param_count(); }, model);
   BOOST_LEAF_CHECK(s.seed_force_model(std::move(model)));
 
+  using clock = std::chrono::steady_clock;
+  auto ms = [](auto d) {
+    return std::chrono::duration_cast<std::chrono::milliseconds>(d).count();
+  };
+
+  std::cerr << "... [phase] start_rmse begin\n" << std::flush;
+  const auto t0 = clock::now();
   BOOST_LEAF_ASSIGN(res.rmse_start, force_rmse(s)); // untrained baseline
+  const auto t1 = clock::now();
+  std::cerr << "... [phase] start_rmse done (" << ms(t1 - t0)
+            << " ms); optimize begin\n"
+            << std::flush;
   apply_options(s, a);
   BOOST_LEAF_CHECK(s.optimize());
+  const auto t2 = clock::now();
+  std::cerr << "... [phase] optimize done (" << ms(t2 - t1)
+            << " ms); final_rmse begin\n"
+            << std::flush;
   BOOST_LEAF_ASSIGN(res.rmse_final, force_rmse(s));
+  const auto t3 = clock::now();
+  std::cerr << "... timing (ms): start_rmse=" << ms(t1 - t0)
+            << " optimize=" << ms(t2 - t1) << " final_rmse=" << ms(t3 - t2)
+            << "\n"
+            << std::flush;
 
   std::filesystem::create_directories(a.out_dir + "/fits");
   BOOST_LEAF_CHECK(

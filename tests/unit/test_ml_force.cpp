@@ -212,18 +212,18 @@ TEST(MLForce, ReaderRejectsCoeffMismatch) {
 // ── MLP head ──────────────────────────────────────────────────────────────────
 
 TEST(MLPHead, GradMatchesFD) {
-  // de/dD (backprop) must match a finite-difference of energy_impl.
+  // de/dD (backprop) must match a finite-difference of energy.
   auto h = MLPHead::make({4, 6, 5, 1}, MLPHead::Act::Tanh, 7);
   Eigen::VectorXd D(4);
   D << 0.3, -0.7, 1.1, 0.2;
 
-  const Eigen::VectorXd g = h.grad_impl(D);
+  const Eigen::VectorXd g = h.grad(D);
   const double dx = 1e-6;
   for (int k = 0; k < 4; ++k) {
     Eigen::VectorXd dp = D, dm = D;
     dp[k] += dx;
     dm[k] -= dx;
-    const double fd = (h.energy_impl(dp) - h.energy_impl(dm)) / (2 * dx);
+    const double fd = (h.energy(dp) - h.energy(dm)) / (2 * dx);
     EXPECT_NEAR(g[k], fd, 1e-6 * std::abs(fd) + 1e-8);
   }
 }
@@ -232,13 +232,13 @@ TEST(MLPHead, SiLUGradMatchesFD) {
   auto h = MLPHead::make({3, 4, 1}, MLPHead::Act::SiLU, 3);
   Eigen::VectorXd D(3);
   D << 0.5, -1.2, 0.8;
-  const Eigen::VectorXd g = h.grad_impl(D);
+  const Eigen::VectorXd g = h.grad(D);
   const double dx = 1e-6;
   for (int k = 0; k < 3; ++k) {
     Eigen::VectorXd dp = D, dm = D;
     dp[k] += dx;
     dm[k] -= dx;
-    const double fd = (h.energy_impl(dp) - h.energy_impl(dm)) / (2 * dx);
+    const double fd = (h.energy(dp) - h.energy(dm)) / (2 * dx);
     EXPECT_NEAR(g[k], fd, 1e-6 * std::abs(fd) + 1e-8);
   }
 }

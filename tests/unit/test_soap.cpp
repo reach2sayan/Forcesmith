@@ -47,7 +47,7 @@ TEST(Soap, DescriptorSizeMatches) {
   EXPECT_EQ(static_cast<std::size_t>(d.values.size()), m.descriptor_size());
   EXPECT_EQ(m.descriptor_size(), (3u + 1u) * (3u * 4u / 2u)); // (l_max+1)·(n(n+1)/2)
   EXPECT_TRUE(d.values.allFinite());
-  EXPECT_FALSE(d.has_grad);
+  EXPECT_TRUE(d.has_grad); // analytic dD/dr
 }
 
 TEST(Soap, RotationInvariant) {
@@ -160,6 +160,38 @@ TEST(Soap, RbfOrthonormality) {
   }
   const Eigen::MatrixXd G = m.beta * S * m.beta.transpose();
   EXPECT_LT((G - Eigen::MatrixXd::Identity(n, n)).norm(), 1e-6);
+}
+
+// Analytic dD/dr must match a finite-difference of the descriptor w.r.t. each
+// neighbour's bond vector (the oracle for the analytic gradient math).
+TEST(Soap, AnalyticGradMatchesFD) {
+  auto m = make_soap(3, 3);
+  auto cfg = make_env();
+  build_neighbor_list(cfg, m.rcut);
+
+  const DescriptorValue d = m.get_descriptor(cfg.atoms[0]);
+  ASSERT_TRUE(d.has_grad);
+  ASSERT_EQ(d.grad_neigh.size(), cfg.atoms[0].neighbors.size());
+
+  const double h = 1e-6;
+  auto &nbrs = cfg.atoms[0].neighbors;
+  DescriptorGrad grad_self_fd = DescriptorGrad::Zero(d.values.size(), 3);
+  for (std::size_t jj = 0; jj < nbrs.size(); ++jj) {
+    for (int k = 0; k < 3; ++k) {
+      const double x0 = nbrs[jj].dist[k];
+      nbrs[jj].dist[k] = x0 + h;
+      const Eigen::VectorXd dp = m.get_descriptor(cfg.atoms[0]).values;
+      nbrs[jj].dist[k] = x0 - h;
+      const Eigen::VectorXd dm = m.get_descriptor(cfg.atoms[0]).values;
+      nbrs[jj].dist[k] = x0;
+      const Eigen::VectorXd fd = (dp - dm) / (2.0 * h);
+      // dD/dr_j (grad_neigh) vs FD of the descriptor w.r.t. that bond vector.
+      EXPECT_LT((d.grad_neigh[jj].col(k) - fd).norm(), 1e-5)
+          << "neighbor " << jj << " comp " << k;
+      grad_self_fd.col(k) -= fd; // grad_self = −Σ_j dD/dr_j
+    }
+  }
+  EXPECT_LT((d.grad_self - grad_self_fd).norm(), 1e-5);
 }
 
 // test_number_of_features: multi-species size formula

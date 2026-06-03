@@ -11,6 +11,7 @@
 #include <execution>
 #include <numeric>
 #include <span>
+#include <variant>
 #include <vector>
 
 namespace potfit {
@@ -66,8 +67,18 @@ void eval_into(std::span<Configuration> configs, ForceCalculator &model,
         // Contiguous span → index of this config is its offset from the base.
         const std::size_t c = static_cast<std::size_t>(&cfg - configs.data());
         // eval_forces mutates only this config (forces/energy/stress/limit +
-        // its own neighbor list); the model is read-only here.
-        std::visit([&](auto &m) { m.eval_forces(cfg); }, model);
+        // its own neighbor list); the model is read-only here. ML models expose
+        // an indexed overload that serves config `c` from the descriptor cache
+        // built in prepare(); everything else recomputes from scratch.
+        std::visit(
+            [&](auto &m) {
+              if constexpr (requires { m.eval_forces(cfg, c); }) {
+                m.eval_forces(cfg, c);
+              } else {
+                m.eval_forces(cfg);
+              }
+            },
+            model);
 
         int row = row_offset[c];
         for (const auto &atom : cfg.atoms) {
@@ -109,6 +120,65 @@ void eval_into(std::span<Configuration> configs, ForceCalculator &model,
   }
 }
 
+// Parallel central-difference Jacobian on the cached path. Each parameter column
+// is independent: it perturbs a PRIVATE copy of the model (heads deep-copied, the
+// big descriptor cache shared read-only via shared_ptr) and writes into its own
+// disjoint fjac column and private force buffer — zero shared mutable state, so
+// the column loop fills every core. Residual layout mirrors eval_into exactly
+// (ML models carry no smoothness block, so values == row_offset.back()).
+template <typename M>
+void df_cached_parallel(M &m0, const Eigen::VectorXd &x, Eigen::MatrixXd &fjac,
+                        std::span<Configuration> configs,
+                        const std::vector<int> &row_offset, int values,
+                        int inputs, double energy_weight, double stress_weight) {
+  std::size_t max_atoms = 0;
+  for (const auto &cfg : configs) {
+    max_atoms = std::max(max_atoms, cfg.atoms.size());
+  }
+  std::vector<int> cols(static_cast<std::size_t>(inputs));
+  std::iota(cols.begin(), cols.end(), 0);
+  constexpr double delta = 1e-5;
+
+  std::for_each(
+      std::execution::par, cols.begin(), cols.end(), [&](int j) {
+        M m = m0; // private head copy; cache_ shared read-only
+        Eigen::VectorXd xp = x, fp(values), fm(values);
+        std::vector<Vec3> fbuf(max_atoms);
+        auto eval_all = [&](const Eigen::VectorXd &xx, Eigen::VectorXd &out) {
+          m.scatter_params(xx, std::size_t{0});
+          for (std::size_t c = 0; c < configs.size(); ++c) {
+            const std::size_t na = configs[c].atoms.size();
+            double e = 0.0;
+            SymTens s = SymTens::Zero();
+            m.eval_cached(c, std::span<Vec3>(fbuf.data(), na), e, s);
+            int row = row_offset[c];
+            for (std::size_t a = 0; a < na; ++a) {
+              const Vec3 &rf = configs[c].atoms[a].ref.force;
+              out[row++] = fbuf[a][0] - rf[0];
+              out[row++] = fbuf[a][1] - rf[1];
+              out[row++] = fbuf[a][2] - rf[2];
+            }
+            out[row++] = energy_weight * (e - configs[c].ref.energy);
+            if (stress_weight > 0.0) {
+              const SymTens &rs = configs[c].ref.stress;
+              out[row++] = stress_weight * (s(0, 0) - rs(0, 0));
+              out[row++] = stress_weight * (s(1, 1) - rs(1, 1));
+              out[row++] = stress_weight * (s(2, 2) - rs(2, 2));
+              out[row++] = stress_weight * (s(0, 1) - rs(0, 1));
+              out[row++] = stress_weight * (s(0, 2) - rs(0, 2));
+              out[row++] = stress_weight * (s(1, 2) - rs(1, 2));
+            }
+            out[row++] = 0.0; // limit residual (ML models have none)
+          }
+        };
+        xp[j] += delta;
+        eval_all(xp, fp);
+        xp[j] -= 2.0 * delta;
+        eval_all(xp, fm);
+        fjac.col(j) = (fp - fm) / (2.0 * delta);
+      });
+}
+
 } // namespace
 
 PotfitFunctor::PotfitFunctor(std::span<Configuration> configs,
@@ -135,6 +205,19 @@ PotfitFunctor::PotfitFunctor(std::span<Configuration> configs,
     acc += config_residual_count(cfg, stress_weight_);
     row_offset_.push_back(acc);
   }
+
+  // Precompute the descriptor cache ONCE for models that support it (ML models),
+  // so every residual/Jacobian evaluation below is cheap cached algebra. Runs in
+  // the shared arena so its parallel fill composes with the global thread cap.
+  shared_arena().execute([&] {
+    std::visit(
+        [&](auto &m) {
+          if constexpr (requires { m.prepare(configs_); }) {
+            m.prepare(configs_);
+          }
+        },
+        model_);
+  });
 }
 
 int PotfitFunctor::operator()(const Eigen::VectorXd &x,
@@ -150,7 +233,32 @@ int PotfitFunctor::operator()(const Eigen::VectorXd &x,
   return 0;
 }
 
+bool PotfitFunctor::df_cached(const Eigen::VectorXd &x,
+                             Eigen::MatrixXd &fjac) const {
+  bool handled = false;
+  shared_arena().execute([&] {
+    std::visit(
+        [&](auto &m) {
+          if constexpr (requires { m.has_cache(); }) {
+            if (m.has_cache()) {
+              df_cached_parallel(m, x, fjac, configs_, row_offset_, values_,
+                                 inputs_, energy_weight_, stress_weight_);
+              handled = true;
+            }
+          }
+        },
+        model_);
+  });
+  return handled;
+}
+
 int PotfitFunctor::df(const Eigen::VectorXd &x, Eigen::MatrixXd &fjac) const {
+  // Cache-backed models get the fast parallel-column path; everyone else uses
+  // the serial central-difference fallback below.
+  if (df_cached(x, fjac)) {
+    return 0;
+  }
+
   constexpr double delta = 1e-5;
   Eigen::VectorXd fp(values_), fm(values_), xp = x;
   shared_arena().execute([&] {

@@ -15,14 +15,15 @@ public:
   SplinePotential(std::vector<double> x, std::vector<double> y);
   double eval(double r) const;
   double deriv(double r) const;
-  std::pair<double, double> span() const { return {x_.front(), x_.back()}; }
+  constexpr std::pair<double, double> span() const { return {x_.front(), x_.back()}; }
 
   constexpr void set_fixed(std::size_t i, bool f) { fixed_[i] = f; }
   constexpr bool is_fixed(std::size_t i) const { return fixed_[i]; }
 
-  // Direct knot setter (interface parity with AnalyticBase::set_param, required
-  // by the erased Potential). Global parameters only ever bind to analytic _sc
-  // potentials, never to tabulated ones, so this path is unused in practice.
+  // Direct knot setter (interface parity with AnalyticParams::set_param,
+  // required by the erased Potential). Global parameters only ever bind to
+  // analytic _sc potentials, never to tabulated ones, so this path is unused in
+  // practice.
   void set_param(std::size_t i, double v) { y_[i] = v; }
 
   constexpr std::size_t param_count() const {

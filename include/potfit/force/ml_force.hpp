@@ -17,7 +17,8 @@
 //       bool            analytic_grads() const;
 //   * The head is value-erased (EnergyHead, like Potential) so swapping the
 //     descriptor→energy map (linear → kernel → NN) never multiplies the
-//     ForceCalculator variant. Concrete heads share plumbing via HeadBase.
+//     ForceCalculator variant. Concrete heads get their optimizer
+//     param-plumbing from the HeadParams CRTP mixin.
 //
 // The fittable parameters are the head coefficients (one head per element
 // type); descriptor hyperparameters (η, Rs, cutoff …) are fixed.
@@ -36,7 +37,9 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <execution>
 #include <memory>
+#include <span>
 #include <string>
 #include <utility>
 #include <vector>
@@ -82,20 +85,15 @@ struct HeadConcept {
 };
 } // namespace detail
 
-// CRTP base for the related concrete heads. Derived must implement:
-//   double          energy_impl(const VectorXd&) const
-//   Eigen::VectorXd grad_impl(const VectorXd&) const          // de/dD
+// CRTP mixin that generates the optimizer param-plumbing for a concrete head
+// from its fittable slots. The head itself supplies the maths and its slots:
+//   double          energy(const VectorXd&) const
+//   Eigen::VectorXd grad(const VectorXd&) const                // de/dD
 //   std::array/vector<Param*>       field_ptrs()               // fittable
 //   slots std::array/vector<const Param*> field_ptrs() const
 // gather/scatter follow the Potential convention: write/read starting at `off`;
 // the caller advances by param_count().
-template <typename Derived> struct HeadBase {
-  double energy(const Eigen::VectorXd &D) const {
-    return self().energy_impl(D);
-  }
-  Eigen::VectorXd grad(const Eigen::VectorXd &D) const {
-    return self().grad_impl(D);
-  }
+template <typename Derived> struct HeadParams {
   std::size_t param_count() const {
     auto f = self().field_ptrs();
     return static_cast<std::size_t>(
@@ -118,39 +116,50 @@ template <typename Derived> struct HeadBase {
 
   // Default (de)serialization over field_ptrs() — ALL params, free and fixed.
   // Derived must still supply type_tag() and architecture(). Heads that do not
-  // store their parameters as Param* (e.g. MLPHead) override these four.
-  Eigen::VectorXd all_values() const {
-    auto f = self().field_ptrs();
-    Eigen::VectorXd v(static_cast<Eigen::Index>(f.size()));
-    for (std::size_t i = 0; i < f.size(); ++i) {
-      v[static_cast<Eigen::Index>(i)] = f[i]->value;
-    }
-    return v;
-  }
-  void set_all_values(const Eigen::VectorXd &v) {
-    auto f = self().field_ptrs();
-    for (std::size_t i = 0; i < f.size(); ++i) {
-      f[i]->value = v[static_cast<Eigen::Index>(i)];
-    }
-  }
+  // store their parameters as Param* (e.g. MLPHead) override these.
+  Eigen::VectorXd all_values() const;
+  void set_all_values(const Eigen::VectorXd &v);
 
 private:
-  const Derived &self() const { return static_cast<const Derived &>(*this); }
-  Derived &self() { return static_cast<Derived &>(*this); }
+  constexpr const Derived &self() const {
+    return static_cast<const Derived &>(*this);
+  }
+  constexpr Derived &self() { return static_cast<Derived &>(*this); }
 };
+
+template <typename Derived>
+Eigen::VectorXd HeadParams<Derived>::all_values() const {
+  auto f = self().field_ptrs();
+  Eigen::VectorXd v(static_cast<Eigen::Index>(f.size()));
+  std::transform(f.begin(), f.end(), v.data(),
+                 [](const auto &node) { return node->value; });
+  return v;
+}
+
+template <typename Derived>
+void HeadParams<Derived>::set_all_values(const Eigen::VectorXd &v) {
+  auto f = self().field_ptrs();
+  assert(v.size() == static_cast<Eigen::Index>(f.size()));
+  std::transform(v.data(), v.data() + v.size(), f.begin(), f.begin(),
+                 [](double value, auto *field) {
+                   field->value = value;
+                   return field;
+                 });
+}
 
 // Linear head: E_i = Σ_k coeffs_k · D_k + bias.  de/dD = coeffs (constant), so
 // forces reduce to coeffs · dD/dr.
-struct LinearHead : HeadBase<LinearHead> {
+struct LinearHead : HeadParams<LinearHead> {
   std::vector<Param> coeffs;
   Param bias{0.0, true};
 
-  double energy_impl(const Eigen::VectorXd &D) const;
-  Eigen::VectorXd grad_impl(const Eigen::VectorXd &) const;
+  double energy(const Eigen::VectorXd &D) const;
+  Eigen::VectorXd grad(const Eigen::VectorXd &) const;
   std::vector<Param *> field_ptrs();
   std::vector<const Param *> field_ptrs() const;
 
-  // all_values()/set_all_values() inherited from HeadBase emit [coeffs…, bias].
+  // all_values()/set_all_values() inherited from HeadParams emit [coeffs…,
+  // bias].
   constexpr std::string type_tag() const { return "linear"; }
   constexpr std::vector<int> architecture() const {
     return {static_cast<int>(coeffs.size())};
@@ -160,10 +169,10 @@ struct LinearHead : HeadBase<LinearHead> {
 // Multilayer-perceptron head (Behler–Parrinello style): E_i = MLP(D_i), a stack
 // of dense layers with a nonlinear activation and a linear scalar output. The
 // fittable parameters are all weights and biases. Forward and backward passes
-// use Eigen matrix algebra; grad_impl returns the EXACT input gradient de/dD
+// use Eigen matrix algebra; grad returns the EXACT input gradient de/dD
 // (used to assemble forces), which is independent of the optimizer's
 // finite-difference Jacobian over the weights themselves.
-struct MLPHead : HeadBase<MLPHead> {
+struct MLPHead : HeadParams<MLPHead> {
   enum class Act { Tanh, SiLU };
 
   std::vector<Eigen::MatrixXd> W; // W[l] is (out_l × in_l)
@@ -175,8 +184,8 @@ struct MLPHead : HeadBase<MLPHead> {
   static MLPHead make(const std::vector<int> &sizes, Act act = Act::Tanh,
                       std::uint64_t seed = 1);
 
-  double energy_impl(const Eigen::VectorXd &D) const;
-  Eigen::VectorXd grad_impl(const Eigen::VectorXd &D) const;
+  double energy(const Eigen::VectorXd &D) const;
+  Eigen::VectorXd grad(const Eigen::VectorXd &D) const;
 
   std::size_t param_count() const;
   void gather_params(Eigen::VectorXd &dst, std::size_t off) const;
@@ -196,25 +205,31 @@ class EnergyHead : private detail::ErasedValue<detail::HeadConcept> {
   template <typename T> struct Model final : detail::HeadConcept {
     T impl_;
     explicit Model(T t) : impl_(std::move(t)) {}
-    double energy(const Eigen::VectorXd &D) const override {
+    constexpr double energy(const Eigen::VectorXd &D) const override {
       return impl_.energy(D);
     }
-    Eigen::VectorXd grad(const Eigen::VectorXd &D) const override {
+    constexpr Eigen::VectorXd grad(const Eigen::VectorXd &D) const override {
       return impl_.grad(D);
     }
-    std::size_t param_count() const override { return impl_.param_count(); }
-    void gather_params(Eigen::VectorXd &x, std::size_t off) const override {
+    constexpr std::size_t param_count() const override {
+      return impl_.param_count();
+    }
+    constexpr void gather_params(Eigen::VectorXd &x,
+                                 std::size_t off) const override {
       impl_.gather_params(x, off);
     }
-    void scatter_params(const Eigen::VectorXd &x, std::size_t off) override {
+    constexpr void scatter_params(const Eigen::VectorXd &x,
+                                  std::size_t off) override {
       impl_.scatter_params(x, off);
     }
-    std::string type_tag() const override { return impl_.type_tag(); }
-    std::vector<int> architecture() const override {
+    constexpr std::string type_tag() const override { return impl_.type_tag(); }
+    constexpr std::vector<int> architecture() const override {
       return impl_.architecture();
     }
-    Eigen::VectorXd all_values() const override { return impl_.all_values(); }
-    void set_all_values(const Eigen::VectorXd &v) override {
+    constexpr Eigen::VectorXd all_values() const override {
+      return impl_.all_values();
+    }
+    constexpr void set_all_values(const Eigen::VectorXd &v) override {
       impl_.set_all_values(v);
     }
     std::unique_ptr<detail::HeadConcept> clone() const override {
@@ -235,21 +250,27 @@ public:
   EnergyHead &operator=(const EnergyHead &) = default;
   EnergyHead &operator=(EnergyHead &&) noexcept = default;
 
-  double energy(const Eigen::VectorXd &D) const { return self_->energy(D); }
-  Eigen::VectorXd grad(const Eigen::VectorXd &D) const {
+  constexpr double energy(const Eigen::VectorXd &D) const {
+    return self_->energy(D);
+  }
+  constexpr Eigen::VectorXd grad(const Eigen::VectorXd &D) const {
     return self_->grad(D);
   }
-  std::size_t param_count() const { return self_->param_count(); }
-  void gather_params(Eigen::VectorXd &x, std::size_t off) const {
+  constexpr std::size_t param_count() const { return self_->param_count(); }
+  constexpr void gather_params(Eigen::VectorXd &x, std::size_t off) const {
     self_->gather_params(x, off);
   }
-  void scatter_params(const Eigen::VectorXd &x, std::size_t off) {
+  constexpr void scatter_params(const Eigen::VectorXd &x, std::size_t off) {
     self_->scatter_params(x, off);
   }
-  std::string type_tag() const { return self_->type_tag(); }
-  std::vector<int> architecture() const { return self_->architecture(); }
-  Eigen::VectorXd all_values() const { return self_->all_values(); }
-  void set_all_values(const Eigen::VectorXd &v) { self_->set_all_values(v); }
+  constexpr std::string type_tag() const { return self_->type_tag(); }
+  constexpr std::vector<int> architecture() const {
+    return self_->architecture();
+  }
+  constexpr Eigen::VectorXd all_values() const { return self_->all_values(); }
+  constexpr void set_all_values(const Eigen::VectorXd &v) {
+    self_->set_all_values(v);
+  }
 };
 
 template <typename Derived>
@@ -258,6 +279,104 @@ struct MLBase : ForceCalculatorBase<Derived>, NoGlobals {
   // its hyperparameters) lives in Derived.
   TypeArray<EnergyHead> heads;
 
+  // ── Fit-time descriptor cache
+  // During an optimization the
+  // training geometry is FIXED — only the head params move — so the descriptor
+  // D_i and its position-gradient dD_i/dr are constant. prepare() computes them
+  // ONCE for every atom of every config; thereafter the per-iteration force
+  // evaluation is cheap head algebra over cached arrays (no neighbor rebuild,
+  // no get_descriptor, no finite-difference fallback).
+  //
+  // Stored POINTER-FREE: each cached atom keeps its neighbors as flat atom
+  // indices (within the config) plus the bond vectors, so the cached force
+  // assembly needs no live neighbor list. That is what lets the parallel
+  // Jacobian (PotfitFunctor::df) accumulate forces into private per-column
+  // buffers with zero shared mutable state.
+  struct AtomCache {
+    int type = 0;                           // element slot → head index
+    Eigen::VectorXd values;                 // D_i  (descriptor_size)
+    DescriptorGrad grad_self;               // dD_i/dr_i           (S×3)
+    std::vector<DescriptorGrad> grad_neigh; // dD_i/dr_j per neighbor (S×3)
+    std::vector<std::size_t> neigh_idx;     // neighbor atom index in the config
+    std::vector<Vec3> neigh_dist;           // bond r_j − r_i (for the virial)
+  };
+  struct CacheData {
+    std::vector<std::vector<AtomCache>> rows; // [config][atom]
+    std::vector<double> volume;               // per-config cell volume
+  };
+  // shared_ptr<const>: copying the model for a parallel Jacobian column copies
+  // the pointer (cheap, read-only sharing is thread-safe), never the data.
+  mutable std::shared_ptr<const CacheData> cache_;
+
+  void invalidate_cache() const { cache_.reset(); }
+  [[nodiscard]] bool has_cache() const { return static_cast<bool>(cache_); }
+
+  // One-time precompute over the whole training set. Builds neighbor lists,
+  // warms up any lazy descriptor state (e.g. SOAP's radial basis)
+  // single-threaded, then fills the cache with one balanced parallel_for over
+  // the flat (config, atom) set — thousands of independent units, so it fills
+  // every core instead of stranding threads on a handful of uneven configs.
+  void prepare(std::span<Configuration> configs) const {
+    auto data = std::make_shared<CacheData>();
+    data->rows.resize(configs.size());
+    data->volume.resize(configs.size());
+    for (std::size_t c = 0; c < configs.size(); ++c) {
+      build_neighbor_list(configs[c], max_cutoff());
+      data->rows[c].resize(configs[c].atoms.size());
+      data->volume[c] = bc_volume(configs[c].bc);
+    }
+    // Warm-up: force any lazy, model-internal init exactly once, serially, so
+    // the parallel fill below never races on it.
+    for (auto &cfg : configs) {
+      if (!cfg.atoms.empty()) {
+        (void)self().get_descriptor(cfg.atoms[0]);
+        break;
+      }
+    }
+    std::vector<std::pair<std::size_t, std::size_t>> work;
+    for (std::size_t c = 0; c < configs.size(); ++c) {
+      for (std::size_t a = 0; a < configs[c].atoms.size(); ++a) {
+        work.emplace_back(c, a);
+      }
+    }
+    std::for_each(std::execution::par, work.begin(), work.end(),
+                  [&](const std::pair<std::size_t, std::size_t> &ca) {
+                    fill_atom_cache(configs[ca.first], ca.second,
+                                    data->rows[ca.first][ca.second]);
+                  });
+    cache_ = std::move(data);
+  }
+
+  void eval_cached(std::size_t cache_index, std::span<Vec3> forces,
+                   double &energy, SymTens &stress) const {
+    const std::shared_ptr<const CacheData> cache = cache_;
+    const auto &rows = cache->rows[cache_index];
+    energy = 0.0;
+    stress = SymTens::Zero();
+    std::ranges::for_each(forces, [](Vec3& f) { f.setZero(); });
+
+    for (const AtomCache &cc : rows) {
+      const EnergyHead &h = heads[static_cast<std::size_t>(cc.type)];
+      energy += h.energy(cc.values);
+      const Eigen::VectorXd dEdD = h.grad(cc.values);
+      const std::size_t a = static_cast<std::size_t>(&cc - rows.data());
+      forces[a] -= cc.grad_self.transpose() * dEdD;
+      for (std::size_t jj = 0; jj < cc.neigh_idx.size(); ++jj) {
+        const Vec3 f_on_j = -(cc.grad_neigh[jj].transpose() * dEdD);
+        forces[cc.neigh_idx[jj]] += f_on_j;
+        stress += cc.neigh_dist[jj] * f_on_j.transpose();
+      }
+    }
+    stress /= cache->volume[cache_index];
+  }
+
+  // Full path (evaluate / predict mode): geometry may differ from the cached
+  // training set, so always recompute. Used by force::evaluate and the
+  // start/final RMSE checks, keeping those honest independent of the cache. Per
+  // atom it gets the descriptor + its position-gradient (analytic when the
+  // model supplies it, else a cheap O(neighbors) finite-difference of the
+  // descriptor — NOT the old O(N²) finite-difference of the total energy) and
+  // assembles forces directly.
   void eval_forces(Configuration &cfg) const {
     build_neighbor_list(cfg, max_cutoff());
 
@@ -267,26 +386,37 @@ struct MLBase : ForceCalculatorBase<Derived>, NoGlobals {
       a.calc_force = Vec3::Zero();
     }
 
-    const bool analytic = self().analytic_grads();
-
     for (auto &ai : cfg.atoms) {
-      const DescriptorValue d = self().get_descriptor(ai);
+      const DescriptorValue d = descriptor_with_grad(ai);
       const EnergyHead &h = heads[ai.type.index];
       cfg.calc_energy += h.energy(d.values);
-      if (analytic && d.has_grad) {
-        accumulate_atom_forces(cfg, ai, d, h.grad(d.values));
-      }
+      accumulate_atom_forces(cfg, ai, d, h.grad(d.values));
     }
 
-    if (analytic) {
-      cfg.calc_stress /= bc_volume(cfg.bc); // virial → stress (per unit volume)
-    } else {
-      // Bootstrap / validation path: no analytic gradients, so differentiate
-      // the total energy numerically. O(N) energy evaluations × 6 — slow by
-      // design; stress is not filled here.
-      accumulate_forces_fd(cfg);
-    }
+    cfg.calc_stress /= bc_volume(cfg.bc); // virial → stress (per unit volume)
 
+    events::on_force_eval(
+        events::ForceEvalStats{this->conf_index, force_rms(cfg), cfg});
+  }
+
+  // Fit path: identical results to eval_forces(cfg) but served from the cache
+  // for config `cache_index`. Falls back to the full recompute if no cache is
+  // live.
+  void eval_forces(Configuration &cfg, std::size_t cache_index) const {
+    if (!cache_ || cache_index >= cache_->rows.size()) {
+      eval_forces(cfg);
+      return;
+    }
+    std::vector<Vec3> f(cfg.atoms.size());
+    double e = 0.0;
+    SymTens s = SymTens::Zero();
+    eval_cached(cache_index, f, e, s);
+    for (std::size_t a = 0; a < cfg.atoms.size(); ++a) {
+      cfg.atoms[a].calc_force = f[a];
+    }
+    cfg.calc_energy = e;
+    cfg.calc_stress = s;
+    cfg.calc_limit = 0.0; // ML models have no embedding range penalty
     events::on_force_eval(
         events::ForceEvalStats{this->conf_index, force_rms(cfg), cfg});
   }
@@ -318,6 +448,64 @@ struct MLBase : ForceCalculatorBase<Derived>, NoGlobals {
 private:
   const Derived &self() const { return static_cast<const Derived &>(*this); }
 
+  // Descriptor value + position-gradient for one atom: analytic when the model
+  // supplies it (has_grad), else a cheap O(neighbors) finite-difference of the
+  // descriptor. The descriptor of atom i depends on geometry only through each
+  // neighbor's displacement, so dD_i/d(r_j) is obtained by perturbing that
+  // neighbor's bond vector IN PLACE — no neighbor-list rebuild — and
+  // dD_i/dr_i = −Σ_j dD_i/dr_j (translation invariance). `atom` is mutated only
+  // transiently (each dist restored); callers must hold exclusive access to
+  // atom's own neighbor list (true in the serial eval_forces and in prepare's
+  // per-atom parallel tasks).
+  DescriptorValue descriptor_with_grad(Atom &atom) const {
+    DescriptorValue d = self().get_descriptor(atom);
+    if (self().analytic_grads() && d.has_grad) {
+      return d;
+    }
+    const Eigen::Index S = d.values.size();
+    const std::size_t nn = atom.neighbors.size();
+    d.grad_neigh.assign(nn, DescriptorGrad::Zero(S, 3));
+    d.grad_self = DescriptorGrad::Zero(S, 3);
+    constexpr double h = 1e-4;
+    for (std::size_t jj = 0; jj < nn; ++jj) {
+      DescriptorGrad g(S, 3);
+      for (int cdim = 0; cdim < 3; ++cdim) {
+        const double x0 = atom.neighbors[jj].dist[cdim];
+        atom.neighbors[jj].dist[cdim] = x0 + h;
+        const Eigen::VectorXd dp = self().get_descriptor(atom).values;
+        atom.neighbors[jj].dist[cdim] = x0 - h;
+        const Eigen::VectorXd dm = self().get_descriptor(atom).values;
+        atom.neighbors[jj].dist[cdim] = x0;
+        g.col(cdim) = (dp - dm) / (2.0 * h);
+      }
+      d.grad_neigh[jj] = g;
+      d.grad_self -= g;
+    }
+    d.has_grad = true;
+    return d;
+  }
+
+  // Fill one atom's cache row, reusing descriptor_with_grad for the value +
+  // gradient and recording the pointer-free neighbor indices / bond vectors
+  // used by eval_cached. Each call touches only `atom`'s own neighbor list, so
+  // the parallel fill is race-free.
+  void fill_atom_cache(Configuration &cfg, std::size_t a, AtomCache &cc) const {
+    Atom &atom = cfg.atoms[a];
+    cc.type = static_cast<int>(atom.type.index);
+    const DescriptorValue d = descriptor_with_grad(atom);
+    cc.values = d.values;
+    cc.grad_self = d.grad_self;
+    cc.grad_neigh = d.grad_neigh;
+    const std::size_t nn = atom.neighbors.size();
+    cc.neigh_idx.resize(nn);
+    cc.neigh_dist.resize(nn);
+    for (std::size_t jj = 0; jj < nn; ++jj) {
+      cc.neigh_idx[jj] = static_cast<std::size_t>(atom.neighbors[jj].neighbor -
+                                                  cfg.atoms.data());
+      cc.neigh_dist[jj] = atom.neighbors[jj].dist;
+    }
+  }
+
   // Forces from atom i's descriptor: F_m = −Σ_i (de/dD_i)·(dD_i/dr_m).
   // dD_i/dr_m is nonzero only for m=i (grad_self) and m∈neighbors(i).
   void accumulate_atom_forces(Configuration &cfg, Atom &ai,
@@ -331,32 +519,6 @@ private:
       // Virial: bond ⊗ force-on-partner (matches Tersoff/EAM convention).
       cfg.calc_stress += ai.neighbors[jj].dist * f_on_j.transpose();
     }
-  }
-
-  // Total energy at the current geometry, rebuilding the neighbor list first.
-  double total_energy(Configuration &cfg) const {
-    build_neighbor_list(cfg, max_cutoff());
-    double e = 0.0;
-    for (auto &ai : cfg.atoms) {
-      e += heads[ai.type.index].energy(self().get_descriptor(ai).values);
-    }
-    return e;
-  }
-
-  void accumulate_forces_fd(Configuration &cfg) const {
-    constexpr double h = 1e-5;
-    for (auto &am : cfg.atoms) {
-      for (int c = 0; c < 3; ++c) {
-        const double x0 = am.pos[c];
-        am.pos[c] = x0 + h;
-        const double ep = total_energy(cfg);
-        am.pos[c] = x0 - h;
-        const double em = total_energy(cfg);
-        am.pos[c] = x0;
-        am.calc_force[c] = -(ep - em) / (2.0 * h);
-      }
-    }
-    build_neighbor_list(cfg, max_cutoff()); // restore the unperturbed list
   }
 };
 

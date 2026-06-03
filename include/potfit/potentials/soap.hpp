@@ -25,8 +25,17 @@
 #include <Eigen/Core>
 
 #include <cstddef>
+#include <memory>
 
 namespace potfit {
+
+// Tabulated radial projection J(a,l)(r) as cubic splines in r — the heavy part of
+// the SOAP descriptor (an adaptive Bessel quadrature per (a,l) per neighbor). Built
+// once over [0,rcut]; get_descriptor then evaluates a spline per neighbor instead.
+// Opaque here (definition + boost spline live in soap.cpp) to keep boost::math out
+// of this header. Shared read-only via shared_ptr so model copies (e.g. the
+// parallel Jacobian) never duplicate it.
+struct SoapRadialTable;
 
 struct SoapModel : MLBase<SoapModel> {
   using MLBase<SoapModel>::ntypes;
@@ -41,12 +50,14 @@ struct SoapModel : MLBase<SoapModel> {
   // performance optimisation.
   mutable Eigen::MatrixXd beta;
 
-  void init_radial_basis(); // optional precompute; not required before use
+  // Lazily-built radial spline table (see SoapRadialTable). Auto-built on first
+  // get_descriptor; init_radial_basis() also builds it up front.
+  mutable std::shared_ptr<const SoapRadialTable> radial_;
+  void init_radial_basis();
 
-  // ── CRTP hooks consumed by MLBase ──────────────────────────────────────────
   [[nodiscard]] DescriptorValue get_descriptor(const Atom &a) const;
   [[nodiscard]] double descriptor_cutoff() const { return rcut; }
-  [[nodiscard]] bool analytic_grads() const { return false; }
+  [[nodiscard]] bool analytic_grads() const { return true; }
   [[nodiscard]] std::size_t descriptor_size() const;
 };
 

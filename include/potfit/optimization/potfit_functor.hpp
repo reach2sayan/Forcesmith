@@ -39,9 +39,10 @@ struct PotfitFunctor {
   ForceCalculator &model() { return model_; }
 
 private:
+  bool df_cached(const Eigen::VectorXd &x, Eigen::MatrixXd &fjac) const;
+
   std::span<Configuration> configs_;
-  mutable ForceCalculator
-      model_; // mutable: scatter_params updates params during eval
+  mutable ForceCalculator model_;
   double energy_weight_;
   double stress_weight_;
   double smooth_weight_;

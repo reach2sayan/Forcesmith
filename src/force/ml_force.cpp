@@ -8,14 +8,14 @@ namespace potfit {
 // ---- LinearHead
 // --------------------------------------------------------------
 
-double LinearHead::energy_impl(const Eigen::VectorXd &D) const {
+double LinearHead::energy(const Eigen::VectorXd &D) const {
   Eigen::VectorXd c(coeffs.size());
   std::ranges::transform(coeffs, c.begin(), &Param::value);
   double e = bias.value + c.dot(D);
   return e;
 }
 
-Eigen::VectorXd LinearHead::grad_impl(const Eigen::VectorXd &) const {
+Eigen::VectorXd LinearHead::grad(const Eigen::VectorXd &) const {
   Eigen::VectorXd g(static_cast<Eigen::Index>(coeffs.size()));
   std::ranges::transform(coeffs, g.data(), &Param::value);
   return g;
@@ -64,7 +64,7 @@ MLPHead MLPHead::make(const std::vector<int> &sizes, Act act,
   return h;
 }
 
-double MLPHead::energy_impl(const Eigen::VectorXd &D) const {
+double MLPHead::energy(const Eigen::VectorXd &D) const {
   Eigen::VectorXd a = D;
   for (std::size_t l = 0; l + 1 < W.size(); ++l) {
     a = activate(W[l] * a + b[l]);
@@ -73,8 +73,7 @@ double MLPHead::energy_impl(const Eigen::VectorXd &D) const {
   return a[0];
 }
 
-
-Eigen::VectorXd MLPHead::grad_impl(const Eigen::VectorXd &D) const {
+Eigen::VectorXd MLPHead::grad(const Eigen::VectorXd &D) const {
   const std::size_t L = W.size();
   std::vector<Eigen::VectorXd> z(L);
   Eigen::VectorXd a = D;
