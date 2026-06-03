@@ -64,6 +64,14 @@ boost::leaf::result<void> write_model(const ForceCalculator &model,
             warn_non_native("stiweb");
             write_native_stiweb(path, calc);
             return true;
+          } else if constexpr (std::is_same_v<T, SymmetryFunctionModel>) {
+            warn_non_native("ml");
+            write_native_ml(path, calc);
+            return true;
+          } else if constexpr (std::is_same_v<T, SoapModel>) {
+            warn_non_native("ml");
+            write_native_soap(path, calc);
+            return true;
           } else {
             return false;
           }

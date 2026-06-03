@@ -7,6 +7,7 @@
 #include "potfit/force/force_calculator.hpp"
 #include "potfit/io/config_reader.hpp"
 #include "potfit/io/loaders.hpp"
+#include "potfit/optimization/ipopt_solver.hpp"
 #include "potfit/optimization/solver.hpp"
 
 #include <boost/leaf/handle_errors.hpp>
@@ -16,6 +17,14 @@
 #include <vector>
 
 namespace leaf = boost::leaf;
+
+// BOOST_LEAF_CHECK expands to a GNU statement-expression ({ ... }); silence the
+// pedantic complaint about that Boost idiom for this translation unit.
+#if defined(__clang__)
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored                                               \
+    "-Wgnu-statement-expression-from-macro-expansion"
+#endif
 
 namespace potfit::cli {
 namespace {
@@ -30,6 +39,8 @@ std::optional<potfit::Solver> build_solver(const CliOptions &o) {
     return potfit::Solver{potfit::EigenHybridSolver{o.max_iter}};
   } else if (o.algorithm == "ls") {
     return potfit::Solver{potfit::LineSearchSolver{o.max_iter}};
+  } else if (o.algorithm == "ipopt") {
+    return potfit::Solver{potfit::IpoptSolver{o.max_iter}};
   } else if (o.algorithm == "de") {
     potfit::BoostDESolver s;
     s.mutation_factor = o.de_F;
@@ -128,7 +139,7 @@ int run(const CliOptions &o) {
       session.set_solver(std::move(*solver));
     } else {
       std::cerr << "unknown algorithm '" << o.algorithm
-                << "'; choose: lm | powell | de | ls\n";
+                << "'; choose: lm | powell | de | ls | ipopt\n";
       ret = 1;
       return {};
     }
@@ -160,3 +171,7 @@ int run(const CliOptions &o) {
 }
 
 } // namespace potfit::cli
+
+#if defined(__clang__)
+#pragma clang diagnostic pop
+#endif

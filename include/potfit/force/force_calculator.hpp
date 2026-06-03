@@ -6,6 +6,8 @@
 #include "potfit/force/pair_force.hpp"
 #include "potfit/force/stiweb_force.hpp"
 #include "potfit/force/tersoff_force.hpp"
+#include "potfit/potentials/soap.hpp"
+#include "potfit/potentials/symmetry_functions.hpp"
 
 #include <variant>
 
@@ -17,7 +19,9 @@ using ForceCalculator = std::variant<
     ADPForceCalculator,
     AngularForceCalculator,
     TersoffForceCalculator,
-    StiwebForceCalculator
+    StiwebForceCalculator,
+    SymmetryFunctionModel,
+    SoapModel
 >;
 // clang-format on
 

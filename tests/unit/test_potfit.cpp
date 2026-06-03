@@ -16,6 +16,14 @@
 namespace leaf = boost::leaf;
 using namespace potfit;
 
+// BOOST_LEAF_CHECK expands to a GNU statement-expression ({ ... }); silence the
+// pedantic complaint about that Boost idiom for this translation unit.
+#if defined(__clang__)
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored                                               \
+    "-Wgnu-statement-expression-from-macro-expansion"
+#endif
+
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 // Run a body returning leaf::result<void>; returns the error message ("" on ok).
@@ -624,3 +632,7 @@ TEST(PotFit, ReferenceSettersByNameAndHandle) {
   });
   EXPECT_EQ(err, "") << err;
 }
+
+#if defined(__clang__)
+#pragma clang diagnostic pop
+#endif

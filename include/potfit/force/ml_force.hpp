@@ -19,8 +19,8 @@
 //     descriptor→energy map (linear → kernel → NN) never multiplies the
 //     ForceCalculator variant. Concrete heads share plumbing via HeadBase.
 //
-// The fittable parameters are the head coefficients (one head per element type);
-// descriptor hyperparameters (η, Rs, cutoff …) are fixed.
+// The fittable parameters are the head coefficients (one head per element
+// type); descriptor hyperparameters (η, Rs, cutoff …) are fixed.
 
 #include "potfit/core/atom.hpp"
 #include "potfit/core/erased.hpp"
@@ -33,8 +33,11 @@
 #include <Eigen/Core>
 
 #include <algorithm>
+#include <cmath>
 #include <cstddef>
+#include <cstdint>
 #include <memory>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -46,7 +49,8 @@ using DescriptorGrad = Eigen::Matrix<double, Eigen::Dynamic, 3>;
 // One atom's descriptor evaluation.
 //   values     — D_i, length = descriptor_size
 //   grad_self  — dD_i/dr_i           (S×3)
-//   grad_neigh — dD_i/dr_j per neighbor jj, parallel to atom.neighbors (each S×3)
+//   grad_neigh — dD_i/dr_j per neighbor jj, parallel to atom.neighbors (each
+//   S×3)
 // grad_self/grad_neigh are only consumed when has_grad is true; a model that
 // reports analytic_grads()==false may leave them empty and let MLBaseImpl
 // finite-difference the forces instead.
@@ -57,7 +61,6 @@ struct DescriptorValue {
   std::vector<DescriptorGrad> grad_neigh;
 };
 
-// ── Energy head: value-erased descriptor → energy map ────────────────────────
 namespace detail {
 struct HeadConcept {
   virtual ~HeadConcept() = default;
@@ -66,6 +69,15 @@ struct HeadConcept {
   virtual std::size_t param_count() const = 0;
   virtual void gather_params(Eigen::VectorXd &x, std::size_t off) const = 0;
   virtual void scatter_params(const Eigen::VectorXd &x, std::size_t off) = 0;
+  // Generic (de)serialization surface so the io layer can round-trip any head
+  // without knowing its concrete type (keeps nlohmann out of this header).
+  //   type_tag()     — "linear" | "mlp" …
+  //   architecture() — shape ints; linear: {n_coeffs}; mlp: {in,h1,…,1}
+  //   all_values()   — every parameter (free AND fixed), flat
+  virtual std::string type_tag() const = 0;
+  virtual std::vector<int> architecture() const = 0;
+  virtual Eigen::VectorXd all_values() const = 0;
+  virtual void set_all_values(const Eigen::VectorXd &v) = 0;
   virtual std::unique_ptr<HeadConcept> clone() const = 0;
 };
 } // namespace detail
@@ -73,12 +85,14 @@ struct HeadConcept {
 // CRTP base for the related concrete heads. Derived must implement:
 //   double          energy_impl(const VectorXd&) const
 //   Eigen::VectorXd grad_impl(const VectorXd&) const          // de/dD
-//   std::array/vector<Param*>       field_ptrs()               // fittable slots
-//   std::array/vector<const Param*> field_ptrs() const
+//   std::array/vector<Param*>       field_ptrs()               // fittable
+//   slots std::array/vector<const Param*> field_ptrs() const
 // gather/scatter follow the Potential convention: write/read starting at `off`;
 // the caller advances by param_count().
 template <typename Derived> struct HeadBase {
-  double energy(const Eigen::VectorXd &D) const { return self().energy_impl(D); }
+  double energy(const Eigen::VectorXd &D) const {
+    return self().energy_impl(D);
+  }
   Eigen::VectorXd grad(const Eigen::VectorXd &D) const {
     return self().grad_impl(D);
   }
@@ -102,6 +116,24 @@ template <typename Derived> struct HeadBase {
     }
   }
 
+  // Default (de)serialization over field_ptrs() — ALL params, free and fixed.
+  // Derived must still supply type_tag() and architecture(). Heads that do not
+  // store their parameters as Param* (e.g. MLPHead) override these four.
+  Eigen::VectorXd all_values() const {
+    auto f = self().field_ptrs();
+    Eigen::VectorXd v(static_cast<Eigen::Index>(f.size()));
+    for (std::size_t i = 0; i < f.size(); ++i) {
+      v[static_cast<Eigen::Index>(i)] = f[i]->value;
+    }
+    return v;
+  }
+  void set_all_values(const Eigen::VectorXd &v) {
+    auto f = self().field_ptrs();
+    for (std::size_t i = 0; i < f.size(); ++i) {
+      f[i]->value = v[static_cast<Eigen::Index>(i)];
+    }
+  }
+
 private:
   const Derived &self() const { return static_cast<const Derived &>(*this); }
   Derived &self() { return static_cast<Derived &>(*this); }
@@ -113,38 +145,51 @@ struct LinearHead : HeadBase<LinearHead> {
   std::vector<Param> coeffs;
   Param bias{0.0, true};
 
-  double energy_impl(const Eigen::VectorXd &D) const {
-    double e = bias.value;
-    for (std::size_t k = 0; k < coeffs.size(); ++k) {
-      e += coeffs[k].value * D[static_cast<Eigen::Index>(k)];
-    }
-    return e;
+  double energy_impl(const Eigen::VectorXd &D) const;
+  Eigen::VectorXd grad_impl(const Eigen::VectorXd &) const;
+  std::vector<Param *> field_ptrs();
+  std::vector<const Param *> field_ptrs() const;
+
+  // all_values()/set_all_values() inherited from HeadBase emit [coeffs…, bias].
+  constexpr std::string type_tag() const { return "linear"; }
+  constexpr std::vector<int> architecture() const {
+    return {static_cast<int>(coeffs.size())};
   }
-  Eigen::VectorXd grad_impl(const Eigen::VectorXd &) const {
-    Eigen::VectorXd g(static_cast<Eigen::Index>(coeffs.size()));
-    for (std::size_t k = 0; k < coeffs.size(); ++k) {
-      g[static_cast<Eigen::Index>(k)] = coeffs[k].value;
-    }
-    return g;
-  }
-  std::vector<Param *> field_ptrs() {
-    std::vector<Param *> f;
-    f.reserve(coeffs.size() + 1);
-    for (auto &c : coeffs) {
-      f.push_back(&c);
-    }
-    f.push_back(&bias);
-    return f;
-  }
-  std::vector<const Param *> field_ptrs() const {
-    std::vector<const Param *> f;
-    f.reserve(coeffs.size() + 1);
-    for (const auto &c : coeffs) {
-      f.push_back(&c);
-    }
-    f.push_back(&bias);
-    return f;
-  }
+};
+
+// Multilayer-perceptron head (Behler–Parrinello style): E_i = MLP(D_i), a stack
+// of dense layers with a nonlinear activation and a linear scalar output. The
+// fittable parameters are all weights and biases. Forward and backward passes
+// use Eigen matrix algebra; grad_impl returns the EXACT input gradient de/dD
+// (used to assemble forces), which is independent of the optimizer's
+// finite-difference Jacobian over the weights themselves.
+struct MLPHead : HeadBase<MLPHead> {
+  enum class Act { Tanh, SiLU };
+
+  std::vector<Eigen::MatrixXd> W; // W[l] is (out_l × in_l)
+  std::vector<Eigen::VectorXd> b; // b[l] is (out_l)
+  Act act = Act::Tanh;
+
+  // Build from layer sizes [in, h1, …, 1] with small deterministic init (a tiny
+  // LCG keyed off `seed`; avoids any RNG that would break reproducibility).
+  static MLPHead make(const std::vector<int> &sizes, Act act = Act::Tanh,
+                      std::uint64_t seed = 1);
+
+  double energy_impl(const Eigen::VectorXd &D) const;
+  Eigen::VectorXd grad_impl(const Eigen::VectorXd &D) const;
+
+  std::size_t param_count() const;
+  void gather_params(Eigen::VectorXd &dst, std::size_t off) const;
+  void scatter_params(const Eigen::VectorXd &src, std::size_t off);
+  Eigen::VectorXd all_values() const;
+  void set_all_values(const Eigen::VectorXd &v);
+
+  std::string type_tag() const { return "mlp"; }
+  std::vector<int> architecture() const;
+
+private:
+  Eigen::VectorXd activate(const Eigen::VectorXd &z) const;
+  Eigen::VectorXd activate_deriv(const Eigen::VectorXd &z) const;
 };
 
 class EnergyHead : private detail::ErasedValue<detail::HeadConcept> {
@@ -163,6 +208,14 @@ class EnergyHead : private detail::ErasedValue<detail::HeadConcept> {
     }
     void scatter_params(const Eigen::VectorXd &x, std::size_t off) override {
       impl_.scatter_params(x, off);
+    }
+    std::string type_tag() const override { return impl_.type_tag(); }
+    std::vector<int> architecture() const override {
+      return impl_.architecture();
+    }
+    Eigen::VectorXd all_values() const override { return impl_.all_values(); }
+    void set_all_values(const Eigen::VectorXd &v) override {
+      impl_.set_all_values(v);
     }
     std::unique_ptr<detail::HeadConcept> clone() const override {
       return std::make_unique<Model>(*this);
@@ -193,11 +246,14 @@ public:
   void scatter_params(const Eigen::VectorXd &x, std::size_t off) {
     self_->scatter_params(x, off);
   }
+  std::string type_tag() const { return self_->type_tag(); }
+  std::vector<int> architecture() const { return self_->architecture(); }
+  Eigen::VectorXd all_values() const { return self_->all_values(); }
+  void set_all_values(const Eigen::VectorXd &v) { self_->set_all_values(v); }
 };
 
-// ── CRTP ML force-calculator base ────────────────────────────────────────────
 template <typename Derived>
-struct MLBaseImpl : ForceCalculatorBase<Derived>, NoGlobals {
+struct MLBase : ForceCalculatorBase<Derived>, NoGlobals {
   // One head per element type, indexed by atom.type.index. The descriptor (and
   // its hyperparameters) lives in Derived.
   TypeArray<EnergyHead> heads;

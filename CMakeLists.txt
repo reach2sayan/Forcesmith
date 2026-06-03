@@ -31,6 +31,9 @@ set(POTFIT_ENGINE_SOURCES
         src/force/eam_force.cpp
         src/force/stiweb_force.cpp
         src/force/tersoff_force.cpp
+        src/force/ml_force.cpp
+        src/force/symmetry_functions.cpp
+        src/force/soap.cpp
         src/force/evaluate.cpp
         src/force/smoothness.cpp
         src/io/config_reader.cpp
@@ -42,6 +45,7 @@ set(POTFIT_ENGINE_SOURCES
         src/optimization/optimizer.cpp
         src/optimization/potfit_functor.cpp
         src/optimization/solver.cpp
+        src/optimization/ipopt_solver.cpp
         src/potentials/spline.cpp
 )
 
@@ -55,8 +59,12 @@ target_link_libraries(potfit_engine PUBLIC
         boost_math
         nlohmann_json::nlohmann_json
         TBB::tbb
+        IPOPT::ipopt
 )
 target_link_libraries(potfit_engine PRIVATE potfit_warnings)
+# Ipopt+MUMPS are built by the IpoptProject ExternalProject; ensure they exist
+# before the engine compiles/links the TU that includes the Ipopt headers.
+add_dependencies(potfit_engine IpoptProject)
 # Its objects get archived into the shared `potfit` lib, so they need -fPIC.
 set_target_properties(potfit_engine PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
@@ -110,12 +118,16 @@ set(UNIT_TEST_SOURCES
         tests/unit/test_neighbor_list.cpp
         tests/unit/test_line_search.cpp
         tests/unit/test_optimizer.cpp
+        tests/unit/test_solver_potentials.cpp
         tests/unit/test_potential_reader.cpp
         tests/unit/test_rescale.cpp
         tests/unit/test_species.cpp
         tests/unit/test_spline.cpp
         tests/unit/test_stiweb_force.cpp
         tests/unit/test_tersoff_force.cpp
+        tests/unit/test_ml_force.cpp
+        tests/unit/test_soap.cpp
+        tests/unit/test_ml_fit.cpp
         tests/unit/test_types.cpp
 )
 
@@ -153,6 +165,27 @@ if (POTFIT_BUILD_UNEP_FITS)
         target_compile_definitions(${tgt} PRIVATE POTFIT_UNEP_ELEMENT="${el}")
         target_link_libraries(${tgt} PRIVATE potfit_warnings potfit Boost::program_options)
         add_dependencies(unep_fits ${tgt})
+    endforeach ()
+endif ()
+
+# ── Per-element SOAP + NN ML fit drivers (parallel of the UNEP EAM fits) ──────
+# One executable per metal, the element baked in via POTFIT_ML_ELEMENT, all built
+# from the single self-contained source tests/ml/fit_soap_nn.cpp. Off by default
+# (heavy: FD optimizer Jacobian × FD-gradient SOAP); enable with
+# -DPOTFIT_BUILD_ML_FITS=ON. The aggregate target `ml_fits` builds every element.
+option(POTFIT_BUILD_ML_FITS "Build the per-element SOAP+NN ML fit executables" OFF)
+if (POTFIT_BUILD_ML_FITS)
+    set(POTFIT_ML_ELEMENTS
+            Ag Al Au Cr Cu Mg Mo Ni Pb Pd Pt Ta Ti V W Zr)
+    add_custom_target(ml_fits)
+    foreach (el IN LISTS POTFIT_ML_ELEMENTS)
+        string(TOLOWER "${el}" el_lc)
+        set(tgt "ml_fit_${el_lc}")
+        add_executable(${tgt} tests/ml/fit_soap_nn.cpp)
+        target_include_directories(${tgt} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/include")
+        target_compile_definitions(${tgt} PRIVATE POTFIT_ML_ELEMENT="${el}")
+        target_link_libraries(${tgt} PRIVATE potfit_warnings potfit Boost::program_options)
+        add_dependencies(ml_fits ${tgt})
     endforeach ()
 endif ()
 

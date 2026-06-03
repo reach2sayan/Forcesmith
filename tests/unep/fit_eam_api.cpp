@@ -54,6 +54,14 @@ namespace po = boost::program_options;
 using json = nlohmann::json;
 using namespace potfit;
 
+// BOOST_LEAF_CHECK expands to a GNU statement-expression ({ ... }); silence the
+// pedantic complaint about that Boost idiom for this translation unit.
+#if defined(__clang__)
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored                                               \
+    "-Wgnu-statement-expression-from-macro-expansion"
+#endif
+
 namespace {
 
 struct Args {
@@ -418,3 +426,7 @@ int main(int argc, char *argv[]) {
       });
   return ret;
 }
+
+#if defined(__clang__)
+#pragma clang diagnostic pop
+#endif

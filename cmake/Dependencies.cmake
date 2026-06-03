@@ -78,3 +78,13 @@ endif ()
 add_library(boost_math INTERFACE)
 target_include_directories(boost_math SYSTEM INTERFACE "${boost_math_SOURCE_DIR}/include")
 target_link_libraries(boost_math INTERFACE Boost::boost)
+
+# IPOPT + MUMPS built from source into the build tree (no system install needed).
+# Defines the INTERFACE IMPORTED target IPOPT::ipopt and the ExternalProject
+# target IpoptProject (depended on by potfit_engine so the libs exist before link).
+include(FetchIPOPT)
+# $ORIGIN-relative RPATH so the CLI/test binaries find libipopt/libcoinmumps in the
+# build tree at runtime, regardless of where the build tree lives on disk.
+set(CMAKE_BUILD_RPATH "$ORIGIN/ipopt_local/lib")
+set(CMAKE_INSTALL_RPATH "$ORIGIN/../lib")
+set(CMAKE_INSTALL_RPATH_USE_LINK_PATH TRUE)

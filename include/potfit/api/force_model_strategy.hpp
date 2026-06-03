@@ -10,6 +10,8 @@
 #include "potfit/force/stiweb_force.hpp"
 #include "potfit/force/tersoff_force.hpp"
 #include "potfit/io/config_reader.hpp" // ParseError
+#include "potfit/potentials/soap.hpp"
+#include "potfit/potentials/symmetry_functions.hpp"
 
 #include <boost/leaf/result.hpp>
 
@@ -321,6 +323,36 @@ template <> struct PotentialType<StiwebForceCalculator> {
     dump_pair_table(c.params, reg, s.stiweb);
     dump_lambda(c, reg, s.lambda);
     return {};
+  }
+};
+
+// ML models are built directly by the reader factory (force_model_reader.cpp),
+// never from the scalar-Potential spec maps. This specialization exists only so
+// the seed/decompose std::visit over the ForceCalculator variant compiles; the
+// programmatic spec-map path is intentionally unsupported for ML.
+template <> struct PotentialType<SymmetryFunctionModel> {
+  static bool applies(const SpecRef &) { return false; }
+  static leaf::result<ForceCalculator> materialize(const SpecRef &) {
+    return err("ML models cannot be materialized from the spec maps; load them "
+               "from a model file");
+  }
+  static leaf::result<void> decompose(const SymmetryFunctionModel &,
+                                      const SpeciesRegistry &, SpecRef &) {
+    return err("ML models cannot be decomposed for re-ranking; load from a "
+               "model file with the final element ordering");
+  }
+};
+
+template <> struct PotentialType<SoapModel> {
+  static bool applies(const SpecRef &) { return false; }
+  static leaf::result<ForceCalculator> materialize(const SpecRef &) {
+    return err("ML models cannot be materialized from the spec maps; load them "
+               "from a model file");
+  }
+  static leaf::result<void> decompose(const SoapModel &, const SpeciesRegistry &,
+                                      SpecRef &) {
+    return err("ML models cannot be decomposed for re-ranking; load from a "
+               "model file with the final element ordering");
   }
 };
 

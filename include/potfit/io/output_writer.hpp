@@ -8,6 +8,8 @@
 #include "potfit/force/eam_force.hpp"
 #include "potfit/force/stiweb_force.hpp"
 #include "potfit/force/tersoff_force.hpp"
+#include "potfit/potentials/soap.hpp"
+#include "potfit/potentials/symmetry_functions.hpp"
 
 #include <filesystem>
 #include <vector>
@@ -56,5 +58,19 @@ void write_native_tersoff(const std::filesystem::path &path,
                           const TersoffForceCalculator &ters);
 void write_native_stiweb(const std::filesystem::path &path,
                          const StiwebForceCalculator &sw);
+
+// ML symmetry-function model: dump the fixed descriptor hyperparameters plus
+// the fitted linear-head coefficients, mirroring the reader's JSON envelope so
+// the output re-parses as a startpot.
+//   {model:"ml", ntypes, descriptor:{type,rcut,g2:[{eta,rs}]},
+//    heads:[{type:"linear", coeffs:[…], bias}]}
+void write_native_ml(const std::filesystem::path &path,
+                     const SymmetryFunctionModel &ml);
+
+// SOAP ML model: descriptor hyperparameters + per-type heads (linear or mlp),
+// using the head's generic serialization surface so any head round-trips.
+//   {model:"ml", ntypes, descriptor:{type:"soap", n_max,l_max,rcut,sigma},
+//    heads:[{type, …}]}
+void write_native_soap(const std::filesystem::path &path, const SoapModel &soap);
 
 } // namespace potfit::io

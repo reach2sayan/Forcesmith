@@ -1,4 +1,5 @@
 #include "potfit/force/pair_force.hpp"
+#include "potfit/optimization/ipopt_solver.hpp"
 #include "potfit/optimization/optimizer.hpp"
 #include "potfit/optimization/potfit_functor.hpp"
 #include "potfit/potentials/analytic_potential.hpp"
@@ -87,6 +88,36 @@ TEST(Optimizer, ConvergesFromPerturbedEpsilon) {
 
     // LM success codes: 1=RelErr, 2=FuncEps, 3=XtolReached, 4=GradEps.
     EXPECT_GE(status, 1) << "LM returned failure code " << status;
+
+    const double res_after = eval_residual(configs, model, opts.energy_weight);
+    EXPECT_LT(res_after, 1e-6)
+        << "Residual after optimization = " << res_after;
+}
+
+// Ipopt (L-BFGS) should drive the residual to near zero from the same perturbed
+// start as the LM test — proving it drops into the Solver façade as a replacement.
+TEST(Optimizer, IpoptConvergesFromPerturbedEpsilon) {
+    const double eps_true = 1.0, sigma = 2.0, r = 2.5 * sigma;
+
+    auto cfg = make_lj_dimer(eps_true, sigma, r);
+    std::vector<Configuration> configs = {cfg};
+
+    // Start from eps = 0.5 (significantly perturbed).
+    std::vector<Potential> pots;
+    pots.emplace_back(LennardJones(0.5, sigma, sigma * 0.5, sigma * 5.0));
+    ForceCalculator model = make_pair_force_calculator(std::move(pots));
+
+    OptimizerOptions opts;
+    opts.energy_weight = 1.0;
+
+    const double res_before = eval_residual(configs, model, opts.energy_weight);
+    EXPECT_GT(res_before, 1e-4) << "residual should be large before optimization";
+
+    int status = run_optimizer(configs, model, opts,
+                               Solver{IpoptSolver{2000, 1e-10}});
+
+    // 1 = SUCCESS, 2 = STOP_AT_ACCEPTABLE_POINT (see IpoptSolver::minimize).
+    EXPECT_GE(status, 1) << "Ipopt returned failure code " << status;
 
     const double res_after = eval_residual(configs, model, opts.energy_weight);
     EXPECT_LT(res_after, 1e-6)

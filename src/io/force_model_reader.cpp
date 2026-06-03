@@ -395,6 +395,118 @@ leaf::result<ForceCalculator> build_stiweb(json &j, std::size_t ntypes) {
   return ForceCalculator{std::move(calc)};
 }
 
+// Build one EnergyHead from a JSON head spec, validated against descriptor size
+// S. Supports "linear" (coeffs + bias) and "mlp" (dense layers).
+leaf::result<EnergyHead> parse_head(const json &h, std::size_t S) {
+  const std::string htype = h.value("type", std::string("linear"));
+  if (htype == "linear") {
+    if (!h.contains("coeffs") || !h["coeffs"].is_array()) {
+      return fail("ml", "linear head missing 'coeffs' array");
+    }
+    if (h["coeffs"].size() != S) {
+      return fail("ml", "head coeffs length " +
+                            std::to_string(h["coeffs"].size()) +
+                            " != descriptor size " + std::to_string(S));
+    }
+    const bool fixed = h.value("fixed", false);
+    LinearHead lh;
+    lh.coeffs.reserve(S);
+    for (const auto &c : h["coeffs"]) {
+      lh.coeffs.push_back(Param{c.get<double>(), fixed});
+    }
+    lh.bias = Param{h.value("bias", 0.0), h.value("bias_fixed", true)};
+    return EnergyHead{std::move(lh)};
+  }
+  if (htype == "mlp") {
+    // "layers" = hidden-layer widths; input (= S) and scalar output are implicit.
+    if (!h.contains("layers") || !h["layers"].is_array()) {
+      return fail("ml", "mlp head missing 'layers' (hidden widths) array");
+    }
+    std::vector<int> sizes;
+    sizes.push_back(static_cast<int>(S));
+    for (const auto &w : h["layers"]) {
+      sizes.push_back(w.get<int>());
+    }
+    sizes.push_back(1);
+    const std::string actstr = h.value("activation", std::string("tanh"));
+    const auto act =
+        actstr == "silu" ? MLPHead::Act::SiLU : MLPHead::Act::Tanh;
+    MLPHead m = MLPHead::make(sizes, act, h.value("seed", std::uint64_t{1}));
+    // Optional explicit weights (flat, all params in gather order).
+    if (h.contains("weights") && h["weights"].is_array()) {
+      const auto flat = h["weights"].get<std::vector<double>>();
+      if (flat.size() != m.param_count()) {
+        return fail("ml", "mlp weights length " + std::to_string(flat.size()) +
+                              " != param_count " +
+                              std::to_string(m.param_count()));
+      }
+      m.set_all_values(Eigen::Map<const Eigen::VectorXd>(
+          flat.data(), static_cast<Eigen::Index>(flat.size())));
+    }
+    return EnergyHead{std::move(m)};
+  }
+  return fail("ml", "unknown head type '" + htype + "'");
+}
+
+// Attach the per-type heads (positional, one per element slot) to an MLBase
+// model and wrap it as a ForceCalculator. S is the model's descriptor size.
+template <class Model>
+leaf::result<ForceCalculator> finish_ml(Model calc, json &j,
+                                        std::size_t ntypes, std::size_t S) {
+  if (!j.contains("heads") || !j["heads"].is_array()) {
+    return fail("ml", "missing 'heads' array");
+  }
+  const auto &heads = j["heads"];
+  if (heads.size() != ntypes) {
+    return fail("ml", "expected " + std::to_string(ntypes) + " heads, got " +
+                          std::to_string(heads.size()));
+  }
+  calc.heads.reserve(ntypes);
+  for (const auto &h : heads) {
+    auto rh = parse_head(h, S);
+    if (!rh) {
+      return rh.error();
+    }
+    calc.heads.emplace_back(std::move(*rh));
+  }
+  return ForceCalculator{std::move(calc)};
+}
+
+leaf::result<ForceCalculator> build_ml(json &j, std::size_t ntypes) {
+  if (!j.contains("descriptor") || !j["descriptor"].is_object()) {
+    return fail("ml", "missing 'descriptor' object");
+  }
+  const json &desc = j["descriptor"];
+  const std::string dtype =
+      desc.value("type", std::string("symmetry_functions"));
+
+  if (dtype == "symmetry_functions") {
+    SymmetryFunctionModel calc;
+    calc.ntypes = ntypes;
+    calc.rcut = desc.value("rcut", 6.0);
+    if (!desc.contains("g2") || !desc["g2"].is_array() || desc["g2"].empty()) {
+      return fail("ml", "descriptor needs a non-empty 'g2' array");
+    }
+    for (const auto &g : desc["g2"]) {
+      calc.radial.push_back({g.at("eta").get<double>(), g.value("rs", 0.0)});
+    }
+    return finish_ml(std::move(calc), j, ntypes, calc.radial.size());
+  }
+
+  if (dtype == "soap") {
+    SoapModel calc;
+    calc.ntypes = ntypes;
+    calc.n_max = desc.value("n_max", 6);
+    calc.l_max = desc.value("l_max", 6);
+    calc.rcut = desc.value("rcut", 6.0);
+    calc.sigma = desc.value("sigma", 0.5);
+    calc.init_radial_basis();
+    return finish_ml(std::move(calc), j, ntypes, calc.descriptor_size());
+  }
+
+  return fail("ml", "unknown descriptor type '" + dtype + "'");
+}
+
 // Error policy for the force-model factory: an unknown "model" string maps to
 // potfit's existing "unsupported model" message. (The generic PotfitFactory
 // lives in potfit/io/factory.hpp.)
@@ -421,6 +533,7 @@ const ModelFactory &model_factory() {
     f.Register("angular", &build_angular);
     f.Register("tersoff", &build_tersoff);
     f.Register("stiweb", &build_stiweb);
+    f.Register("ml", &build_ml);
     return f;
   }();
   return factory;

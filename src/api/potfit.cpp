@@ -19,6 +19,14 @@ namespace potfit {
 
 namespace leaf = boost::leaf;
 
+// BOOST_LEAF_CHECK expands to a GNU statement-expression ({ ... }); silence the
+// pedantic complaint about that Boost idiom for this translation unit.
+#if defined(__clang__)
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored                                               \
+    "-Wgnu-statement-expression-from-macro-expansion"
+#endif
+
 // The model-family strategy registry (SpecRef, build_*/dump_* helpers, and the
 // per-family PotentialType specializations) lives in this detail header.
 using detail::err;
@@ -636,3 +644,7 @@ leaf::result<const ForceCalculator *> PotFit::model() {
 }
 
 } // namespace potfit
+
+#if defined(__clang__)
+#pragma clang diagnostic pop
+#endif

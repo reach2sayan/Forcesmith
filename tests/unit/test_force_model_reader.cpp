@@ -14,6 +14,14 @@ namespace leaf = boost::leaf;
 using namespace potfit;
 using namespace potfit::io;
 
+// BOOST_LEAF_CHECK expands to a GNU statement-expression ({ ... }); silence the
+// pedantic complaint about that Boost idiom for this translation unit.
+#if defined(__clang__)
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored                                               \
+    "-Wgnu-statement-expression-from-macro-expansion"
+#endif
+
 // ── Helper ────────────────────────────────────────────────────────────────────
 
 struct FMResult {
@@ -465,3 +473,7 @@ TEST(WriteModel, NonFiniteKnots_FailsLoudly) {
         [&]() { ADD_FAILURE() << "expected a ParseError, got unknown error"; });
     EXPECT_TRUE(failed) << "write_model should reject non-finite tabulation";
 }
+
+#if defined(__clang__)
+#pragma clang diagnostic pop
+#endif

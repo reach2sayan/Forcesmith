@@ -159,6 +159,86 @@ void write_native_stiweb(const std::filesystem::path &path,
   f << j.dump(2) << "\n";
 }
 
+// Serialize one value-erased head via its generic surface (type_tag /
+// architecture / all_values), so any head type round-trips through the reader.
+static json head_to_json(const EnergyHead &h) {
+  json head;
+  const std::string tag = h.type_tag();
+  head["type"] = tag;
+  const Eigen::VectorXd vals = h.all_values();
+  const std::vector<int> arch = h.architecture();
+  if (tag == "linear") {
+    // architecture = {n_coeffs}; all_values = [coeffs…, bias].
+    const int n = arch.empty() ? 0 : arch[0];
+    head["coeffs"] = json::array();
+    for (int k = 0; k < n; ++k) {
+      head["coeffs"].push_back(vals[k]);
+    }
+    head["bias"] = vals[n];
+  } else {
+    // mlp (and any future head): architecture = {in, h1, …, 1}; reader rebuilds
+    // from hidden widths + flat weights.
+    head["layers"] = json::array();
+    for (std::size_t i = 1; i + 1 < arch.size(); ++i) {
+      head["layers"].push_back(arch[i]);
+    }
+    head["weights"] = json::array();
+    for (Eigen::Index k = 0; k < vals.size(); ++k) {
+      head["weights"].push_back(vals[k]);
+    }
+  }
+  return head;
+}
+
+static json heads_to_json(const TypeArray<EnergyHead> &heads) {
+  json arr = json::array();
+  for (const auto &h : heads) {
+    arr.push_back(head_to_json(h));
+  }
+  return arr;
+}
+
+void write_native_ml(const std::filesystem::path &path,
+                     const SymmetryFunctionModel &ml) {
+  OPEN_FILE_WITH_HANDLE(f, path);
+
+  json j;
+  j["model"] = "ml";
+  j["ntypes"] = ml.ntypes;
+
+  json desc;
+  desc["type"] = "symmetry_functions";
+  desc["rcut"] = ml.rcut;
+  desc["g2"] = json::array();
+  for (const auto &g : ml.radial) {
+    desc["g2"].push_back({{"eta", g.eta}, {"rs", g.rs}});
+  }
+  j["descriptor"] = std::move(desc);
+  j["heads"] = heads_to_json(ml.heads);
+
+  f << j.dump(2) << "\n";
+}
+
+void write_native_soap(const std::filesystem::path &path,
+                       const SoapModel &soap) {
+  OPEN_FILE_WITH_HANDLE(f, path);
+
+  json j;
+  j["model"] = "ml";
+  j["ntypes"] = soap.ntypes;
+
+  json desc;
+  desc["type"] = "soap";
+  desc["n_max"] = soap.n_max;
+  desc["l_max"] = soap.l_max;
+  desc["rcut"] = soap.rcut;
+  desc["sigma"] = soap.sigma;
+  j["descriptor"] = std::move(desc);
+  j["heads"] = heads_to_json(soap.heads);
+
+  f << j.dump(2) << "\n";
+}
+
 void write_lammps(const std::filesystem::path &path,
                   const std::vector<Potential> &potentials) {
   OPEN_FILE_WITH_HANDLE(f, path);
