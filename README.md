@@ -53,8 +53,11 @@ Targets produced:
 - `libpotfit.so` — the shared programmatic API library
 - `potfit_tests` / `potfit_integration_tests` — GoogleTest suites (run via `ctest`)
 
-Optional per-element UNEP EAM fit drivers are built with
-`-DPOTFIT_BUILD_UNEP_FITS=ON` (aggregate target `unep_fits`).
+Optional fit drivers (each a single binary; pick the element at runtime with
+`--element`):
+
+- `-DPOTFIT_BUILD_UNEP_FITS=ON` → `unep_fit` (UNEP EAM fit, e.g. `unep_fit --element Cu`)
+- `-DPOTFIT_BUILD_ML_FITS=ON` → `ml_fit` (ML fit, e.g. `ml_fit --element Cu --descriptor soap|symfunc --head nn|linear`)
 
 ## Command-line usage
 

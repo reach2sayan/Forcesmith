@@ -1,14 +1,18 @@
-// SOAP ML-potential fitting driver for the converted UNEP DFT dataset — the ML
+// ML-potential fitting driver for the converted UNEP DFT dataset — the ML
 // parallel of tests/unep/fit_eam_api.cpp. Built as the single `ml_fit` binary.
 //
-// It builds, in memory through the public PotFit API, a SOAP descriptor + an
-// energy head (MLP or linear, --head nn|linear), seeds it as the force model,
-// and runs a forces-first fit against data/unep/<el>_dft_unep.json (real DFT
-// data from UNEP-v1, Zenodo 11533864). Element/head are runtime flags:
-//   ml_fit --element Cu --head nn   /   ml_fit --element Cu --head linear
+// It builds, in memory through the public PotFit API, a descriptor + an energy
+// head, seeds it as the force model, and runs a forces-first fit against
+// data/unep/<el>_dft_unep.json (real DFT data from UNEP-v1, Zenodo 11533864).
+// Descriptor, head and element are runtime flags:
+//   --descriptor soap     (--n-max/--l-max/--sigma)   | symfunc (--g2-eta/--g2-rs)
+//   --head       nn (MLP) | linear
+// e.g.
+//   ml_fit --element Cu --descriptor soap    --head nn
+//   ml_fit --element Cu --descriptor symfunc --head linear --g2-eta 0.5 1.2 0.3
 //
-// PERFORMANCE: this round uses finite-difference descriptor gradients (SOAP) AND
-// the optimizer's finite-difference Jacobian over the MLP weights, so cost grows
+// PERFORMANCE: this round uses finite-difference descriptor gradients AND the
+// optimizer's finite-difference Jacobian over the MLP weights, so cost grows
 // quickly with config count, neighbours and net size. Keep --max-configs and the
 // net small; this is a correctness/sanity driver, not a production trainer.
 
@@ -19,6 +23,7 @@
 #include "potfit/optimization/ipopt_solver.hpp"
 #include "potfit/optimization/solver.hpp"
 #include "potfit/potentials/soap.hpp"
+#include "potfit/potentials/symmetry_functions.hpp"
 
 #include <boost/leaf/handle_errors.hpp>
 #include <boost/program_options.hpp>
@@ -65,7 +70,10 @@ namespace {
 
 struct Args {
   std::string element = POTFIT_ML_ELEMENT; // compile-time default; --element overrides
+  std::string descriptor = "soap"; // descriptor: "soap" | "symfunc"
   std::string head = "nn";  // energy head: "nn" (MLP) | "linear"
+  std::vector<double> g2_eta = {0.05, 0.2, 0.5, 1.0, 2.0, 4.0}; // symfunc G2 widths
+  std::vector<double> g2_rs;        // symfunc G2 centers; empty → all 0
   std::string data_dir = "data/unep";
   std::string out_dir = "tests/ml";
   int maxiter = 100;
@@ -241,17 +249,10 @@ leaf::result<double> force_rmse(PotFit &s) {
            : std::numeric_limits<double>::quiet_NaN();
 }
 
-// Build the SOAP force model (single element → ntypes 1) with the requested
-// energy head: an MLP ("nn") or a linear map ("linear") over the descriptor.
-ForceCalculator build_model(const Args &a, double rcut) {
-  SoapModel m;
-  m.ntypes = 1;
-  m.n_max = a.n_max;
-  m.l_max = a.l_max;
-  m.rcut = rcut;
-  m.sigma = a.sigma;
-  m.init_radial_basis();
-
+// Attach one energy head sized to the model's descriptor: an MLP ("nn") or a
+// linear map ("linear"). Descriptor-agnostic — used by both model types.
+template <typename Model>
+void attach_head(Model &m, const Args &a) {
   const int D = static_cast<int>(m.descriptor_size());
   m.heads.reserve(1);
   if (a.head == "linear") {
@@ -266,13 +267,39 @@ ForceCalculator build_model(const Args &a, double rcut) {
   } else {
     std::vector<int> sizes;
     sizes.push_back(D);
-    for (int h : a.hidden) {
-      sizes.push_back(h);
+    for (int hw : a.hidden) {
+      sizes.push_back(hw);
     }
     sizes.push_back(1);
     m.heads.emplace_back(
         EnergyHead{MLPHead::make(sizes, MLPHead::Act::Tanh, a.seed)});
   }
+}
+
+// Build the force model (single element → ntypes 1) for the requested
+// descriptor ("soap" | "symfunc") and energy head.
+ForceCalculator build_model(const Args &a, double rcut) {
+  if (a.descriptor == "symfunc") {
+    SymmetryFunctionModel m;
+    m.ntypes = 1;
+    m.rcut = rcut;
+    m.radial.reserve(a.g2_eta.size());
+    for (std::size_t k = 0; k < a.g2_eta.size(); ++k) {
+      const double rs = k < a.g2_rs.size() ? a.g2_rs[k] : 0.0;
+      m.radial.push_back({a.g2_eta[k], rs}); // G2{eta, rs}
+    }
+    attach_head(m, a);
+    return ForceCalculator{std::move(m)};
+  }
+
+  SoapModel m;
+  m.ntypes = 1;
+  m.n_max = a.n_max;
+  m.l_max = a.l_max;
+  m.rcut = rcut;
+  m.sigma = a.sigma;
+  m.init_radial_basis();
+  attach_head(m, a);
   return ForceCalculator{std::move(m)};
 }
 
@@ -308,7 +335,14 @@ leaf::result<Result> fit_element(const Args &a) {
   PotFit s;
   BOOST_LEAF_CHECK(add_configs(s, configs));
   ForceCalculator model = build_model(a, res.rcut);
-  res.descriptor_size = std::get<SoapModel>(model).descriptor_size();
+  res.descriptor_size = std::visit(
+      [](const auto &m) -> std::size_t {
+        if constexpr (requires { m.descriptor_size(); })
+          return m.descriptor_size();
+        else
+          return 0;
+      },
+      model);
   res.params = std::visit([](const auto &m) { return m.param_count(); }, model);
   BOOST_LEAF_CHECK(s.seed_force_model(std::move(model)));
 
@@ -338,8 +372,9 @@ leaf::result<Result> fit_element(const Args &a) {
             << std::flush;
 
   std::filesystem::create_directories(a.out_dir + "/fits");
-  BOOST_LEAF_CHECK(s.write(
-      a.out_dir + "/fits/" + ell + "_soap_" + a.head + ".json", "native"));
+  BOOST_LEAF_CHECK(s.write(a.out_dir + "/fits/" + ell + "_" + a.descriptor +
+                               "_" + a.head + ".json",
+                           "native"));
   return res;
 }
 
@@ -364,9 +399,11 @@ void report(const std::string &el, const Result &r) {
 
 int main(int argc, char *argv[]) {
   Args a;
-  po::options_description desc("SOAP ML fit (API)");
+  po::options_description desc("ML fit (API)");
   desc.add_options()("help,h", "show this message")(
       "element,e", po::value(&a.element)->default_value(a.element), "Cu | Al | …")(
+      "descriptor", po::value(&a.descriptor)->default_value(a.descriptor),
+      "soap | symfunc")(
       "head", po::value(&a.head)->default_value(a.head), "nn (MLP) | linear")(
       "data-dir", po::value(&a.data_dir)->default_value(a.data_dir))(
       "out-dir", po::value(&a.out_dir)->default_value(a.out_dir))(
@@ -378,11 +415,14 @@ int main(int argc, char *argv[]) {
       "ipopt (L-BFGS, default/best for NN) | lm | lmne | powell | de | ls")(
       "max-configs", po::value(&a.max_configs)->default_value(a.max_configs))(
       "stride", po::value(&a.stride)->default_value(a.stride))(
-      "n-max", po::value(&a.n_max)->default_value(a.n_max))(
-      "l-max", po::value(&a.l_max)->default_value(a.l_max))(
-      "sigma", po::value(&a.sigma)->default_value(a.sigma))(
+      "n-max", po::value(&a.n_max)->default_value(a.n_max), "soap only")(
+      "l-max", po::value(&a.l_max)->default_value(a.l_max), "soap only")(
+      "sigma", po::value(&a.sigma)->default_value(a.sigma), "soap only")(
+      "g2-eta", po::value(&a.g2_eta)->multitoken(), "symfunc G2 eta widths")(
+      "g2-rs", po::value(&a.g2_rs)->multitoken(),
+      "symfunc G2 rs centers (default all 0)")(
       "rcut", po::value(&a.rcut)->default_value(a.rcut), "0 = derive from dmin")(
-      "hidden", po::value(&a.hidden)->multitoken(), "MLP hidden widths");
+      "hidden", po::value(&a.hidden)->multitoken(), "MLP hidden widths (nn only)");
 
   po::variables_map vm;
   try {
@@ -403,13 +443,34 @@ int main(int argc, char *argv[]) {
               << desc << "\n";
     return 1;
   }
+  if (a.descriptor != "soap" && a.descriptor != "symfunc") {
+    std::cerr << "error: --descriptor must be 'soap' or 'symfunc' (got '"
+              << a.descriptor << "')\n\n"
+              << desc << "\n";
+    return 1;
+  }
+  if (a.descriptor == "symfunc") {
+    if (a.g2_eta.empty()) {
+      std::cerr << "error: --descriptor symfunc needs at least one --g2-eta\n\n"
+                << desc << "\n";
+      return 1;
+    }
+    if (!a.g2_rs.empty() && a.g2_rs.size() != a.g2_eta.size()) {
+      std::cerr << "error: --g2-rs (" << a.g2_rs.size() << ") must match --g2-eta ("
+                << a.g2_eta.size() << ") in length\n\n"
+                << desc << "\n";
+      return 1;
+    }
+  }
 
-  std::cerr << "... fitting " << a.element << " (SOAP+" << a.head << ")\n";
+  std::cerr << "... fitting " << a.element << " (" << a.descriptor << "+"
+            << a.head << ")\n";
 
-  // Per-iteration logging to console + a per-(element,head) rotating file, so
-  // parallel runs don't clobber each other's log. The guards must outlive
-  // fit_element()'s optimize() call.
-  potfit::log::init("ml_fit_" + a.element + "_" + a.head + ".log");
+  // Per-iteration logging to console + a per-(element,descriptor,head) rotating
+  // file, so parallel runs don't clobber each other's log. The guards must
+  // outlive fit_element()'s optimize() call.
+  potfit::log::init("ml_fit_" + a.element + "_" + a.descriptor + "_" + a.head +
+                    ".log");
   auto log_sinks = potfit::log::connect_signals();
 
   int ret = 0;

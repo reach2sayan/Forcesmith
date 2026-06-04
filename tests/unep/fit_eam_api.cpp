@@ -1,5 +1,6 @@
-// Per-element EAM fitting driver for the converted UNEP DFT dataset — the
-// in-process, programmatic-API parallel of tests/unep/fit_eam.py.
+// EAM fitting driver for the converted UNEP DFT dataset — the in-process,
+// programmatic-API parallel of tests/unep/fit_eam.py. Built as the single
+// `unep_fit` binary.
 //
 // fit_eam.py shells out to the `potfit` CLI binary once per stage; this driver
 // instead builds the fit in memory through the public PotFit API and runs
@@ -9,10 +10,10 @@
 // start potential, both fits, the stage-1→stage-2 knot down-sample and the
 // force-RMSE checkpoints all run here, with no Python or subprocess dependency.
 //
-// One element is baked in per executable via POTFIT_UNEP_ELEMENT (CMake builds
-// one target per metal under the POTFIT_BUILD_UNEP_FITS option). The runtime
-// flags mirror fit_eam.py's (minus --elements / --jobs, which the per-element
-// build model replaces).
+// The element is a runtime flag (--element Cu), so there is one binary rather
+// than one per metal. The flags mirror fit_eam.py's (minus --jobs, which only
+// makes sense for the multi-element Python launcher):
+//   unep_fit --element Cu
 //
 // Pipeline (matches fit_eam.py):
 //   1. dmin via a minimum-image pairwise scan ⇒ re=dmin, rmin=max(1, 0.88·dmin),
@@ -26,6 +27,7 @@
 
 #include "potfit/api/potfit.hpp"
 #include "potfit/io/config_reader.hpp" // io::ParseError
+#include "potfit/optimization/ipopt_solver.hpp"
 #include "potfit/optimization/solver.hpp"
 
 #include <boost/leaf/handle_errors.hpp>
@@ -251,7 +253,11 @@ void apply_options(PotFit &s, const Args &a, double smooth_weight) {
   o.stress_weight = a.stress_weight;
   o.smooth_weight = smooth_weight;
 
-  if (a.algorithm == "powell")
+  if (a.algorithm == "ipopt")
+    s.set_solver(Solver{IpoptSolver{a.maxiter}});
+  else if (a.algorithm == "lmne")
+    s.set_solver(Solver{NormalEquationsLMSolver{a.maxiter}});
+  else if (a.algorithm == "powell")
     s.set_solver(Solver{EigenHybridSolver{a.maxiter}});
   else if (a.algorithm == "de")
     s.set_solver(Solver{BoostDESolver{}});
@@ -367,9 +373,9 @@ void report(const std::string &el, const Result &r) {
 
 int main(int argc, char *argv[]) {
   Args a;
-  po::options_description desc(std::string("UNEP EAM fit (API) — element ") +
-                              a.element);
+  po::options_description desc("UNEP EAM fit (API)");
   desc.add_options()("help,h", "show this message")(
+      "element,e", po::value(&a.element)->default_value(a.element), "Cu | Al | …")(
       "data-dir", po::value(&a.data_dir)->default_value(a.data_dir))(
       "out-dir", po::value(&a.out_dir)->default_value(a.out_dir))(
       "maxiter", po::value(&a.maxiter)->default_value(a.maxiter))(
@@ -380,7 +386,7 @@ int main(int argc, char *argv[]) {
       po::value(&a.smooth_weight)->default_value(a.smooth_weight))(
       "knots", po::value(&a.knots)->default_value(a.knots))(
       "algorithm,a", po::value(&a.algorithm)->default_value(a.algorithm),
-      "lm | powell | de | ls")(
+      "lm | lmne | ipopt | powell | de | ls")(
       "max-configs", po::value(&a.max_configs)->default_value(a.max_configs),
       "cap configs (0 = all)")(
       "stride", po::value(&a.stride)->default_value(a.stride))(
