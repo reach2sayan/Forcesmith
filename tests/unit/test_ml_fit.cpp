@@ -1,6 +1,6 @@
 #include "potfit/force/force_calculator.hpp"
 #include "potfit/optimization/optimizer.hpp"
-#include "potfit/potentials/symmetry_functions.hpp"
+#include "potfit/potentials/acsf.hpp"
 
 #include <gtest/gtest.h>
 
@@ -35,8 +35,8 @@ std::vector<Configuration> make_dataset() {
   return cfgs;
 }
 
-SymmetryFunctionModel base_model() {
-  SymmetryFunctionModel m;
+ACSF base_model() {
+  ACSF m;
   m.ntypes = 1;
   m.rcut = 5.0;
   m.radial = {{0.5, 0.0}, {1.2, 1.5}, {0.3, 2.5}};
@@ -58,7 +58,7 @@ double force_rmse(ForceCalculator &model, std::vector<Configuration> &cfgs) {
 
 } // namespace
 
-TEST(MLFit, SoapNNTrainingReducesForceRMSE) {
+TEST(MLFit, LinearTrainingReducesForceRMSE) {
   // Teacher: G2 descriptor + linear head with known coefficients. Use it to
   // label reference forces.
   auto teacher = base_model();
@@ -77,11 +77,16 @@ TEST(MLFit, SoapNNTrainingReducesForceRMSE) {
     }
   }
 
-  // Student: same descriptor, a small MLP head, random init.
+  // Student: same descriptor, a linear head started at zero coefficients. The
+  // fit should recover the teacher's coeffs and drive the force RMSE down.
   auto student = base_model();
-  student.heads.reserve(1);
-  student.heads.emplace_back(
-      EnergyHead{MLPHead::make({3, 6, 1}, MLPHead::Act::Tanh, 11)});
+  {
+    LinearHead h;
+    h.coeffs = {Param{0.0, false}, Param{0.0, false}, Param{0.0, false}};
+    h.bias = Param{0.0, true}; // forces-only fit: bias has zero force Jacobian
+    student.heads.reserve(1);
+    student.heads.emplace_back(EnergyHead{std::move(h)});
+  }
   ForceCalculator model{std::move(student)};
 
   const double before = force_rmse(model, data);

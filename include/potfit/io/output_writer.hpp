@@ -8,8 +8,9 @@
 #include "potfit/force/eam_force.hpp"
 #include "potfit/force/stiweb_force.hpp"
 #include "potfit/force/tersoff_force.hpp"
+#include "potfit/potentials/acsf.hpp"
+#include "potfit/potentials/lmbtr.hpp"
 #include "potfit/potentials/soap.hpp"
-#include "potfit/potentials/symmetry_functions.hpp"
 
 #include <filesystem>
 #include <vector>
@@ -59,18 +60,23 @@ void write_native_tersoff(const std::filesystem::path &path,
 void write_native_stiweb(const std::filesystem::path &path,
                          const StiwebForceCalculator &sw);
 
-// ML symmetry-function model: dump the fixed descriptor hyperparameters plus
-// the fitted linear-head coefficients, mirroring the reader's JSON envelope so
-// the output re-parses as a startpot.
-//   {model:"ml", ntypes, descriptor:{type,rcut,g2:[{eta,rs}]},
-//    heads:[{type:"linear", coeffs:[…], bias}]}
-void write_native_ml(const std::filesystem::path &path,
-                     const SymmetryFunctionModel &ml);
+// ACSF ML model: dump the fixed descriptor hyperparameters (G1/G2/G3/G4/G5)
+// plus the fitted head, mirroring the reader's JSON envelope so the output
+// re-parses as a startpot.
+//   {model:"ml", ntypes, descriptor:{type:"acsf", rcut, g1, g2:[{eta,rs}],
+//    g3:[{kappa}], g4:[{eta,zeta,lambda}], g5:[{eta,zeta,lambda}]},
+//    heads:[{type, …}]}
+void write_native_ml(const std::filesystem::path &path, const ACSF &ml);
 
-// SOAP ML model: descriptor hyperparameters + per-type heads (linear or mlp),
+// SOAP ML model: descriptor hyperparameters + per-type linear heads,
 // using the head's generic serialization surface so any head round-trips.
 //   {model:"ml", ntypes, descriptor:{type:"soap", n_max,l_max,rcut,sigma},
 //    heads:[{type, …}]}
 void write_native_soap(const std::filesystem::path &path, const SoapModel &soap);
+
+// LMBTR ML model: descriptor hyperparameters (k2/k3 grids, weighting) + heads.
+//   {model:"ml", ntypes, descriptor:{type:"lmbtr", rcut, weight_scale, normalize,
+//    k2:{min,max,n,sigma}, k3:{min,max,n,sigma}}, heads:[{type, …}]}
+void write_native_lmbtr(const std::filesystem::path &path, const LMBTR &ml);
 
 } // namespace potfit::io

@@ -11,7 +11,8 @@
 #include "potfit/force/tersoff_force.hpp"
 #include "potfit/io/config_reader.hpp" // ParseError
 #include "potfit/potentials/soap.hpp"
-#include "potfit/potentials/symmetry_functions.hpp"
+#include "potfit/potentials/acsf.hpp"
+#include "potfit/potentials/lmbtr.hpp"
 
 #include <boost/leaf/result.hpp>
 
@@ -330,13 +331,13 @@ template <> struct PotentialType<StiwebForceCalculator> {
 // never from the scalar-Potential spec maps. This specialization exists only so
 // the seed/decompose std::visit over the ForceCalculator variant compiles; the
 // programmatic spec-map path is intentionally unsupported for ML.
-template <> struct PotentialType<SymmetryFunctionModel> {
+template <> struct PotentialType<ACSF> {
   static bool applies(const SpecRef &) { return false; }
   static leaf::result<ForceCalculator> materialize(const SpecRef &) {
     return err("ML models cannot be materialized from the spec maps; load them "
                "from a model file");
   }
-  static leaf::result<void> decompose(const SymmetryFunctionModel &,
+  static leaf::result<void> decompose(const ACSF &,
                                       const SpeciesRegistry &, SpecRef &) {
     return err("ML models cannot be decomposed for re-ranking; load from a "
                "model file with the final element ordering");
@@ -350,6 +351,19 @@ template <> struct PotentialType<SoapModel> {
                "from a model file");
   }
   static leaf::result<void> decompose(const SoapModel &, const SpeciesRegistry &,
+                                      SpecRef &) {
+    return err("ML models cannot be decomposed for re-ranking; load from a "
+               "model file with the final element ordering");
+  }
+};
+
+template <> struct PotentialType<LMBTR> {
+  static bool applies(const SpecRef &) { return false; }
+  static leaf::result<ForceCalculator> materialize(const SpecRef &) {
+    return err("ML models cannot be materialized from the spec maps; load them "
+               "from a model file");
+  }
+  static leaf::result<void> decompose(const LMBTR &, const SpeciesRegistry &,
                                       SpecRef &) {
     return err("ML models cannot be decomposed for re-ranking; load from a "
                "model file with the final element ordering");

@@ -10,7 +10,7 @@
 //   "angular" → AngularForceCalculator
 //   "tersoff" → TersoffForceCalculator
 //   "stiweb"  → StiwebForceCalculator
-//   "ml"      → SymmetryFunctionModel (descriptor + per-type linear head)
+//   "ml"      → ACSF / SoapModel (descriptor + per-type head)
 
 #include "potfit/force/force_calculator.hpp"
 #include "potfit/io/config_reader.hpp" // ParseError, indirectly pulls in core types

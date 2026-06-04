@@ -1,6 +1,6 @@
 #include "potfit/core/neighbor_list.hpp"
 #include "potfit/io/force_model_reader.hpp"
-#include "potfit/potentials/symmetry_functions.hpp"
+#include "potfit/potentials/acsf.hpp"
 
 #include <gtest/gtest.h>
 
@@ -13,10 +13,10 @@ using namespace potfit;
 // ── Fixtures ─────────────────────────────────────────────────────────────────
 
 // Single-element model with `S` radial G2 functions and given head coeffs.
-static SymmetryFunctionModel make_model(const std::vector<SymmetryFunctionModel::G2> &g2,
+static ACSF make_model(const std::vector<ACSF::G2> &g2,
                                         const std::vector<double> &coeffs,
                                         double bias = 0.0, double rcut = 6.0) {
-  SymmetryFunctionModel m;
+  ACSF m;
   m.ntypes = 1;
   m.rcut = rcut;
   m.radial = g2;
@@ -188,14 +188,14 @@ TEST(MLForce, ReaderBuildsAndEvaluates) {
 
   auto r = io::parse_force_model(json);
   ASSERT_TRUE(r) << "parse failed";
-  ASSERT_TRUE(std::holds_alternative<SymmetryFunctionModel>(*r));
+  ASSERT_TRUE(std::holds_alternative<ACSF>(*r));
 
-  const auto &m = std::get<SymmetryFunctionModel>(*r);
+  const auto &m = std::get<ACSF>(*r);
   EXPECT_EQ(m.radial.size(), 2u);
   EXPECT_EQ(m.param_count(), 2u); // bias fixed by default
 
   auto cfg = make_cluster();
-  std::get<SymmetryFunctionModel>(*r).eval_forces(cfg);
+  std::get<ACSF>(*r).eval_forces(cfg);
   EXPECT_TRUE(std::isfinite(cfg.calc_energy));
 }
 
@@ -207,86 +207,4 @@ TEST(MLForce, ReaderRejectsCoeffMismatch) {
     "heads": [{"type": "linear", "coeffs": [0.7, -0.4]}]
   })";
   EXPECT_FALSE(io::parse_force_model(json));
-}
-
-// ── MLP head ──────────────────────────────────────────────────────────────────
-
-TEST(MLPHead, GradMatchesFD) {
-  // de/dD (backprop) must match a finite-difference of energy.
-  auto h = MLPHead::make({4, 6, 5, 1}, MLPHead::Act::Tanh, 7);
-  Eigen::VectorXd D(4);
-  D << 0.3, -0.7, 1.1, 0.2;
-
-  const Eigen::VectorXd g = h.grad(D);
-  const double dx = 1e-6;
-  for (int k = 0; k < 4; ++k) {
-    Eigen::VectorXd dp = D, dm = D;
-    dp[k] += dx;
-    dm[k] -= dx;
-    const double fd = (h.energy(dp) - h.energy(dm)) / (2 * dx);
-    EXPECT_NEAR(g[k], fd, 1e-6 * std::abs(fd) + 1e-8);
-  }
-}
-
-TEST(MLPHead, SiLUGradMatchesFD) {
-  auto h = MLPHead::make({3, 4, 1}, MLPHead::Act::SiLU, 3);
-  Eigen::VectorXd D(3);
-  D << 0.5, -1.2, 0.8;
-  const Eigen::VectorXd g = h.grad(D);
-  const double dx = 1e-6;
-  for (int k = 0; k < 3; ++k) {
-    Eigen::VectorXd dp = D, dm = D;
-    dp[k] += dx;
-    dm[k] -= dx;
-    const double fd = (h.energy(dp) - h.energy(dm)) / (2 * dx);
-    EXPECT_NEAR(g[k], fd, 1e-6 * std::abs(fd) + 1e-8);
-  }
-}
-
-TEST(MLPHead, ParamRoundTrip) {
-  auto h = MLPHead::make({4, 6, 5, 1}, MLPHead::Act::Tanh, 7);
-  const std::size_t n = h.param_count();
-  ASSERT_EQ(n, 4u * 6 + 6 + 6u * 5 + 5 + 5u * 1 + 1);
-
-  Eigen::VectorXd v(n);
-  h.gather_params(v, 0);
-  Eigen::VectorXd v2 = v;
-  v2.array() += 0.123;
-  h.scatter_params(v2, 0);
-  Eigen::VectorXd v3(n);
-  h.gather_params(v3, 0);
-  EXPECT_NEAR((v3 - v2).norm(), 0.0, 1e-14);
-}
-
-TEST(MLForce, G2WithMLPHeadForceMatchesFD) {
-  // Analytic descriptor gradients (G2) + analytic head gradient (MLP backprop)
-  // must reproduce the finite-difference force.
-  SymmetryFunctionModel m;
-  m.ntypes = 1;
-  m.rcut = 6.0;
-  m.radial = {{0.5, 0.0}, {1.2, 1.5}, {0.3, 2.5}};
-  m.heads.reserve(1);
-  m.heads.emplace_back(EnergyHead{MLPHead::make({3, 5, 1}, MLPHead::Act::Tanh, 2)});
-
-  auto energy_at = [&](int atom, int comp, double x) {
-    auto cfg = make_cluster();
-    cfg.atoms[atom].pos[comp] = x;
-    m.eval_forces(cfg);
-    return cfg.calc_energy;
-  };
-  auto cfg = make_cluster();
-  m.eval_forces(cfg);
-
-  const double dr = 1e-6;
-  for (int atom = 0; atom < 4; ++atom) {
-    for (int c = 0; c < 3; ++c) {
-      const double x0 = make_cluster().atoms[atom].pos[c];
-      const double fd =
-          -(energy_at(atom, c, x0 + dr / 2) - energy_at(atom, c, x0 - dr / 2)) /
-          dr;
-      EXPECT_NEAR(cfg.atoms[atom].calc_force[c], fd,
-                  1e-5 * std::abs(fd) + 1e-7)
-          << "atom " << atom << " comp " << c;
-    }
-  }
 }

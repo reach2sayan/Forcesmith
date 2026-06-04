@@ -32,7 +32,8 @@ set(POTFIT_ENGINE_SOURCES
         src/force/stiweb_force.cpp
         src/force/tersoff_force.cpp
         src/force/ml_force.cpp
-        src/force/symmetry_functions.cpp
+        src/force/acsf.cpp
+        src/force/lmbtr.cpp
         src/force/soap.cpp
         src/force/evaluate.cpp
         src/force/smoothness.cpp
@@ -132,6 +133,8 @@ set(UNIT_TEST_SOURCES
         tests/unit/test_ml_cache.cpp
         tests/unit/test_ml_jacobian.cpp
         tests/unit/test_soap.cpp
+        tests/unit/test_acsf.cpp
+        tests/unit/test_lmbtr.cpp
         tests/unit/test_ml_fit.cpp
         tests/unit/test_types.cpp
 )

@@ -1,6 +1,6 @@
 #include "potfit/io/force_model_reader.hpp"
 #include "potfit/io/write_model.hpp"
-#include "potfit/potentials/symmetry_functions.hpp"
+#include "potfit/potentials/acsf.hpp"
 
 #include <boost/leaf/handle_errors.hpp>
 #include <gtest/gtest.h>
@@ -480,13 +480,16 @@ TEST(WriteModel, NonFiniteKnots_FailsLoudly) {
 // An ML model's per-feature standardization (computed by prepare()) must survive a
 // native write → read so a reloaded potential predicts identically.
 TEST(WriteModel, ML_Standardization_RoundTrips) {
-    SymmetryFunctionModel sf;
+    ACSF sf;
     sf.ntypes = 1;
     sf.rcut = 6.0;
     sf.standardize_features = true; // off by default; this test exercises it
     sf.radial = {{0.5, 0.0}, {1.2, 1.5}, {0.3, 2.5}};
+    LinearHead h;
+    h.coeffs = {Param{0.7, false}, Param{-0.4, false}, Param{0.25, false}};
+    h.bias = Param{0.1, false};
     sf.heads.reserve(1);
-    sf.heads.emplace_back(EnergyHead{MLPHead::make({3, 5, 1}, MLPHead::Act::Tanh, 2)});
+    sf.heads.emplace_back(EnergyHead{std::move(h)});
 
     std::vector<Configuration> cfgs;
     {
@@ -516,11 +519,11 @@ TEST(WriteModel, ML_Standardization_RoundTrips) {
                                 std::istreambuf_iterator<char>{}};
             EXPECT_NE(s.find("standardization"), std::string::npos);
             BOOST_LEAF_AUTO(m, parse_force_model(s));
-            if (!std::holds_alternative<SymmetryFunctionModel>(m)) {
+            if (!std::holds_alternative<ACSF>(m)) {
                 ADD_FAILURE() << "expected SF model after reload";
                 return {};
             }
-            const auto& rsf = std::get<SymmetryFunctionModel>(m);
+            const auto& rsf = std::get<ACSF>(m);
             if (rsf.inv_std_.size() == 0) {
                 ADD_FAILURE() << "standardization not restored";
                 return {};

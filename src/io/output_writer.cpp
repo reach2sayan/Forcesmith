@@ -2,6 +2,7 @@
 
 #include <nlohmann/json.hpp>
 
+#include <cassert>
 #include <cmath>
 #include <fstream>
 #include <ranges>
@@ -164,29 +165,17 @@ void write_native_stiweb(const std::filesystem::path &path,
 static json head_to_json(const EnergyHead &h) {
   json head;
   const std::string tag = h.type_tag();
+  assert(tag == "linear"); // linear is the only head type
   head["type"] = tag;
   const Eigen::VectorXd vals = h.all_values();
   const std::vector<int> arch = h.architecture();
-  if (tag == "linear") {
-    // architecture = {n_coeffs}; all_values = [coeffs…, bias].
-    const int n = arch.empty() ? 0 : arch[0];
-    head["coeffs"] = json::array();
-    for (int k = 0; k < n; ++k) {
-      head["coeffs"].push_back(vals[k]);
-    }
-    head["bias"] = vals[n];
-  } else {
-    // mlp (and any future head): architecture = {in, h1, …, 1}; reader rebuilds
-    // from hidden widths + flat weights.
-    head["layers"] = json::array();
-    for (std::size_t i = 1; i + 1 < arch.size(); ++i) {
-      head["layers"].push_back(arch[i]);
-    }
-    head["weights"] = json::array();
-    for (Eigen::Index k = 0; k < vals.size(); ++k) {
-      head["weights"].push_back(vals[k]);
-    }
+  // architecture = {n_coeffs}; all_values = [coeffs…, bias].
+  const int n = arch.empty() ? 0 : arch[0];
+  head["coeffs"] = json::array();
+  for (int k = 0; k < n; ++k) {
+    head["coeffs"].push_back(vals[k]);
   }
+  head["bias"] = vals[n];
   return head;
 }
 
@@ -218,8 +207,7 @@ static void add_standardization(json &j, const Model &ml) {
   j["standardization"] = std::move(arr);
 }
 
-void write_native_ml(const std::filesystem::path &path,
-                     const SymmetryFunctionModel &ml) {
+void write_native_ml(const std::filesystem::path &path, const ACSF &ml) {
   OPEN_FILE_WITH_HANDLE(f, path);
 
   json j;
@@ -227,11 +215,34 @@ void write_native_ml(const std::filesystem::path &path,
   j["ntypes"] = ml.ntypes;
 
   json desc;
-  desc["type"] = "symmetry_functions";
+  desc["type"] = "acsf";
   desc["rcut"] = ml.rcut;
+  if (ml.g1 > 0) {
+    desc["g1"] = ml.g1;
+  }
   desc["g2"] = json::array();
   for (const auto &g : ml.radial) {
     desc["g2"].push_back({{"eta", g.eta}, {"rs", g.rs}});
+  }
+  if (!ml.g3.empty()) {
+    desc["g3"] = json::array();
+    for (const auto &g : ml.g3) {
+      desc["g3"].push_back({{"kappa", g.kappa}});
+    }
+  }
+  if (!ml.g4.empty()) {
+    desc["g4"] = json::array();
+    for (const auto &g : ml.g4) {
+      desc["g4"].push_back(
+          {{"eta", g.eta}, {"zeta", g.zeta}, {"lambda", g.lambda}});
+    }
+  }
+  if (!ml.g5.empty()) {
+    desc["g5"] = json::array();
+    for (const auto &g : ml.g5) {
+      desc["g5"].push_back(
+          {{"eta", g.eta}, {"zeta", g.zeta}, {"lambda", g.lambda}});
+    }
   }
   j["descriptor"] = std::move(desc);
   j["heads"] = heads_to_json(ml.heads);
@@ -257,6 +268,35 @@ void write_native_soap(const std::filesystem::path &path,
   j["descriptor"] = std::move(desc);
   j["heads"] = heads_to_json(soap.heads);
   add_standardization(j, soap);
+
+  f << j.dump(2) << "\n";
+}
+
+void write_native_lmbtr(const std::filesystem::path &path, const LMBTR &ml) {
+  OPEN_FILE_WITH_HANDLE(f, path);
+
+  json j;
+  j["model"] = "ml";
+  j["ntypes"] = ml.ntypes;
+
+  auto grid = [](const LMBTR::Grid &g) {
+    return json{{"min", g.min}, {"max", g.max}, {"n", g.n}, {"sigma", g.sigma}};
+  };
+
+  json desc;
+  desc["type"] = "lmbtr";
+  desc["rcut"] = ml.rcut;
+  desc["weight_scale"] = ml.weight_scale;
+  desc["normalize"] = ml.normalize_l2;
+  if (ml.use_k2) {
+    desc["k2"] = grid(ml.k2);
+  }
+  if (ml.use_k3) {
+    desc["k3"] = grid(ml.k3);
+  }
+  j["descriptor"] = std::move(desc);
+  j["heads"] = heads_to_json(ml.heads);
+  add_standardization(j, ml);
 
   f << j.dump(2) << "\n";
 }

@@ -4,8 +4,8 @@
 // param_grad (∂E/∂θ) and dgrad_dparam (∂(∂E/∂D)/∂θ) to FD of energy()/grad();
 // the end-to-end check compares PotfitFunctor::df (which routes to the analytic
 // df_cached_analytic for heads that support it) to a direct central-difference of
-// the residual vector. Phase 1 covers LinearHead (M = I) end-to-end and MLPHead's
-// param_grad; the MLP mixed second derivative is verified in Phase 2.
+// the residual vector. Covers the LinearHead (M = I) head-level and end-to-end
+// (with standardization / stress) paths.
 
 #include "potfit/force/force_calculator.hpp"
 #include "potfit/force/ml_force.hpp"
@@ -35,7 +35,7 @@ Configuration make_cluster() {
 
 // SymmetryFunction descriptor (S = 3 radial features) with a LinearHead.
 ForceCalculator make_symfunc_linear(const std::vector<double> &coeffs) {
-  SymmetryFunctionModel m;
+  ACSF m;
   m.ntypes = 1;
   m.rcut = 5.0;
   m.standardize_features = true; // off by default; exercise the whitening path
@@ -47,19 +47,6 @@ ForceCalculator make_symfunc_linear(const std::vector<double> &coeffs) {
   h.bias = Param{0.0, true};
   m.heads.reserve(1);
   m.heads.emplace_back(EnergyHead{std::move(h)});
-  return ForceCalculator{std::move(m)};
-}
-
-// Same S = 3 descriptor with an MLP head of the given layer sizes (sizes[0] = 3).
-ForceCalculator make_symfunc_mlp(const std::vector<int> &sizes,
-                                 MLPHead::Act act) {
-  SymmetryFunctionModel m;
-  m.ntypes = 1;
-  m.rcut = 5.0;
-  m.standardize_features = true; // off by default; exercise the whitening path
-  m.radial = {{0.5, 0.0}, {1.2, 1.5}, {0.3, 2.5}};
-  m.heads.reserve(1);
-  m.heads.emplace_back(EnergyHead{MLPHead::make(sizes, act, 7)});
   return ForceCalculator{std::move(m)};
 }
 
@@ -155,53 +142,6 @@ TEST(MlJacobian, LinearHead_DgradDparam_IsIdentity) {
   EXPECT_LT((M - fd_dgrad_dparam(h, D)).cwiseAbs().maxCoeff(), 1e-6);
 }
 
-// ── Head-level: MLPHead param_grad (Phase 1; dgrad_dparam in Phase 2) ─────────
-
-TEST(MlJacobian, MlpHead_ParamGrad_Tanh) {
-  MLPHead h = MLPHead::make({3, 5, 1}, MLPHead::Act::Tanh, 7);
-  Eigen::VectorXd D(3);
-  D << 0.4, -0.9, 1.3;
-  const Eigen::VectorXd g = h.param_grad(D);
-  ASSERT_EQ(g.size(), static_cast<Eigen::Index>(h.param_count()));
-  EXPECT_LT((g - fd_param_grad(h, D)).cwiseAbs().maxCoeff(), 1e-6);
-}
-
-TEST(MlJacobian, MlpHead_ParamGrad_SiLU) {
-  MLPHead h = MLPHead::make({3, 6, 4, 1}, MLPHead::Act::SiLU, 11);
-  Eigen::VectorXd D(3);
-  D << -0.6, 0.7, 0.2;
-  const Eigen::VectorXd g = h.param_grad(D);
-  EXPECT_LT((g - fd_param_grad(h, D)).cwiseAbs().maxCoeff(), 1e-6);
-}
-
-// The crux: MLPHead::dgrad_dparam (analytic forward-over-reverse) vs central FD
-// of grad(). Isolates the σ″ recurrence — no force/cache/assembly involved.
-TEST(MlJacobian, MlpHead_DgradDparam_Tanh_OneHidden) {
-  MLPHead h = MLPHead::make({3, 5, 1}, MLPHead::Act::Tanh, 7);
-  Eigen::VectorXd D(3);
-  D << 0.4, -0.9, 1.3;
-  const Eigen::MatrixXd M = h.dgrad_dparam(D);
-  ASSERT_EQ(M.rows(), 3);
-  ASSERT_EQ(M.cols(), static_cast<Eigen::Index>(h.param_count()));
-  EXPECT_LT((M - fd_dgrad_dparam(h, D)).cwiseAbs().maxCoeff(), 1e-5);
-}
-
-TEST(MlJacobian, MlpHead_DgradDparam_Tanh_TwoHidden) {
-  MLPHead h = MLPHead::make({3, 6, 4, 1}, MLPHead::Act::Tanh, 11);
-  Eigen::VectorXd D(3);
-  D << -0.6, 0.7, 0.2;
-  EXPECT_LT((h.dgrad_dparam(D) - fd_dgrad_dparam(h, D)).cwiseAbs().maxCoeff(),
-            1e-5);
-}
-
-TEST(MlJacobian, MlpHead_DgradDparam_SiLU_TwoHidden) {
-  MLPHead h = MLPHead::make({3, 5, 5, 1}, MLPHead::Act::SiLU, 3);
-  Eigen::VectorXd D(3);
-  D << 0.8, -0.4, 0.1;
-  EXPECT_LT((h.dgrad_dparam(D) - fd_dgrad_dparam(h, D)).cwiseAbs().maxCoeff(),
-            1e-5);
-}
-
 // ── End-to-end: analytic df vs FD of the residual (LinearHead path) ──────────
 
 TEST(MlJacobian, SymFuncLinear_AnalyticDf_MatchesFD) {
@@ -239,28 +179,4 @@ TEST(MlJacobian, SymFuncLinear_AnalyticDf_MatchesFD_WithStress) {
   const double scale = 1.0 + Jfd.cwiseAbs().maxCoeff();
   EXPECT_LT((Jana - Jfd).cwiseAbs().maxCoeff(), 1e-6 * scale)
       << "analytic vs FD residual Jacobian mismatch (with stress)";
-}
-
-// End-to-end MLP: analytic df (df_cached_analytic + MLPHead derivatives + cache
-// + standardization) vs FD of the residual.
-TEST(MlJacobian, SymFuncMlp_AnalyticDf_MatchesFD) {
-  for (auto act : {MLPHead::Act::Tanh, MLPHead::Act::SiLU}) {
-    ForceCalculator model = make_symfunc_mlp({3, 6, 1}, act);
-    std::vector<Configuration> configs = {make_cluster()};
-    PotfitFunctor f(std::span<Configuration>(configs), model,
-                    /*energy_weight=*/0.5, /*stress_weight=*/0.3);
-
-    Eigen::VectorXd x(f.inputs());
-    std::visit([&](const auto &m) { m.gather_params(x, std::size_t{0}); },
-               f.model());
-
-    Eigen::MatrixXd Jana(f.values(), f.inputs());
-    f.df(x, Jana);
-    const Eigen::MatrixXd Jfd = fd_residual_jacobian(f, x);
-
-    const double scale = 1.0 + Jfd.cwiseAbs().maxCoeff();
-    EXPECT_LT((Jana - Jfd).cwiseAbs().maxCoeff(), 1e-5 * scale)
-        << "MLP analytic vs FD Jacobian mismatch (act="
-        << (act == MLPHead::Act::Tanh ? "tanh" : "silu") << ")";
-  }
 }

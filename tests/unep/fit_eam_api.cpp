@@ -255,8 +255,6 @@ void apply_options(PotFit &s, const Args &a, double smooth_weight) {
 
   if (a.algorithm == "ipopt")
     s.set_solver(Solver{IpoptSolver{a.maxiter}});
-  else if (a.algorithm == "lmne")
-    s.set_solver(Solver{NormalEquationsLMSolver{a.maxiter}});
   else if (a.algorithm == "powell")
     s.set_solver(Solver{EigenHybridSolver{a.maxiter}});
   else if (a.algorithm == "de")
@@ -386,7 +384,7 @@ int main(int argc, char *argv[]) {
       po::value(&a.smooth_weight)->default_value(a.smooth_weight))(
       "knots", po::value(&a.knots)->default_value(a.knots))(
       "algorithm,a", po::value(&a.algorithm)->default_value(a.algorithm),
-      "lm | lmne | ipopt | powell | de | ls")(
+      "lm | ipopt | powell | de | ls")(
       "max-configs", po::value(&a.max_configs)->default_value(a.max_configs),
       "cap configs (0 = all)")(
       "stride", po::value(&a.stride)->default_value(a.stride))(

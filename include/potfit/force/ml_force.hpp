@@ -11,14 +11,14 @@
 //   * MLBaseImpl<Derived> is a CRTP ForceCalculator base. Its eval_forces is
 //     descriptor-agnostic: it calls the concrete model's get_descriptor hook,
 //     feeds the descriptor to the head, and assembles energy/forces/stress.
-//   * Derived (e.g. SymmetryFunctionModel) supplies the descriptor:
+//   * Derived (e.g. ACSF) supplies the descriptor:
 //       DescriptorValue get_descriptor(const Atom&) const;
 //       double          descriptor_cutoff() const;
 //       bool            analytic_grads() const;
 //   * The head is value-erased (EnergyHead, like Potential) so swapping the
-//     descriptor→energy map (linear → kernel → NN) never multiplies the
-//     ForceCalculator variant. Concrete heads get their optimizer
-//     param-plumbing from the HeadParams CRTP mixin.
+//     descriptor→energy map never multiplies the ForceCalculator variant.
+//     Concrete heads get their optimizer param-plumbing from the HeadParams
+//     CRTP mixin.
 //
 // The fittable parameters are the head coefficients (one head per element
 // type); descriptor hyperparameters (η, Rs, cutoff …) are fixed.
@@ -36,7 +36,6 @@
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
-#include <cstdint>
 #include <execution>
 #include <memory>
 #include <ranges>
@@ -86,8 +85,8 @@ struct HeadConcept {
   virtual void scatter_params(const Eigen::VectorXd &x, std::size_t off) = 0;
   // Generic (de)serialization surface so the io layer can round-trip any head
   // without knowing its concrete type (keeps nlohmann out of this header).
-  //   type_tag()     — "linear" | "mlp" …
-  //   architecture() — shape ints; linear: {n_coeffs}; mlp: {in,h1,…,1}
+  //   type_tag()     — "linear" …
+  //   architecture() — shape ints; linear: {n_coeffs}
   //   all_values()   — every parameter (free AND fixed), flat
   virtual std::string type_tag() const = 0;
   virtual std::vector<int> architecture() const = 0;
@@ -128,7 +127,7 @@ template <typename Derived> struct HeadParams {
 
   // Default (de)serialization over field_ptrs() — ALL params, free and fixed.
   // Derived must still supply type_tag() and architecture(). Heads that do not
-  // store their parameters as Param* (e.g. MLPHead) override these.
+  // store their parameters as Param* may override these.
   Eigen::VectorXd all_values() const;
   void set_all_values(const Eigen::VectorXd &v);
 
@@ -180,48 +179,6 @@ struct LinearHead : HeadParams<LinearHead> {
   constexpr std::vector<int> architecture() const {
     return {static_cast<int>(coeffs.size())};
   }
-};
-
-// Multilayer-perceptron head (Behler–Parrinello style): E_i = MLP(D_i), a stack
-// of dense layers with a nonlinear activation and a linear scalar output. The
-// fittable parameters are all weights and biases. Forward and backward passes
-// use Eigen matrix algebra; grad returns the EXACT input gradient de/dD
-// (used to assemble forces), which is independent of the optimizer's
-// finite-difference Jacobian over the weights themselves.
-struct MLPHead : HeadParams<MLPHead> {
-  enum class Act { Tanh, SiLU };
-
-  std::vector<Eigen::MatrixXd> W; // W[l] is (out_l × in_l)
-  std::vector<Eigen::VectorXd> b; // b[l] is (out_l)
-  Act act = Act::Tanh;
-
-  // Build from layer sizes [in, h1, …, 1] with small deterministic init (a tiny
-  // LCG keyed off `seed`; avoids any RNG that would break reproducibility).
-  static MLPHead make(const std::vector<int> &sizes, Act act = Act::Tanh,
-                      std::uint64_t seed = 1);
-
-  double energy(const Eigen::VectorXd &D) const;
-  Eigen::VectorXd grad(const Eigen::VectorXd &D) const;
-  // param_grad = ∂E/∂θ (backprop-to-weights). dgrad_dparam = ∂(∂E/∂D)/∂θ, the
-  // mixed second derivative, computed by reverse-mode AD of u·(∂E/∂D) through
-  // the augmented forward+backward graph (one sweep per descriptor component).
-  bool has_param_jacobian() const { return true; }
-  Eigen::VectorXd param_grad(const Eigen::VectorXd &D) const;
-  Eigen::MatrixXd dgrad_dparam(const Eigen::VectorXd &D) const;
-
-  std::size_t param_count() const;
-  void gather_params(Eigen::VectorXd &dst, std::size_t off) const;
-  void scatter_params(const Eigen::VectorXd &src, std::size_t off);
-  Eigen::VectorXd all_values() const;
-  void set_all_values(const Eigen::VectorXd &v);
-
-  std::string type_tag() const { return "mlp"; }
-  std::vector<int> architecture() const;
-
-private:
-  Eigen::VectorXd activate(const Eigen::VectorXd &z) const;
-  Eigen::VectorXd activate_deriv(const Eigen::VectorXd &z) const;
-  Eigen::VectorXd activate_deriv2(const Eigen::VectorXd &z) const; // σ″
 };
 
 class EnergyHead : private detail::ErasedValue<detail::HeadConcept> {

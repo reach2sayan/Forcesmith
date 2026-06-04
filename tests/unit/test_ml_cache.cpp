@@ -7,7 +7,7 @@
 // speedup, not a behaviour change, before the optimizer ever depends on it.
 
 #include "potfit/potentials/soap.hpp"
-#include "potfit/potentials/symmetry_functions.hpp"
+#include "potfit/potentials/acsf.hpp"
 
 #include <gtest/gtest.h>
 
@@ -19,13 +19,16 @@ using namespace potfit;
 
 namespace {
 
-SymmetryFunctionModel make_sf_model() {
-  SymmetryFunctionModel m;
+ACSF make_sf_model() {
+  ACSF m;
   m.ntypes = 1;
   m.rcut = 6.0;
   m.radial = {{0.5, 0.0}, {1.2, 1.5}, {0.3, 2.5}};
+  LinearHead h;
+  h.coeffs = {Param{0.7, false}, Param{-0.4, false}, Param{0.25, false}};
+  h.bias = Param{0.1, false};
   m.heads.reserve(1);
-  m.heads.emplace_back(EnergyHead{MLPHead::make({3, 5, 1}, MLPHead::Act::Tanh, 2)});
+  m.heads.emplace_back(EnergyHead{std::move(h)});
   return m;
 }
 
@@ -177,10 +180,15 @@ TEST(MLCache, SoapCachedMatchesLegacyFD) {
   m.rcut = 4.0;
   m.sigma = 0.5;
   m.init_radial_basis();
+  LinearHead h;
+  const std::size_t S = m.descriptor_size();
+  h.coeffs.reserve(S);
+  for (std::size_t k = 0; k < S; ++k) {
+    h.coeffs.push_back(Param{0.1 + 0.01 * static_cast<double>(k), false});
+  }
+  h.bias = Param{0.0, false};
   m.heads.reserve(1);
-  m.heads.emplace_back(
-      EnergyHead{MLPHead::make({static_cast<int>(m.descriptor_size()), 5, 1},
-                               MLPHead::Act::Tanh, 4)});
+  m.heads.emplace_back(EnergyHead{std::move(h)});
 
   auto cfgs = make_configs();
   m.prepare(std::span<Configuration>(cfgs.data(), cfgs.size()));

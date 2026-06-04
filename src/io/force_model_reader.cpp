@@ -396,7 +396,7 @@ leaf::result<ForceCalculator> build_stiweb(json &j, std::size_t ntypes) {
 }
 
 // Build one EnergyHead from a JSON head spec, validated against descriptor size
-// S. Supports "linear" (coeffs + bias) and "mlp" (dense layers).
+// S. Supports "linear" (coeffs + bias).
 leaf::result<EnergyHead> parse_head(const json &h, std::size_t S) {
   const std::string htype = h.value("type", std::string("linear"));
   if (htype == "linear") {
@@ -416,34 +416,6 @@ leaf::result<EnergyHead> parse_head(const json &h, std::size_t S) {
     }
     lh.bias = Param{h.value("bias", 0.0), h.value("bias_fixed", true)};
     return EnergyHead{std::move(lh)};
-  }
-  if (htype == "mlp") {
-    // "layers" = hidden-layer widths; input (= S) and scalar output are implicit.
-    if (!h.contains("layers") || !h["layers"].is_array()) {
-      return fail("ml", "mlp head missing 'layers' (hidden widths) array");
-    }
-    std::vector<int> sizes;
-    sizes.push_back(static_cast<int>(S));
-    for (const auto &w : h["layers"]) {
-      sizes.push_back(w.get<int>());
-    }
-    sizes.push_back(1);
-    const std::string actstr = h.value("activation", std::string("tanh"));
-    const auto act =
-        actstr == "silu" ? MLPHead::Act::SiLU : MLPHead::Act::Tanh;
-    MLPHead m = MLPHead::make(sizes, act, h.value("seed", std::uint64_t{1}));
-    // Optional explicit weights (flat, all params in gather order).
-    if (h.contains("weights") && h["weights"].is_array()) {
-      const auto flat = h["weights"].get<std::vector<double>>();
-      if (flat.size() != m.param_count()) {
-        return fail("ml", "mlp weights length " + std::to_string(flat.size()) +
-                              " != param_count " +
-                              std::to_string(m.param_count()));
-      }
-      m.set_all_values(Eigen::Map<const Eigen::VectorXd>(
-          flat.data(), static_cast<Eigen::Index>(flat.size())));
-    }
-    return EnergyHead{std::move(m)};
   }
   return fail("ml", "unknown head type '" + htype + "'");
 }
@@ -506,20 +478,48 @@ leaf::result<ForceCalculator> build_ml(json &j, std::size_t ntypes) {
   const std::string dtype =
       desc.value("type", std::string("symmetry_functions"));
 
-  if (dtype == "symmetry_functions") {
-    SymmetryFunctionModel calc;
+  if (dtype == "symmetry_functions" || dtype == "acsf") {
+    ACSF calc;
     calc.ntypes = ntypes;
     calc.rcut = desc.value("rcut", 6.0);
-    if (!desc.contains("g2") || !desc["g2"].is_array() || desc["g2"].empty()) {
-      return fail("ml", "descriptor needs a non-empty 'g2' array");
+    // G1: accept either a count ("g1": 1) or an array of empty objects.
+    if (desc.contains("g1")) {
+      const json &g1 = desc["g1"];
+      calc.g1 = g1.is_number() ? g1.get<std::size_t>()
+                : g1.is_array() ? g1.size()
+                                : std::size_t{0};
     }
-    for (const auto &g : desc["g2"]) {
-      calc.radial.push_back({g.at("eta").get<double>(), g.value("rs", 0.0)});
+    if (desc.contains("g2") && desc["g2"].is_array()) {
+      for (const auto &g : desc["g2"]) {
+        calc.radial.push_back(
+            {g.at("eta").get<double>(), g.value("rs", 0.0)});
+      }
+    }
+    if (desc.contains("g3") && desc["g3"].is_array()) {
+      for (const auto &g : desc["g3"]) {
+        calc.g3.push_back({g.value("kappa", 1.0)});
+      }
+    }
+    if (desc.contains("g4") && desc["g4"].is_array()) {
+      for (const auto &g : desc["g4"]) {
+        calc.g4.push_back({g.value("eta", 1.0), g.value("zeta", 1.0),
+                           g.value("lambda", 1.0)});
+      }
+    }
+    if (desc.contains("g5") && desc["g5"].is_array()) {
+      for (const auto &g : desc["g5"]) {
+        calc.g5.push_back({g.value("eta", 1.0), g.value("zeta", 1.0),
+                           g.value("lambda", 1.0)});
+      }
+    }
+    if (calc.descriptor_size() == 0) {
+      return fail("ml", "acsf descriptor needs at least one of "
+                        "g1/g2/g3/g4/g5");
     }
     // Read the descriptor size BEFORE the move — argument evaluation order is
-    // unspecified, so `calc.radial.size()` in the call args can run after calc is
-    // moved-from (emptying radial → S=0).
-    const std::size_t S = calc.radial.size();
+    // unspecified, so `calc.descriptor_size()` in the call args can run after
+    // calc is moved-from.
+    const std::size_t S = calc.descriptor_size();
     return finish_ml(std::move(calc), j, ntypes, S);
   }
 
@@ -531,6 +531,37 @@ leaf::result<ForceCalculator> build_ml(json &j, std::size_t ntypes) {
     calc.rcut = desc.value("rcut", 6.0);
     calc.sigma = desc.value("sigma", 0.5);
     calc.init_radial_basis();
+    const std::size_t S = calc.descriptor_size();
+    return finish_ml(std::move(calc), j, ntypes, S);
+  }
+
+  if (dtype == "lmbtr") {
+    LMBTR calc;
+    calc.ntypes = ntypes;
+    calc.rcut = desc.value("rcut", 6.0);
+    calc.weight_scale = desc.value("weight_scale", calc.rcut / 2.0);
+    calc.normalize_l2 = desc.value("normalize", true);
+    auto read_grid = [&](const char *key, LMBTR::Grid def) {
+      if (desc.contains(key) && desc[key].is_object()) {
+        const json &g = desc[key];
+        def.min = g.value("min", def.min);
+        def.max = g.value("max", def.max);
+        def.n = g.value("n", def.n);
+        def.sigma = g.value("sigma", def.sigma);
+      }
+      return def;
+    };
+    // A k-term is active when its JSON object is present (default both on if
+    // neither is given), so an empty descriptor never slips through.
+    if (desc.contains("k2") || desc.contains("k3")) {
+      calc.use_k2 = desc.contains("k2");
+      calc.use_k3 = desc.contains("k3");
+    }
+    calc.k2 = read_grid("k2", LMBTR::Grid{0.0, calc.rcut, 50, 0.3});
+    calc.k3 = read_grid("k3", LMBTR::Grid{-1.0, 1.0, 50, 0.1});
+    if (calc.descriptor_size() == 0) {
+      return fail("ml", "lmbtr descriptor needs k2 and/or k3 with n > 0");
+    }
     const std::size_t S = calc.descriptor_size();
     return finish_ml(std::move(calc), j, ntypes, S);
   }

@@ -4,17 +4,15 @@
 // It builds, in memory through the public PotFit API, a descriptor + an energy
 // head, seeds it as the force model, and runs a forces-first fit against
 // data/unep/<el>_dft_unep.json (real DFT data from UNEP-v1, Zenodo 11533864).
-// Descriptor, head and element are runtime flags:
+// Descriptor and element are runtime flags (the head is a linear map):
 //   --descriptor soap     (--n-max/--l-max/--sigma)   | symfunc (--g2-eta/--g2-rs)
-//   --head       nn (MLP) | linear
 // e.g.
-//   ml_fit --element Cu --descriptor soap    --head nn
-//   ml_fit --element Cu --descriptor symfunc --head linear --g2-eta 0.5 1.2 0.3
+//   ml_fit --element Cu --descriptor soap
+//   ml_fit --element Cu --descriptor symfunc --g2-eta 0.5 1.2 0.3
 //
-// PERFORMANCE: this round uses finite-difference descriptor gradients AND the
-// optimizer's finite-difference Jacobian over the MLP weights, so cost grows
-// quickly with config count, neighbours and net size. Keep --max-configs and the
-// net small; this is a correctness/sanity driver, not a production trainer.
+// PERFORMANCE: this round uses finite-difference descriptor gradients, so cost
+// grows quickly with config count and neighbours. Keep --max-configs small; this
+// is a correctness/sanity driver, not a production trainer.
 
 #include "potfit/api/potfit.hpp"
 #include "potfit/force/force_calculator.hpp"
@@ -23,7 +21,7 @@
 #include "potfit/optimization/ipopt_solver.hpp"
 #include "potfit/optimization/solver.hpp"
 #include "potfit/potentials/soap.hpp"
-#include "potfit/potentials/symmetry_functions.hpp"
+#include "potfit/potentials/acsf.hpp"
 
 #include <boost/leaf/handle_errors.hpp>
 #include <boost/program_options.hpp>
@@ -34,7 +32,6 @@
 #include <cctype>
 #include <chrono>
 #include <cmath>
-#include <cstdint>
 #include <execution>
 #include <filesystem>
 #include <fstream>
@@ -71,7 +68,7 @@ namespace {
 struct Args {
   std::string element = POTFIT_ML_ELEMENT; // compile-time default; --element overrides
   std::string descriptor = "soap"; // descriptor: "soap" | "symfunc"
-  std::string head = "nn";  // energy head: "nn" (MLP) | "linear"
+  std::string head = "linear";     // energy head: "linear" (only option)
   std::vector<double> g2_eta = {0.05, 0.2, 0.5, 1.0, 2.0, 4.0}; // symfunc G2 widths
   std::vector<double> g2_rs;        // symfunc G2 centers; empty → all 0
   std::string data_dir = "data/unep";
@@ -79,16 +76,14 @@ struct Args {
   int maxiter = 100;
   double eweight = 0.0;     // forces-first
   double stress_weight = 0.0;
-  std::string algorithm = "ipopt"; // L-BFGS: best optimizer for the NN fit (see
-                                   // apply_options); lm/lmne lag badly here
+  std::string algorithm = "lm"; // E = c·D + bias is linear in the coeffs, so
+                                // Gauss–Newton (lm) converges in ~one step
   int max_configs = 20;     // small by default (FD×FD is heavy)
   int stride = 1;
   int n_max = 4;
   int l_max = 3;
   double sigma = 0.5;
   double rcut = 0.0;        // 0 → derive from dmin
-  std::vector<int> hidden = {8};
-  std::uint64_t seed = 1;
 };
 
 leaf::result<std::string> read_file(const std::string &path) {
@@ -186,20 +181,12 @@ void apply_options(PotFit &s, const Args &a) {
     s.set_solver(Solver{BoostDESolver{}});
   } else if (a.algorithm == "ls") {
     s.set_solver(Solver{LineSearchSolver{a.maxiter}});
-  } else if (a.algorithm == "lmne") {
-    // Normal-equations LM: JᵀJ/Jᵀr/Cholesky route to threaded MKL (no serial QR).
-    s.set_solver(Solver{NormalEquationsLMSolver{a.maxiter}});
-  } else if (a.algorithm == "lm") {
-    s.set_solver(Solver{EigenLMSolver{a.maxiter}});
-  } else {
-    // Default for the SOAP+NN fit: L-BFGS (ipopt) on ½‖F‖², gradient JᵀF reusing
-    // the cached parallel df. Gauss-Newton/LM is built for well-conditioned,
-    // few-parameter least-squares (the classical analytic potentials); on a
-    // high-dim, ill-conditioned 2400-param NN it makes poor steps. Benchmarks
-    // (100 configs, maxiter 5): ipopt lowered force RMSE 0.726→0.715, while
-    // lm/lmne *raised* it to ~0.737 — and lm at maxiter 20 burned 24 min / 3×
-    // the CPU to still end at 0.735. See memory ml_fit_perf_profile.
+  } else if (a.algorithm == "ipopt") {
     s.set_solver(Solver{IpoptSolver{a.maxiter}});
+  } else {
+    // Default: Gauss–Newton/LM. The linear head makes the force residual linear
+    // in the coeffs, so lm converges in ~one well-conditioned least-squares step.
+    s.set_solver(Solver{EigenLMSolver{a.maxiter}});
   }
 }
 
@@ -249,38 +236,27 @@ leaf::result<double> force_rmse(PotFit &s) {
            : std::numeric_limits<double>::quiet_NaN();
 }
 
-// Attach one energy head sized to the model's descriptor: an MLP ("nn") or a
-// linear map ("linear"). Descriptor-agnostic — used by both model types.
+// Attach a linear energy head sized to the model's descriptor.
+// Descriptor-agnostic — used by both model types.
 template <typename Model>
 void attach_head(Model &m, const Args &a) {
   const int D = static_cast<int>(m.descriptor_size());
   m.heads.reserve(1);
-  if (a.head == "linear") {
-    // E = c·D + bias makes the force residual linear in the coeffs, so lm/lmne
-    // converge in ~one Gauss–Newton step. Start at zero; free the bias only
-    // when energies are weighted (with forces-only fitting its Jacobian column
-    // is identically zero and the normal equations go singular).
-    LinearHead h;
-    h.coeffs.assign(static_cast<std::size_t>(D), Param{0.0, false});
-    h.bias = Param{0.0, /*fixed=*/a.eweight == 0.0};
-    m.heads.emplace_back(EnergyHead{std::move(h)});
-  } else {
-    std::vector<int> sizes;
-    sizes.push_back(D);
-    for (int hw : a.hidden) {
-      sizes.push_back(hw);
-    }
-    sizes.push_back(1);
-    m.heads.emplace_back(
-        EnergyHead{MLPHead::make(sizes, MLPHead::Act::Tanh, a.seed)});
-  }
+  // E = c·D + bias makes the force residual linear in the coeffs, so lm
+  // converges in ~one Gauss–Newton step. Start at zero; free the bias only
+  // when energies are weighted (with forces-only fitting its Jacobian column
+  // is identically zero and the normal equations go singular).
+  LinearHead h;
+  h.coeffs.assign(static_cast<std::size_t>(D), Param{0.0, false});
+  h.bias = Param{0.0, /*fixed=*/a.eweight == 0.0};
+  m.heads.emplace_back(EnergyHead{std::move(h)});
 }
 
 // Build the force model (single element → ntypes 1) for the requested
 // descriptor ("soap" | "symfunc") and energy head.
 ForceCalculator build_model(const Args &a, double rcut) {
   if (a.descriptor == "symfunc") {
-    SymmetryFunctionModel m;
+    ACSF m;
     m.ntypes = 1;
     m.rcut = rcut;
     m.radial.reserve(a.g2_eta.size());
@@ -404,7 +380,7 @@ int main(int argc, char *argv[]) {
       "element,e", po::value(&a.element)->default_value(a.element), "Cu | Al | …")(
       "descriptor", po::value(&a.descriptor)->default_value(a.descriptor),
       "soap | symfunc")(
-      "head", po::value(&a.head)->default_value(a.head), "nn (MLP) | linear")(
+      "head", po::value(&a.head)->default_value(a.head), "linear")(
       "data-dir", po::value(&a.data_dir)->default_value(a.data_dir))(
       "out-dir", po::value(&a.out_dir)->default_value(a.out_dir))(
       "maxiter", po::value(&a.maxiter)->default_value(a.maxiter))(
@@ -412,7 +388,7 @@ int main(int argc, char *argv[]) {
       "stress-weight",
       po::value(&a.stress_weight)->default_value(a.stress_weight))(
       "algorithm,a", po::value(&a.algorithm)->default_value(a.algorithm),
-      "ipopt (L-BFGS, default/best for NN) | lm | lmne | powell | de | ls")(
+      "lm (default) | ipopt | powell | de | ls")(
       "max-configs", po::value(&a.max_configs)->default_value(a.max_configs))(
       "stride", po::value(&a.stride)->default_value(a.stride))(
       "n-max", po::value(&a.n_max)->default_value(a.n_max), "soap only")(
@@ -421,8 +397,7 @@ int main(int argc, char *argv[]) {
       "g2-eta", po::value(&a.g2_eta)->multitoken(), "symfunc G2 eta widths")(
       "g2-rs", po::value(&a.g2_rs)->multitoken(),
       "symfunc G2 rs centers (default all 0)")(
-      "rcut", po::value(&a.rcut)->default_value(a.rcut), "0 = derive from dmin")(
-      "hidden", po::value(&a.hidden)->multitoken(), "MLP hidden widths (nn only)");
+      "rcut", po::value(&a.rcut)->default_value(a.rcut), "0 = derive from dmin");
 
   po::variables_map vm;
   try {
@@ -437,9 +412,8 @@ int main(int argc, char *argv[]) {
     return 1;
   }
 
-  if (a.head != "nn" && a.head != "linear") {
-    std::cerr << "error: --head must be 'nn' or 'linear' (got '" << a.head
-              << "')\n\n"
+  if (a.head != "linear") {
+    std::cerr << "error: --head must be 'linear' (got '" << a.head << "')\n\n"
               << desc << "\n";
     return 1;
   }

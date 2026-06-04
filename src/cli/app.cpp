@@ -36,8 +36,6 @@ namespace {
 std::optional<potfit::Solver> build_solver(const CliOptions &o) {
   if (o.algorithm == "lm") {
     return potfit::Solver{potfit::EigenLMSolver{o.max_iter}};
-  } else if (o.algorithm == "lmne") {
-    return potfit::Solver{potfit::NormalEquationsLMSolver{o.max_iter}};
   } else if (o.algorithm == "powell") {
     return potfit::Solver{potfit::EigenHybridSolver{o.max_iter}};
   } else if (o.algorithm == "ls") {
