@@ -26,7 +26,8 @@ namespace potfit {
 // Upper-triangle ordinal of the unordered species pair {a,b} (row-major,
 // 0 <= lo <= hi < S) — the companion lookup to upper_triangle() in
 // potential_table.hpp, matching SOAP's species-pair ordering.
-constexpr FORCE_INLINE std::size_t pair_ordinal(std::size_t a, std::size_t b, std::size_t S) {
+constexpr FORCE_INLINE std::size_t pair_ordinal(std::size_t a, std::size_t b,
+                                                std::size_t S) {
   const std::size_t lo = std::min(a, b);
   const std::size_t hi = std::max(a, b);
   return lo * S - lo * (lo - 1) / 2 + (hi - lo);
@@ -34,9 +35,9 @@ constexpr FORCE_INLINE std::size_t pair_ordinal(std::size_t a, std::size_t b, st
 
 // Sequence of contiguous descriptor blocks. add() appends a block of `count`
 // values over `nchan` channels, prefix-summing the base offset, and returns the
-// block's id; index() maps (block, channel, t) to its flat position. Blocks live
-// in inline storage (a descriptor has only a handful: ACSF 5, LMBTR <= 2), so a
-// layout costs no heap allocation.
+// block's id; index() maps (block, channel, t) to its flat position. Blocks
+// live in inline storage (a descriptor has only a handful: ACSF 5, LMBTR <= 2),
+// so a layout costs no heap allocation.
 struct DescriptorLayout {
   struct Block {
     std::size_t base = 0;  // first flat index of the block
@@ -44,7 +45,6 @@ struct DescriptorLayout {
     std::size_t nchan = 0; // channels (S per-species, P per-pair)
   };
   static constexpr std::size_t max_blocks = 8;
-
   boost::container::static_vector<Block, max_blocks> blocks_;
   std::size_t size_ = 0;
 
@@ -57,7 +57,7 @@ struct DescriptorLayout {
   [[nodiscard]] constexpr Eigen::Index size() const {
     return static_cast<Eigen::Index>(size_);
   }
-  [[nodiscard]] constexpr Eigen::Index index(std::size_t block, std::size_t chan,
+  [[nodiscard]] Eigen::Index index(std::size_t block, std::size_t chan,
                                    std::size_t t) const {
     const Block &b = blocks_[block];
     return static_cast<Eigen::Index>(b.base + chan * b.count + t);
@@ -74,42 +74,9 @@ struct DescriptorLayout {
 // per-species when nchan==S and per-pair when nchan==P=S(S+1)/2 (distinct for
 // S>=2; at S==1 both collapse to the single channel and the per-species path is
 // correct either way).
-inline std::vector<std::optional<Eigen::Index>>
+std::vector<std::optional<Eigen::Index>>
 remap_layout(const DescriptorLayout &old_L, const DescriptorLayout &new_L,
              const std::vector<std::optional<std::size_t>> &old_of_new,
-             std::size_t S_old, std::size_t S_new) {
-  std::vector<std::optional<Eigen::Index>> map(
-      static_cast<std::size_t>(new_L.size()));
-  for (std::size_t b = 0; b < new_L.blocks_.size(); ++b) {
-    const std::size_t count = new_L.blocks_[b].count;
-    const bool per_species = new_L.blocks_[b].nchan == S_new;
-    if (per_species) {
-      for (std::size_t s = 0; s < S_new; ++s) {
-        const auto s_old = old_of_new[s];
-        for (std::size_t t = 0; t < count; ++t) {
-          if (s_old) {
-            map[static_cast<std::size_t>(new_L.index(b, s, t))] =
-                old_L.index(b, *s_old, t);
-          }
-        }
-      }
-    } else { // per-pair
-      for (std::size_t a = 0; a < S_new; ++a) {
-        for (std::size_t c = a; c < S_new; ++c) {
-          const std::size_t po_new = pair_ordinal(a, c, S_new);
-          const auto a_old = old_of_new[a];
-          const auto c_old = old_of_new[c];
-          for (std::size_t t = 0; t < count; ++t) {
-            if (a_old && c_old) {
-              map[static_cast<std::size_t>(new_L.index(b, po_new, t))] =
-                  old_L.index(b, pair_ordinal(*a_old, *c_old, S_old), t);
-            }
-          }
-        }
-      }
-    }
-  }
-  return map;
-}
+             std::size_t S_old, std::size_t S_new);
 
 } // namespace potfit

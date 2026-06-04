@@ -32,6 +32,7 @@ set(POTFIT_ENGINE_SOURCES
         src/force/stiweb_force.cpp
         src/force/tersoff_force.cpp
         src/force/ml_force.cpp
+        src/force/descriptor_layout.cpp
         src/force/acsf.cpp
         src/force/lmbtr.cpp
         src/force/soap.cpp

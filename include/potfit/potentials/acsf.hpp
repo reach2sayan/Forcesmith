@@ -45,7 +45,6 @@ enum class SymmetryFunctionFamily : std::size_t { G1, G2, G3, G4, G5 };
 // get_descriptor never hand-rolls offset arithmetic.
 struct AcsfLayout {
   DescriptorLayout d_;
-
   AcsfLayout(std::size_t S, std::size_t nG1, std::size_t nG2, std::size_t nG3,
              std::size_t nG4, std::size_t nG5) {
     const std::size_t P = S * (S + 1) / 2;
@@ -61,12 +60,12 @@ struct AcsfLayout {
   // base + chan * count + t. radial() takes the per-species channel s;
   // angular() takes the per-pair channel po; the two names document which
   // channel space the caller is in.
-  [[nodiscard]] constexpr Eigen::Index
-  radial(SymmetryFunctionFamily f, std::size_t s, std::size_t t) const {
+  [[nodiscard]] Eigen::Index radial(SymmetryFunctionFamily f, std::size_t s,
+                                    std::size_t t) const {
     return d_.index(std::to_underlying(f), s, t);
   }
-  [[nodiscard]] constexpr Eigen::Index
-  angular(SymmetryFunctionFamily f, std::size_t po, std::size_t t) const {
+  [[nodiscard]] Eigen::Index angular(SymmetryFunctionFamily f, std::size_t po,
+                                     std::size_t t) const {
     return d_.index(std::to_underlying(f), po, t);
   }
 };
