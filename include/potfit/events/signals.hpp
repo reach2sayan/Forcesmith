@@ -1,12 +1,13 @@
 #pragma once
 
-#include <boost/signals2/signal.hpp>
 #include <atomic>
+#include <boost/signals2/signal.hpp>
 #include <cstdint>
 #include <utility>
 
 namespace potfit {
-struct Configuration; // fwd-decl: enrich ForceEvalStats without pulling in atom.hpp
+struct Configuration; // fwd-decl: enrich ForceEvalStats without pulling in
+                      // atom.hpp
 }
 
 namespace potfit::events {

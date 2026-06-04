@@ -25,9 +25,11 @@
 #include <nlohmann/json.hpp>
 
 #include <cctype>
+#include <cstdint>
 #include <fstream>
 #include <iostream>
 #include <optional>
+#include <random>
 #include <string>
 #include <vector>
 
@@ -58,6 +60,7 @@ struct Args {
   bool drop_k3 = false;
   // ML head
   bool bias_free = false;
+  unsigned seed = 42; // RNG seed for coefficient init (reproducible startpot)
 };
 
 [[noreturn]] void die(const std::string &msg) {
@@ -198,17 +201,31 @@ int scaffold_analytic(const Args &a) {
   return write_json(a, j);
 }
 
-// ── ML: build the model in memory + zeroed linear heads, then write_model ────
+// ── ML: build the model in memory + small-Gaussian linear heads, write_model ─
 
-// Attach one zeroed linear head per element type, sized to the descriptor. The
-// bias is fixed by default (forces-first fitting leaves its Jacobian column
-// zero); --bias-free frees it for energy-weighted fits.
-template <typename Model> void attach_zero_heads(Model &m, const Args &a) {
+// Stddev of the zero-mean Gaussian used to seed linear-head coefficients. Small
+// on purpose: the SOAP descriptor is L2-normalised (Σ D² = 1), so with
+// E = Σ coeffs·D this keeps the initial predicted energies sub-eV while still
+// breaking the all-zero symmetry of the start point.
+constexpr double kHeadInitStd = 0.01;
+
+// Attach one linear head per element type, sized to the descriptor, with
+// coefficients drawn from a small zero-mean Gaussian (kHeadInitStd). The bias is
+// fixed by default (forces-first fitting leaves its Jacobian column zero);
+// --bias-free frees it for energy-weighted fits. A fixed --seed makes the
+// scaffolded startpot reproducible; one shared rng gives each element type a
+// distinct draw.
+template <typename Model> void attach_init_heads(Model &m, const Args &a) {
   const auto D = static_cast<std::size_t>(m.descriptor_size());
+  std::mt19937_64 rng(static_cast<std::uint64_t>(a.seed));
+  std::normal_distribution<double> nd(0.0, kHeadInitStd);
   m.heads.reserve(static_cast<std::size_t>(a.ntypes));
   for (int t = 0; t < a.ntypes; ++t) {
     LinearHead h;
-    h.coeffs.assign(D, Param{0.0, false});
+    h.coeffs.reserve(D);
+    for (std::size_t k = 0; k < D; ++k) {
+      h.coeffs.emplace_back(Param{nd(rng), false});
+    }
     h.bias = Param{0.0, /*fixed=*/!a.bias_free};
     m.heads.emplace_back(EnergyHead{std::move(h)});
   }
@@ -224,7 +241,7 @@ int scaffold_ml(const Args &a) {
     m.rcut = a.cutoff;
     m.sigma = a.sigma;
     m.init_radial_basis();
-    attach_zero_heads(m, a);
+    attach_init_heads(m, a);
     model = ForceCalculator{std::move(m)};
   } else if (a.model == "acsf") {
     ACSF m;
@@ -238,7 +255,7 @@ int scaffold_ml(const Args &a) {
     if (m.descriptor_size() == 0) {
       die("acsf needs at least one channel: set --g1 and/or --g2-eta");
     }
-    attach_zero_heads(m, a);
+    attach_init_heads(m, a);
     model = ForceCalculator{std::move(m)};
   } else { // lmbtr
     LMBTR m;
@@ -251,7 +268,7 @@ int scaffold_ml(const Args &a) {
     if (m.descriptor_size() == 0) {
       die("lmbtr needs k2 and/or k3 with n > 0");
     }
-    attach_zero_heads(m, a);
+    attach_init_heads(m, a);
     model = ForceCalculator{std::move(m)};
   }
 
@@ -333,7 +350,9 @@ int run(int argc, char *argv[]) {
       "drop-k2", po::bool_switch(&a.drop_k2), "lmbtr: disable the k2 term")(
       "drop-k3", po::bool_switch(&a.drop_k3), "lmbtr: disable the k3 term")(
       "bias-free", po::bool_switch(&a.bias_free),
-      "ml: leave the head bias free (default fixed, for forces-first fits)");
+      "ml: leave the head bias free (default fixed, for forces-first fits)")(
+      "seed", po::value(&a.seed)->default_value(a.seed),
+      "ml: RNG seed for the small-Gaussian head-coefficient init");
 
   po::variables_map vm;
   try {

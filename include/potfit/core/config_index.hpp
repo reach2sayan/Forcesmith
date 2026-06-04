@@ -100,8 +100,7 @@ namespace detail {
 // const_mem_fun cannot key on a reference-returning accessor, so the
 // vector-valued composition key is extracted via global_fun (which does
 // support const-reference returns) to avoid copying the key on every compare.
-[[nodiscard]] inline const CompositionKey &
-ref_composition(const ConfigRef &r) {
+[[nodiscard]] inline const CompositionKey &ref_composition(const ConfigRef &r) {
   return r.composition();
 }
 } // namespace detail
@@ -125,10 +124,9 @@ using ConfigIndex = bmi::multi_index_container<
             bmi::tag<detail::by_weight>,
             bmi::const_mem_fun<ConfigRef, double, &ConfigRef::weight>>,
         // unique human-facing identifier; string_view key into the owned name
-        bmi::ordered_unique<
-            bmi::tag<detail::by_name>,
-            bmi::const_mem_fun<ConfigRef, std::string_view,
-                               &ConfigRef::name>>>>;
+        bmi::ordered_unique<bmi::tag<detail::by_name>,
+                            bmi::const_mem_fun<ConfigRef, std::string_view,
+                                               &ConfigRef::name>>>>;
 
 // Build the index from the owning configuration store. `order` is the position
 // in `configs`, which equals the residual block id used by the optimizer.
@@ -138,8 +136,8 @@ build_config_index(std::span<const Configuration> configs) {
   auto &ordered = idx.get<detail::by_order>();
   for (std::size_t i = 0; i < configs.size(); ++i) {
     const Configuration &c = configs[i];
-    ordered.push_back(ConfigRef{&c, i, composition_of(c),
-                                composition_mask(c), c.name});
+    ordered.push_back(
+        ConfigRef{&c, i, composition_of(c), composition_mask(c), c.name});
   }
   return idx;
 }
@@ -180,8 +178,8 @@ configs_containing_element(const ConfigIndex &idx, std::size_t type) {
     const bool present =
         (type < 64 && r.comp_mask() != 0)
             ? ((r.comp_mask() & (std::uint64_t{1} << type)) != 0)
-            : std::binary_search(r.composition().begin(),
-                                 r.composition().end(), type);
+            : std::binary_search(r.composition().begin(), r.composition().end(),
+                                 type);
     if (present) {
       hits.push_back(r);
     }
@@ -208,8 +206,7 @@ configs_in_energy_band(const ConfigIndex &idx, double lo, double hi) {
                                                    std::string_view name) {
   const auto &by_name = idx.get<detail::by_name>();
   const auto it = by_name.find(name);
-  return it == by_name.end() ? nullptr
-                             : const_cast<Configuration *>(it->cfg());
+  return it == by_name.end() ? nullptr : const_cast<Configuration *>(it->cfg());
 }
 
 } // namespace potfit::config_index

@@ -41,7 +41,8 @@ std::span<const AnalyticParamDef> analytic_defaults(std::string_view function) {
 }
 
 std::span<const std::string_view> analytic_default_functions() {
-#define POTFIT_APD_TABLE_NAME(fn, TABLE) std::string_view{BOOST_PP_STRINGIZE(fn)},
+#define POTFIT_APD_TABLE_NAME(fn, TABLE)                                       \
+  std::string_view{BOOST_PP_STRINGIZE(fn)},
   static constexpr std::array kNames{
       POTFIT_ANALYTIC_FUNCTIONS(POTFIT_APD_TABLE_NAME)};
   return kNames;
