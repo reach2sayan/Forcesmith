@@ -49,6 +49,7 @@ set(POTFIT_ENGINE_SOURCES
         src/optimization/potfit_functor.cpp
         src/optimization/solver.cpp
         src/optimization/ipopt_solver.cpp
+        src/potentials/analytic_param_defs.cpp
         src/potentials/spline.cpp
 )
 
@@ -94,6 +95,7 @@ add_executable(potfit_cli
         src/main.cpp
         src/cli/options.cpp
         src/cli/evaluate_report.cpp
+        src/cli/init.cpp
         src/cli/app.cpp)
 set_target_properties(potfit_cli PROPERTIES OUTPUT_NAME potfit)
 target_include_directories(potfit_cli PRIVATE
@@ -139,12 +141,16 @@ set(UNIT_TEST_SOURCES
         tests/unit/test_ml_fit.cpp
         tests/unit/test_ml_rerank.cpp
         tests/unit/test_types.cpp
+        tests/unit/test_init.cpp
 )
 
-add_executable(potfit_tests ${UNIT_TEST_SOURCES})
+# test_init.cpp drives the real scaffolder (src/cli/init.cpp), which is not part
+# of the potfit library, so compile it into the test binary and link the
+# program_options it parses with.
+add_executable(potfit_tests ${UNIT_TEST_SOURCES} src/cli/init.cpp)
 target_include_directories(potfit_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/include")
 
-target_link_libraries(potfit_tests PRIVATE potfit_warnings potfit GTest::gtest_main)
+target_link_libraries(potfit_tests PRIVATE potfit_warnings potfit GTest::gtest_main Boost::program_options)
 
 include(GoogleTest)
 gtest_discover_tests(potfit_tests)

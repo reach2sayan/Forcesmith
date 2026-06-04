@@ -51,7 +51,11 @@ ParseResult parse(int argc, char *argv[]) {
   try {
     po::store(po::parse_command_line(argc, argv, desc), vm);
     if (vm.count("help") || argc == 1) {
-      std::cout << desc << "\n";
+      std::cout << desc << "\n"
+                << "subcommand:\n"
+                << "  potfit init --model <type> --out <file> [...]   "
+                   "scaffold a fresh startpot\n"
+                << "  (run 'potfit init --help' for its options)\n";
       return {ParseOutcome::ExitOk, {}};
     }
     po::notify(vm);

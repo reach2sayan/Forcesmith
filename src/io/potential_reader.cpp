@@ -2,6 +2,7 @@
 
 #include "potfit/io/factory.hpp"
 #include "potfit/io/json_util.hpp"
+#include "potfit/potentials/analytic_param_defs.hpp"
 #include "potfit/potentials/analytic_potential.hpp"
 #include "potfit/potentials/spline.hpp"
 
@@ -55,25 +56,25 @@ const Registry &registry() {
     m.reserve(64);
 
     // clang-format off
-    add(m,  2, {"epsilon","sigma"},                                                          [](auto p, auto lo, auto hi) { return Potential(LennardJones(p[0], p[1],                                      lo, hi)); }, "pair_lj",     "lj"         );
-    add(m,  3, {"De","a","re"},                                                              [](auto p, auto lo, auto hi) { return Potential(Morse(p[0], p[1], p[2],                                       lo, hi)); }, "morse"                      );
-    add(m,  3, {"A","rho","C"},                                                              [](auto p, auto lo, auto hi) { return Potential(Buckingham(p[0], p[1], p[2],                                  lo, hi)); }, "buckingham",  "buck"        );
-    add(m,  5, {"A","B","C","D","E"},                                                        [](auto p, auto lo, auto hi) { return Potential(Born(p[0], p[1], p[2], p[3], p[4],                           lo, hi)); }, "born"                       );
-    add(m,  2, {"A","n"},                                                                    [](auto p, auto lo, auto hi) { return Potential(PowerDecay(p[0], p[1],                                        lo, hi)); }, "power_decay", "power"       );
-    add(m,  2, {"A","B"},                                                                    [](auto p, auto lo, auto hi) { return Potential(ExpDecay(p[0], p[1],                                          lo, hi)); }, "exp_decay",   "exp"         );
-    add(m,  3, {"A","B","r0"},                                                               [](auto p, auto lo, auto hi) { return Potential(MexpDecay(p[0], p[1], p[2],                                   lo, hi)); }, "mexp_decay",  "mexp"        );
-    add(m,  2, {"k","r0"},                                                                   [](auto p, auto lo, auto hi) { return Potential(Harmonic(p[0], p[1],                                          lo, hi)); }, "harmonic"                   );
-    add(m,  4, {"E0","a","b","c"},                                                           [](auto p, auto lo, auto hi) { return Potential(Universal(p[0], p[1], p[2], p[3],                             lo, hi)); }, "universal"                  );
-    add(m,  6, {"A","n","B","m","k","phi"},                                                  [](auto p, auto lo, auto hi) { return Potential(Eopp(p[0], p[1], p[2], p[3], p[4], p[5],                     lo, hi)); }, "eopp"                       );
+    add(m,  2, POTFIT_PARAM_NAME_LIST(POTFIT_APD_lj),                                                          [](auto p, auto lo, auto hi) { return Potential(LennardJones(p[0], p[1],                                      lo, hi)); }, "pair_lj",     "lj"         );
+    add(m,  3, POTFIT_PARAM_NAME_LIST(POTFIT_APD_morse),                                                              [](auto p, auto lo, auto hi) { return Potential(Morse(p[0], p[1], p[2],                                       lo, hi)); }, "morse"                      );
+    add(m,  3, POTFIT_PARAM_NAME_LIST(POTFIT_APD_buckingham),                                                              [](auto p, auto lo, auto hi) { return Potential(Buckingham(p[0], p[1], p[2],                                  lo, hi)); }, "buckingham",  "buck"        );
+    add(m,  5, POTFIT_PARAM_NAME_LIST(POTFIT_APD_born),                                                        [](auto p, auto lo, auto hi) { return Potential(Born(p[0], p[1], p[2], p[3], p[4],                           lo, hi)); }, "born"                       );
+    add(m,  2, POTFIT_PARAM_NAME_LIST(POTFIT_APD_power_decay),                                                                    [](auto p, auto lo, auto hi) { return Potential(PowerDecay(p[0], p[1],                                        lo, hi)); }, "power_decay", "power"       );
+    add(m,  2, POTFIT_PARAM_NAME_LIST(POTFIT_APD_exp_decay),                                                                    [](auto p, auto lo, auto hi) { return Potential(ExpDecay(p[0], p[1],                                          lo, hi)); }, "exp_decay",   "exp"         );
+    add(m,  3, POTFIT_PARAM_NAME_LIST(POTFIT_APD_mexp_decay),                                                               [](auto p, auto lo, auto hi) { return Potential(MexpDecay(p[0], p[1], p[2],                                   lo, hi)); }, "mexp_decay",  "mexp"        );
+    add(m,  2, POTFIT_PARAM_NAME_LIST(POTFIT_APD_harmonic),                                                                   [](auto p, auto lo, auto hi) { return Potential(Harmonic(p[0], p[1],                                          lo, hi)); }, "harmonic"                   );
+    add(m,  4, POTFIT_PARAM_NAME_LIST(POTFIT_APD_universal),                                                           [](auto p, auto lo, auto hi) { return Potential(Universal(p[0], p[1], p[2], p[3],                             lo, hi)); }, "universal"                  );
+    add(m,  6, POTFIT_PARAM_NAME_LIST(POTFIT_APD_eopp),                                                  [](auto p, auto lo, auto hi) { return Potential(Eopp(p[0], p[1], p[2], p[3], p[4], p[5],                     lo, hi)); }, "eopp"                       );
     add(m,  6, {"A","B","C","m","k","phi"},                                                  [](auto p, auto lo, auto hi) { return Potential(EoppExp(p[0], p[1], p[2], p[3], p[4], p[5],                  lo, hi)); }, "eopp_exp",    "eopp_exp_"   );
     add(m,  7, {"A","n","B","m","k","phi","r0"},                                             [](auto p, auto lo, auto hi) { return Potential(Meopp(p[0], p[1], p[2], p[3], p[4], p[5], p[6],              lo, hi)); }, "meopp"                      );
     add(m,  5, {"A","n","m","r0","B"},                                                       [](auto p, auto lo, auto hi) { return Potential(GenLJ(p[0], p[1], p[2], p[3], p[4],                          lo, hi)); }, "gen_lj",      "genlj"       );
     add(m,  7, {"D1","a1","r1","D2","a2","r2","C"},                                          [](auto p, auto lo, auto hi) { return Potential(DoubleMorse(p[0], p[1], p[2], p[3], p[4], p[5], p[6],        lo, hi)); }, "double_morse","dbl_morse"   );
     add(m,  5, {"A","B","r1","C","r2"},                                                      [](auto p, auto lo, auto hi) { return Potential(DoubleExp(p[0], p[1], p[2], p[3], p[4],                      lo, hi)); }, "double_exp",  "dbl_exp"     );
     add(m,  6, {"A","B","C","r0","n","d"},                                                   [](auto p, auto lo, auto hi) { return Potential(Mishin(p[0], p[1], p[2], p[3], p[4], p[5],                   lo, hi)); }, "mishin"                     );
-    add(m,  2, {"A","B"},                                                                    [](auto p, auto lo, auto hi) { return Potential(SqrtFunc(p[0], p[1],                                          lo, hi)); }, "sqrt"                       );
-    add(m,  1, {"C"},                                                                        [](auto p, auto lo, auto hi) { return Potential(ConstFunc(p[0],                                               lo, hi)); }, "const"                      );
-    add(m,  3, {"A","B","C"},                                                                [](auto p, auto lo, auto hi) { return Potential(Parabola(p[0], p[1], p[2],                                   lo, hi)); }, "parabola"                   );
+    add(m,  2, POTFIT_PARAM_NAME_LIST(POTFIT_APD_sqrt),                                                                    [](auto p, auto lo, auto hi) { return Potential(SqrtFunc(p[0], p[1],                                          lo, hi)); }, "sqrt"                       );
+    add(m,  1, POTFIT_PARAM_NAME_LIST(POTFIT_APD_const),                                                                        [](auto p, auto lo, auto hi) { return Potential(ConstFunc(p[0],                                               lo, hi)); }, "const"                      );
+    add(m,  3, POTFIT_PARAM_NAME_LIST(POTFIT_APD_parabola),                                                                [](auto p, auto lo, auto hi) { return Potential(Parabola(p[0], p[1], p[2],                                   lo, hi)); }, "parabola"                   );
     add(m,  5, {"a0","a1","a2","a3","a4"},                                                   [](auto p, auto lo, auto hi) { return Potential(Poly5(p[0], p[1], p[2], p[3], p[4],                          lo, hi)); }, "poly5"                      );
     add(m,  6, {"A","B","p","q","delta","rc"},                                               [](auto p, auto lo, auto hi) { return Potential(StiwWeb2(p[0], p[1], p[2], p[3], p[4], p[5],                 lo, hi)); }, "stiweb_2",    "sw2"         );
     add(m,  2, {"gamma","a"},                                                                [](auto p, auto lo, auto hi) { return Potential(StiwWeb3(p[0], p[1],                                          lo, hi)); }, "stiweb_3",    "sw3"         );
@@ -82,17 +83,17 @@ const Registry &registry() {
     add(m, 16, {"A","B","lambda","mu","beta","n","c","d","h","R","S","c1","c2","c3","c4","c5"}, [](auto p, auto lo, auto hi) { return Potential(TersoffModPot(to_arr<16>(p),                               lo, hi)); }, "tersoff_mod", "tmod"        );
     add(m,  9, {"A","B","C","D","E","F","G","H","I"},                                        [](auto p, auto lo, auto hi) { return Potential(Kawamura(p[0], p[1], p[2], p[3], p[4], p[5], p[6], p[7], p[8], lo, hi)); }, "kawamura"                 );
     add(m, 12, {"A","B","C","D","E","F","G","H","I","J","K","L"},                            [](auto p, auto lo, auto hi) { return Potential(KawamuraMix(to_arr<12>(p),                                    lo, hi)); }, "kawamura_mix"               );
-    add(m,  2, {"A","n"},                                                                    [](auto p, auto lo, auto hi) { return Potential(Softshell(p[0], p[1],                                         lo, hi)); }, "softshell",   "soft"        );
+    add(m,  2, POTFIT_PARAM_NAME_LIST(POTFIT_APD_softshell),                                                                    [](auto p, auto lo, auto hi) { return Potential(Softshell(p[0], p[1],                                         lo, hi)); }, "softshell",   "soft"        );
     add(m,  3, {"A","B","C"},                                                                [](auto p, auto lo, auto hi) { return Potential(ExpPlus(p[0], p[1], p[2],                                    lo, hi)); }, "exp_plus",    "expplus"     );
     add(m,  5, {"A","B","C","D","E"},                                                        [](auto p, auto lo, auto hi) { return Potential(Strmm(p[0], p[1], p[2], p[3], p[4],                          lo, hi)); }, "strmm"                      );
 
     // Smooth-cutoff (`_sc`) variants: SmoothCutoff decorator wraps the base and
     // multiplies by apot_cutoff(r,rmax,h); `h` (switching width) is the appended
     // last parameter. Match potfit's *_sc names. Adding more is a one-liner.
-    add(m,  3, {"epsilon","sigma","h"},                                                      [](auto p, auto lo, auto hi) { return Potential(SmoothCutoff(LennardJones(p[0], p[1],            lo, hi), p[2])); }, "lj_sc",       "pair_lj_sc"  );
-    add(m,  4, {"De","a","re","h"},                                                          [](auto p, auto lo, auto hi) { return Potential(SmoothCutoff(Morse(p[0], p[1], p[2],            lo, hi), p[3])); }, "morse_sc"                   );
-    add(m,  3, {"A","B","h"},                                                                [](auto p, auto lo, auto hi) { return Potential(SmoothCutoff(ExpDecay(p[0], p[1],               lo, hi), p[2])); }, "exp_decay_sc","exp_sc"       );
-    add(m,  7, {"A","n","B","m","k","phi","h"},                                              [](auto p, auto lo, auto hi) { return Potential(SmoothCutoff(Eopp(p[0], p[1], p[2], p[3], p[4], p[5], lo, hi), p[6])); }, "eopp_sc"                    );
+    add(m,  3, POTFIT_PARAM_NAME_LIST(POTFIT_APD_lj_sc),                                                      [](auto p, auto lo, auto hi) { return Potential(SmoothCutoff(LennardJones(p[0], p[1],            lo, hi), p[2])); }, "lj_sc",       "pair_lj_sc"  );
+    add(m,  4, POTFIT_PARAM_NAME_LIST(POTFIT_APD_morse_sc),                                                          [](auto p, auto lo, auto hi) { return Potential(SmoothCutoff(Morse(p[0], p[1], p[2],            lo, hi), p[3])); }, "morse_sc"                   );
+    add(m,  3, POTFIT_PARAM_NAME_LIST(POTFIT_APD_exp_decay_sc),                                                                [](auto p, auto lo, auto hi) { return Potential(SmoothCutoff(ExpDecay(p[0], p[1],               lo, hi), p[2])); }, "exp_decay_sc","exp_sc"       );
+    add(m,  7, POTFIT_PARAM_NAME_LIST(POTFIT_APD_eopp_sc),                                              [](auto p, auto lo, auto hi) { return Potential(SmoothCutoff(Eopp(p[0], p[1], p[2], p[3], p[4], p[5], lo, hi), p[6])); }, "eopp_sc"                    );
     // clang-format on
 
     return m;
