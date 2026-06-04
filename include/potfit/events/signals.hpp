@@ -32,7 +32,6 @@ struct ForceEvalStats {
 // with the raw signal — call as on_force_eval(stats), connect via
 // .connect(...).
 struct SuppressibleSignal {
-  boost::signals2::signal<void(const ForceEvalStats &)> sig;
   std::atomic<bool> suppressed{false};
   void operator()(const ForceEvalStats &s) const {
     if (!suppressed.load(std::memory_order_relaxed)) {
@@ -42,6 +41,9 @@ struct SuppressibleSignal {
   template <typename F> auto connect(F &&f) {
     return sig.connect(std::forward<F>(f));
   }
+
+private:
+  boost::signals2::signal<void(const ForceEvalStats &)> sig;
 };
 
 inline boost::signals2::signal<void(const IterationStats &)> on_iteration;

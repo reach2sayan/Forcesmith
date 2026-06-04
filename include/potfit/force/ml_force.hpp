@@ -318,17 +318,17 @@ struct MLBase : ForceCalculatorBase<Derived>, NoGlobals {
   // its hyperparameters) lives in Derived.
   TypeArray<EnergyHead> heads;
 
-  // ── Fit-time descriptor cache
+  // Fit-time descriptor cache
   // During an optimization the
   // training geometry is FIXED — only the head params move — so the descriptor
   // D_i and its position-gradient dD_i/dr are constant. prepare() computes them
   // ONCE for every atom of every config; thereafter the per-iteration force
-  // evaluation is cheap head algebra over cached arrays (no neighbor rebuild,
+  // evaluation is cheap head algebra over cached arrays (no neighbour rebuild,
   // no get_descriptor, no finite-difference fallback).
   //
-  // Stored POINTER-FREE: each cached atom keeps its neighbors as flat atom
+  // Stored POINTER-FREE: each cached atom keeps its neighbours as flat atom
   // indices (within the config) plus the bond vectors, so the cached force
-  // assembly needs no live neighbor list. That is what lets the parallel
+  // assembly needs no live neighbour list. That is what lets the parallel
   // Jacobian (PotfitFunctor::df) accumulate forces into private per-column
   // buffers with zero shared mutable state.
   struct AtomCache {
@@ -350,10 +350,6 @@ struct MLBase : ForceCalculatorBase<Derived>, NoGlobals {
   void invalidate_cache() const { cache_.reset(); }
   [[nodiscard]] bool has_cache() const { return static_cast<bool>(cache_); }
 
-  // True iff every head can supply its analytic parameter-Jacobian, so the
-  // functor can build ∂F/∂θ directly instead of finite-differencing the
-  // residual over each weight. Mixed head types per element ⇒ require ALL of
-  // them.
   [[nodiscard]] bool has_param_jacobian() const {
     return heads.size() > 0 &&
            std::ranges::all_of(heads, [](const EnergyHead &h) {
@@ -402,7 +398,7 @@ struct MLBase : ForceCalculatorBase<Derived>, NoGlobals {
     return out;
   }
 
-  // ── Per-feature descriptor standardization ─────────────────────────────────
+  // Per-feature descriptor standardization
   // Least-squares/NN conditioning collapses when descriptor features span
   // orders of magnitude (SOAP only L2-normalizes per sample; G2 not at all), so
   // the LM fit plateaus after one step. prepare() whitens each feature to ≈zero
@@ -423,53 +419,96 @@ struct MLBase : ForceCalculatorBase<Derived>, NoGlobals {
     return standardize_features && inv_std_.size() > 0;
   }
 
-  // One-time precompute over the whole training set. Builds neighbor lists,
-  // warms up any lazy descriptor state (e.g. SOAP's radial basis)
-  // single-threaded, then fills the cache with one balanced parallel_for over
-  // the flat (config, atom) set — thousands of independent units, so it fills
-  // every core instead of stranding threads on a handful of uneven configs.
-  void prepare(std::span<Configuration> configs) const {
-    auto data = std::make_shared<CacheData>();
-    data->rows.resize(configs.size());
-    data->volume.resize(configs.size());
+private:
+  // ── prepare() pipeline stages ───────────────────────────────────────────────
+  // Declared before prepare() so its (non-dependent) calls resolve here.
+  // Flat (config, atom) index list over the whole training set.
+  using Worklist = std::vector<std::pair<std::size_t, std::size_t>>;
+
+  // Stage 0 — the work-list: thousands of independent (config, atom) units, so
+  // one balanced parallel_for fills every core instead of stranding threads on a
+  // handful of uneven configs.
+  static Worklist step_atom_worklist(std::span<Configuration> configs) {
+    Worklist work;
+    for (std::size_t c = 0; c < configs.size(); ++c) {
+      for (std::size_t a = 0; a < configs[c].atoms.size(); ++a) {
+        work.emplace_back(c, a);
+      }
+    }
+    return work;
+  }
+
+  // Stage 1 — build each config's neighbour list, size its cache row, record the
+  // cell volume.
+  CacheData step_allocate_cache(std::span<Configuration> configs) const {
+    CacheData data;
+    data.rows.resize(configs.size());
+    data.volume.resize(configs.size());
     for (auto [cfg, row, vol] :
-         std::views::zip(configs, data->rows, data->volume)) {
+         std::views::zip(configs, data.rows, data.volume)) {
       build_neighbor_list(cfg, max_cutoff());
       row.resize(cfg.atoms.size());
       vol = bc_volume(cfg.bc);
     }
-    // Warm-up: force any lazy, model-internal init exactly once, serially, so
-    // the parallel fill below never races on it.
+    return data;
+  }
+
+  // Stage 2 — force any lazy, model-internal descriptor init (e.g. SOAP's radial
+  // basis) exactly once, serially, so the parallel fill below never races on it.
+  void step_warm_up_descriptors(std::span<Configuration> configs) const {
     for (auto &cfg : configs) {
       if (!cfg.atoms.empty()) {
         (void)self().get_descriptor(cfg.atoms[0]);
         break;
       }
     }
-    std::vector<std::pair<std::size_t, std::size_t>> work;
-    for (std::size_t c = 0; c < configs.size(); ++c) {
-      for (std::size_t a = 0; a < configs[c].atoms.size(); ++a) {
-        work.emplace_back(c, a);
-      }
-    }
+  }
+
+  // Stage 3 — fill every atom's raw descriptor + gradients in parallel; each task
+  // touches only its own AtomCache, so the fill is race-free.
+  CacheData step_fill_cache(std::span<Configuration> configs,
+                            const Worklist &work, CacheData data) const {
     std::for_each(std::execution::par, work.begin(), work.end(),
                   [&](const std::pair<std::size_t, std::size_t> &ca) {
                     fill_atom_cache(configs[ca.first], ca.second,
-                                    data->rows[ca.first][ca.second]);
+                                    data.rows[ca.first][ca.second]);
                   });
-    // Whiten the just-filled raw descriptors in place: derive per-type μ/σ from
-    // the full training set, then standardize every cached value + gradient.
-    // Same parallel work-list (each task still touches only its own AtomCache).
-    if (standardize_features) {
-      compute_standardization(*data);
-      std::for_each(std::execution::par, work.begin(), work.end(),
-                    [&](const std::pair<std::size_t, std::size_t> &ca) {
-                      AtomCache &cc = data->rows[ca.first][ca.second];
-                      standardize_in_place(cc.type, cc.values, cc.grad_self,
-                                           cc.grad_neigh);
-                    });
+    return data;
+  }
+
+  // Stage 4 — whiten the just-filled raw descriptors in place: derive per-type
+  // μ/σ from the full training set, then standardize every cached value +
+  // gradient (same work-list, each task still local to its AtomCache). No-op
+  // unless standardize_features.
+  CacheData step_whiten_cache(const Worklist &work, CacheData data) const {
+    if (!standardize_features) {
+      return data;
     }
-    cache_ = std::move(data);
+    compute_standardization(data);
+    std::for_each(std::execution::par, work.begin(), work.end(),
+                  [&](const std::pair<std::size_t, std::size_t> &ca) {
+                    AtomCache &cc = data.rows[ca.first][ca.second];
+                    standardize_in_place(cc.type, cc.values, cc.grad_self,
+                                         cc.grad_neigh);
+                  });
+    return data;
+  }
+
+public:
+  // One-time precompute over the whole training set, written as a sequence of
+  // named stages. A single CacheData is threaded through the pipeline — each
+  // stage takes it by value and returns it (state-threading) — so the body reads
+  // as the pipeline it is: allocate → warm-up → fill → whiten → commit. See the
+  // individual step_* helpers for the rationale of each stage.
+  void prepare(std::span<Configuration> configs) const {
+    const Worklist work = step_atom_worklist(configs);
+
+    CacheData data = step_allocate_cache(configs); // neighbour lists + sizing
+    step_warm_up_descriptors(configs);             // serial lazy descriptor init
+    data = step_fill_cache(configs, work, std::move(data));    // parallel fill
+    data = step_whiten_cache(work, std::move(data));           // optional whiten
+
+    cache_ = std::make_shared<CacheData>(std::move(data));
   }
 
   void eval_cached(std::size_t cache_index, std::span<Vec3> forces,
@@ -540,7 +579,7 @@ struct MLBase : ForceCalculatorBase<Derived>, NoGlobals {
       fjac.block(row0 + 3 * i, c0, 3, pc).noalias() -=
           cc.grad_self.transpose() * M;
 
-      // Neighbor force rows (and stress): ∂f_on_j/∂θ = −grad_neigh^T · M.
+      // Neighbour force rows (and stress): ∂f_on_j/∂θ = −grad_neigh^T · M.
       for (const auto &[gn, nidx, nd] :
            std::views::zip(cc.grad_neigh, cc.neigh_idx, cc.neigh_dist)) {
         const Eigen::MatrixXd fblk = -(gn.transpose() * M); // 3 × pc
@@ -585,9 +624,6 @@ struct MLBase : ForceCalculatorBase<Derived>, NoGlobals {
         events::ForceEvalStats{this->conf_index, force_rms(cfg), cfg});
   }
 
-  // Fit path: identical results to eval_forces(cfg) but served from the cache
-  // for config `cache_index`. Falls back to the full recompute if no cache is
-  // live.
   void eval_forces(Configuration &cfg, std::size_t cache_index) const {
     if (!cache_ || cache_index >= cache_->rows.size()) {
       eval_forces(cfg);
@@ -643,11 +679,11 @@ private:
   // Descriptor value + position-gradient for one atom: analytic when the model
   // supplies it (has_grad), else a cheap O(neighbors) finite-difference of the
   // descriptor. The descriptor of atom i depends on geometry only through each
-  // neighbor's displacement, so dD_i/d(r_j) is obtained by perturbing that
-  // neighbor's bond vector IN PLACE — no neighbor-list rebuild — and
+  // neighbour's displacement, so dD_i/d(r_j) is obtained by perturbing that
+  // neighbour's bond vector IN PLACE — no neighbour-list rebuild — and
   // dD_i/dr_i = −Σ_j dD_i/dr_j (translation invariance). `atom` is mutated only
   // transiently (each dist restored); callers must hold exclusive access to
-  // atom's own neighbor list (true in the serial eval_forces and in prepare's
+  // atom's own neighbour list (true in the serial eval_forces and in prepare's
   // per-atom parallel tasks).
   DescriptorValue descriptor_with_grad(Atom &atom) const {
     DescriptorValue d = self().get_descriptor(atom);

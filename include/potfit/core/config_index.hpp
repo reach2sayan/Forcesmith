@@ -2,8 +2,8 @@
 
 #include "potfit/core/atom.hpp"
 
+#include <boost/multi_index/global_fun.hpp>
 #include <boost/multi_index/mem_fun.hpp>
-#include <boost/multi_index/member.hpp>
 #include <boost/multi_index/ordered_index.hpp>
 #include <boost/multi_index/random_access_index.hpp>
 #include <boost/multi_index_container.hpp>
@@ -34,14 +34,30 @@ namespace potfit::config_index {
 // Sorted, distinct atom-type ids present in a configuration.
 using CompositionKey = std::vector<std::size_t>;
 
-struct ConfigRef {
-  const Configuration *cfg = nullptr; // non-owning, into the configs vector
-  std::size_t order = 0;              // canonical index == residual block id
-  CompositionKey composition;         // sorted distinct atom types
-  std::uint64_t comp_mask = 0; // bit t set if type t present; 0 if type>=64
-  std::string_view name;       // view into cfg->name (owned); unique key
-  [[nodiscard]] double energy() const { return cfg->ref.energy; }
-  [[nodiscard]] double weight() const { return cfg->weight; }
+class ConfigRef {
+public:
+  ConfigRef(const Configuration *cfg, std::size_t order,
+            CompositionKey composition, std::uint64_t comp_mask,
+            std::string_view name)
+      : cfg_(cfg), order_(order), composition_(std::move(composition)),
+        comp_mask_(comp_mask), name_(name) {}
+
+  [[nodiscard]] const Configuration *cfg() const { return cfg_; }
+  [[nodiscard]] std::size_t order() const { return order_; }
+  [[nodiscard]] const CompositionKey &composition() const {
+    return composition_;
+  }
+  [[nodiscard]] std::uint64_t comp_mask() const { return comp_mask_; }
+  [[nodiscard]] std::string_view name() const { return name_; }
+  [[nodiscard]] double energy() const { return cfg_->ref.energy; }
+  [[nodiscard]] double weight() const { return cfg_->weight; }
+
+private:
+  const Configuration *cfg_ = nullptr; // non-owning, into the configs vector
+  std::size_t order_ = 0;              // canonical index == residual block id
+  CompositionKey composition_;         // sorted distinct atom types
+  std::uint64_t comp_mask_ = 0; // bit t set if type t present; 0 if type>=64
+  std::string_view name_;       // view into cfg->name (owned); unique key
 };
 
 // Sorted, de-duplicated list of the distinct atom types in `c`.
@@ -80,6 +96,16 @@ struct by_name {};
 
 namespace bmi = boost::multi_index;
 
+namespace detail {
+// const_mem_fun cannot key on a reference-returning accessor, so the
+// vector-valued composition key is extracted via global_fun (which does
+// support const-reference returns) to avoid copying the key on every compare.
+[[nodiscard]] inline const CompositionKey &
+ref_composition(const ConfigRef &r) {
+  return r.composition();
+}
+} // namespace detail
+
 using ConfigIndex = bmi::multi_index_container<
     ConfigRef,
     bmi::indexed_by<
@@ -88,7 +114,8 @@ using ConfigIndex = bmi::multi_index_container<
         // group by element set
         bmi::ordered_non_unique<
             bmi::tag<detail::by_composition>,
-            bmi::member<ConfigRef, CompositionKey, &ConfigRef::composition>>,
+            bmi::global_fun<const ConfigRef &, const CompositionKey &,
+                            &detail::ref_composition>>,
         // band/range queries on immutable reference energy
         bmi::ordered_non_unique<
             bmi::tag<detail::by_energy>,
@@ -100,7 +127,8 @@ using ConfigIndex = bmi::multi_index_container<
         // unique human-facing identifier; string_view key into the owned name
         bmi::ordered_unique<
             bmi::tag<detail::by_name>,
-            bmi::member<ConfigRef, std::string_view, &ConfigRef::name>>>>;
+            bmi::const_mem_fun<ConfigRef, std::string_view,
+                               &ConfigRef::name>>>>;
 
 // Build the index from the owning configuration store. `order` is the position
 // in `configs`, which equals the residual block id used by the optimizer.
@@ -110,11 +138,8 @@ build_config_index(std::span<const Configuration> configs) {
   auto &ordered = idx.get<detail::by_order>();
   for (std::size_t i = 0; i < configs.size(); ++i) {
     const Configuration &c = configs[i];
-    ordered.push_back(ConfigRef{.cfg = &c,
-                                .order = i,
-                                .composition = composition_of(c),
-                                .comp_mask = composition_mask(c),
-                                .name = c.name});
+    ordered.push_back(ConfigRef{&c, i, composition_of(c),
+                                composition_mask(c), c.name});
   }
   return idx;
 }
@@ -127,12 +152,12 @@ template <class It>
 [[nodiscard]] std::vector<Configuration *> gather(It first, It last) {
   std::vector<ConfigRef> refs(first, last);
   std::ranges::sort(refs, [](const ConfigRef &a, const ConfigRef &b) {
-    return a.order < b.order;
+    return a.order() < b.order();
   });
   std::vector<Configuration *> out;
   out.reserve(refs.size());
   for (const ConfigRef &r : refs) {
-    out.push_back(const_cast<Configuration *>(r.cfg));
+    out.push_back(const_cast<Configuration *>(r.cfg()));
   }
   return out;
 }
@@ -152,10 +177,11 @@ configs_containing_element(const ConfigIndex &idx, std::size_t type) {
   const auto &ordered = idx.get<detail::by_order>();
   std::vector<ConfigRef> hits;
   for (const ConfigRef &r : ordered) {
-    const bool present = (type < 64 && r.comp_mask != 0)
-                             ? ((r.comp_mask & (std::uint64_t{1} << type)) != 0)
-                             : std::binary_search(r.composition.begin(),
-                                                  r.composition.end(), type);
+    const bool present =
+        (type < 64 && r.comp_mask() != 0)
+            ? ((r.comp_mask() & (std::uint64_t{1} << type)) != 0)
+            : std::binary_search(r.composition().begin(),
+                                 r.composition().end(), type);
     if (present) {
       hits.push_back(r);
     }
@@ -182,7 +208,8 @@ configs_in_energy_band(const ConfigIndex &idx, double lo, double hi) {
                                                    std::string_view name) {
   const auto &by_name = idx.get<detail::by_name>();
   const auto it = by_name.find(name);
-  return it == by_name.end() ? nullptr : const_cast<Configuration *>(it->cfg);
+  return it == by_name.end() ? nullptr
+                             : const_cast<Configuration *>(it->cfg());
 }
 
 } // namespace potfit::config_index

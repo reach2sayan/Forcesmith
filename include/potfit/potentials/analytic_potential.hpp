@@ -19,9 +19,18 @@ namespace potfit {
 template <typename Derived, std::size_t N> struct AnalyticParams {
   static constexpr std::size_t num_params = N;
 
+protected:
   std::array<Param, N> params;
   double rmin, rmax;
 
+  constexpr AnalyticParams(std::array<double, N> vals, double lo,
+                         double hi) noexcept
+      : rmin(lo), rmax(hi) {
+    std::ranges::transform(vals, params.begin(),
+                           [](auto v) { return Param{v}; });
+  }
+
+public:
   constexpr std::pair<double, double> span() const { return {rmin, rmax}; }
 
   // Mark parameter i as fixed (excluded from optimizer) or free.
@@ -67,14 +76,6 @@ template <typename Derived, std::size_t N> struct AnalyticParams {
   constexpr void set_bounds(std::size_t i, double lo, double hi) {
     params[i].min = lo;
     params[i].max = hi;
-  }
-
-protected:
-  constexpr AnalyticParams(std::array<double, N> vals, double lo,
-                         double hi) noexcept
-      : rmin(lo), rmax(hi) {
-    std::ranges::transform(vals, params.begin(),
-                           [](auto v) { return Param{v}; });
   }
 };
 

@@ -57,19 +57,6 @@ struct StiwebForceCalculator : ForceCalculatorBase<StiwebForceCalculator>,
   SymmetricMatrix<SWParams> params;
   std::vector<Param> lambda;
 
-  // Upper-triangular slot for an unordered (j,k) pair, identical to
-  // SymmetricMatrix::slot — keeps λ indexing consistent with `params`.
-  constexpr std::size_t pair_slot(std::size_t a, std::size_t b) const {
-    if (a > b) {
-      std::swap(a, b);
-    }
-    return a * ntypes - a * (a - 1) / 2 + (b - a);
-  }
-  constexpr std::size_t lambda_index(std::size_t ti, std::size_t tj,
-                                     std::size_t tk) const {
-    const std::size_t paircol = ntypes * (ntypes + 1) / 2;
-    return ti * paircol + pair_slot(tj, tk);
-  }
   constexpr const Param &lambda_at(std::size_t ti, std::size_t tj,
                                    std::size_t tk) const {
     return lambda[lambda_index(ti, tj, tk)];
@@ -83,6 +70,21 @@ struct StiwebForceCalculator : ForceCalculatorBase<StiwebForceCalculator>,
   void gather_bounds(Eigen::VectorXd &lo, Eigen::VectorXd &hi,
                      std::size_t off) const;
   double max_cutoff() const;
+
+private:
+  // Upper-triangular slot for an unordered (j,k) pair, identical to
+  // SymmetricMatrix::slot — keeps λ indexing consistent with `params`.
+  constexpr std::size_t pair_slot(std::size_t a, std::size_t b) const {
+    if (a > b) {
+      std::swap(a, b);
+    }
+    return a * ntypes - a * (a - 1) / 2 + (b - a);
+  }
+  constexpr std::size_t lambda_index(std::size_t ti, std::size_t tj,
+                                     std::size_t tk) const {
+    const std::size_t paircol = ntypes * (ntypes + 1) / 2;
+    return ti * paircol + pair_slot(tj, tk);
+  }
 };
 
 static_assert(ForceCalculatorModel<StiwebForceCalculator>);
