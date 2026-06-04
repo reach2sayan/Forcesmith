@@ -127,6 +127,7 @@ set(UNIT_TEST_SOURCES
         tests/unit/test_tersoff_force.cpp
         tests/unit/test_ml_force.cpp
         tests/unit/test_ml_cache.cpp
+        tests/unit/test_ml_jacobian.cpp
         tests/unit/test_soap.cpp
         tests/unit/test_ml_fit.cpp
         tests/unit/test_types.cpp

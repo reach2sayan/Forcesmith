@@ -16,27 +16,28 @@
 
 namespace potfit {
 
-// Tabulated radial projection J(a,l)(r) = ∫ r'² φ_a(r') e^{-(r'²+r²)/2σ²} i_l(r r'/σ²) dr'
-// as a cubic spline in r over [0,rcut], one per (a,l). Replacing the per-neighbor
-// adaptive Bessel quadrature with a spline lookup is the dominant SOAP speedup.
+// Tabulated radial projection J(a,l)(r) = ∫ r'² φ_a(r') e^{-(r'²+r²)/2σ²} i_l(r
+// r'/σ²) dr' as a cubic spline in r over [0,rcut], one per (a,l). Replacing the
+// per-neighbour adaptive Bessel quadrature with a spline lookup is the dominant
+// SOAP speedup.
 struct SoapRadialTable {
   int nm = 0;
   int lm1 = 0; // l_max + 1
   std::vector<boost::math::interpolators::cardinal_cubic_b_spline<double>> spl;
-
-  double J(int a, int l, double r) const {
+  constexpr double J(int a, int l, double r) const {
     return spl[static_cast<std::size_t>(a) * lm1 + l](r);
   }
   // dJ/dr from the spline derivative (used by the analytic radial gradient).
-  double dJdr(int a, int l, double r) const {
+  constexpr double dJdr(int a, int l, double r) const {
     return spl[static_cast<std::size_t>(a) * lm1 + l].prime(r);
   }
 };
 
 namespace {
 
-// Modified spherical Bessel i_l(x) = sqrt(π/2x)·I_{l+1/2}(x), with the x→0 limits.
-double sph_bessel_i(int l, double x) {
+// Modified spherical Bessel i_l(x) = sqrt(π/2x)·I_{l+1/2}(x), with the x→0
+// limits.
+FORCE_INLINE double sph_bessel_i(int l, double x) {
   if (x < 1e-12) {
     return l == 0 ? 1.0 : 0.0;
   }
@@ -102,6 +103,12 @@ Eigen::MatrixXd radial_beta(int n_max, double rcut) {
          es.eigenvectors().transpose();
 }
 
+// Cosine cutoff f_c(r) = ½(1 + cos(π r / rcut)) for r < rcut, else 0. Shared by
+// the coefficient fill and the gradient (which also needs f_c').
+FORCE_INLINE double cutoff_fc(double r, double rc) {
+  return 0.5 * (1.0 + std::cos(std::numbers::pi * r / rc));
+}
+
 } // namespace
 
 // Optional single-threaded precompute of the radial basis. get_descriptor
@@ -119,28 +126,16 @@ std::size_t SoapModel::descriptor_size() const {
   return (static_cast<std::size_t>(l_max) + 1) * (same + cross);
 }
 
+// Orchestrator: lazily build the radial caches, then run the three steps
+// (coefficients → power spectrum → analytic gradient) that share the
+// expansion-coefficient store c and the flat (ch,n,l,m) index layout.
 DescriptorValue SoapModel::get_descriptor(const Atom &a) const {
-
-  // Cosine cutoff f_c(r) = ½(1 + cos(π r / rcut)) for r < rcut, else 0.
-  auto cutoff = [](double r, double rc) {
-    return 0.5 * (1.0 + std::cos(std::numbers::pi * r / rc));
-  };
-
-  const int S = static_cast<int>(ntypes);
   const int nm = n_max;
   const int lm = l_max;
-  const int nlm = 2 * lm + 1;
 
-  // Flat complex coefficient store c[channel][n][l][m], m the fastest axis
-  // (offset by +lm) so the 2l+1 coefficients of a fixed (ch,n,l) are contiguous
-  // and the power-spectrum m-sum is a single Eigen dot product.
-  auto idx = [&](int ch, int n, int l, int m) -> Eigen::Index {
-    return ((static_cast<Eigen::Index>(ch) * nm + n) * (lm + 1) + l) * nlm +
-           (m + lm);
-  };
-  // Ensure the radial orthonormalisation and the tabulated radial projection are
-  // built (lazy; prepare()'s serial warm-up does this once before any parallel
-  // fill, so no race in the parallel path).
+  // Ensure the radial orthonormalization and the tabulated radial projection
+  // are built (lazy; prepare()'s serial warm-up does this once before any
+  // parallel fill, so no race in the parallel path).
   if (beta.rows() != nm || beta.cols() != nm) {
     beta = radial_beta(nm, rcut);
   }
@@ -148,12 +143,44 @@ DescriptorValue SoapModel::get_descriptor(const Atom &a) const {
     radial_ = build_radial_table(nm, lm, rcut, sigma);
   }
   const SoapRadialTable &tab = *radial_;
-
-  Eigen::VectorXcd c = Eigen::VectorXcd::Zero(static_cast<Eigen::Index>(S) *
-                                              nm * (lm + 1) * nlm);
-
   const double K = 4.0 * std::numbers::pi /
                    std::pow(2.0 * std::numbers::pi * sigma * sigma, 1.5);
+
+  // Per-l power-spectrum weights w_l = √(8π²/(2l+1)).
+  std::vector<double> wl(lm + 1);
+  std::ranges::transform(std::views::iota(0, lm + 1), wl.begin(), [](int l) {
+    return std::sqrt(8.0 * std::numbers::pi * std::numbers::pi /
+                     (2.0 * l + 1.0));
+  });
+
+  // Step 1 — expansion coefficients.
+  const Eigen::VectorXcd c = compute_coefficients(a, tab, K);
+
+  // Step 2 — power spectrum + L2 normalisation. ‖p‖ is kept for step 3.
+  DescriptorValue out;
+  out.values = power_spectrum(c, wl);
+  const double norm = out.values.norm();
+  if (norm > 1e-12) {
+    out.values /= norm;
+  }
+
+  // Step 3 — analytic position gradient dD/dr.
+  position_gradient(a, c, tab, K, wl, norm, out);
+
+  return out;
+}
+
+Eigen::VectorXcd SoapModel::compute_coefficients(const Atom &a,
+                                                 const SoapRadialTable &tab,
+                                                 double K) const {
+  const int S = static_cast<int>(ntypes);
+  const int nm = n_max;
+  const int lm = l_max;
+  const int nlm = 2 * lm + 1;
+
+  // Flat complex coefficient store c[channel][n][l][m] (see coeff_index).
+  Eigen::VectorXcd c = Eigen::VectorXcd::Zero(static_cast<Eigen::Index>(S) *
+                                              nm * (lm + 1) * nlm);
 
   for (const auto &nb : a.neighbors) {
     const double r = nb.dist.norm();
@@ -164,7 +191,7 @@ DescriptorValue SoapModel::get_descriptor(const Atom &a) const {
     if (ch < 0 || ch >= S) {
       continue;
     }
-    const double fc = cutoff(r, rcut);
+    const double fc = cutoff_fc(r, rcut);
 
     // Radial projection I(n,l) = Σ_a β(n,a) J(a,l)(r), J from the spline table.
     Eigen::MatrixXd J(nm, lm + 1); // basis × l
@@ -190,21 +217,23 @@ DescriptorValue SoapModel::get_descriptor(const Atom &a) const {
       // c[ch,n,l,·] += K·f_c·I(n,l)·Y* — vectorized over m (the contiguous
       // axis).
       for (int n = 0; n < nm; ++n) {
-        c.segment(idx(ch, n, l, -l), 2 * l + 1) += (K * fc * I(n, l)) * Yl;
+        c.segment(coeff_index(ch, n, l, -l), 2 * l + 1) +=
+            (K * fc * I(n, l)) * Yl;
       }
     }
   }
+  return c;
+}
+
+Eigen::VectorXd SoapModel::power_spectrum(const Eigen::VectorXcd &c,
+                                          const std::vector<double> &wl) const {
+  const int S = static_cast<int>(ntypes);
+  const int nm = n_max;
+  const int lm = l_max;
 
   // Power spectrum p^{αβ}_{n n' l}, flattened in a fixed order.
-  DescriptorValue out;
   std::vector<double> vals;
   vals.reserve(descriptor_size());
-
-  std::vector<double> wl(lm + 1);
-  std::ranges::transform(std::views::iota(0, lm + 1), wl.begin(), [](int l) {
-    return std::sqrt(8.0 * std::numbers::pi * std::numbers::pi /
-                     (2.0 * l + 1.0));
-  });
 
   for (auto [sa, sb] : upper_triangle(S)) {
     for (int n = 0; n < nm; ++n) {
@@ -214,27 +243,33 @@ DescriptorValue SoapModel::get_descriptor(const Atom &a) const {
         for (int l = 0; l <= lm; ++l) {
           const Eigen::Index len = 2 * l + 1;
 
-          const auto acc = c.segment(idx(sa, n, l, -l), len)
-                               .dot(c.segment(idx(sb, n2, l, -l), len));
+          const auto acc = c.segment(coeff_index(sa, n, l, -l), len)
+                               .dot(c.segment(coeff_index(sb, n2, l, -l), len));
 
           vals.push_back(wl[l] * acc.real());
         }
       }
     }
   }
-  out.values = Eigen::Map<Eigen::VectorXd>(
-      vals.data(), static_cast<Eigen::Index>(vals.size()));
-  const double norm = out.values.norm();
-  if (norm > 1e-12) {
-    out.values /= norm;
-  }
+  return Eigen::Map<Eigen::VectorXd>(vals.data(),
+                                     static_cast<Eigen::Index>(vals.size()));
+}
 
-  // ── Analytic position-gradient dD/dr ────────────────────────────────────────
+void SoapModel::position_gradient(const Atom &a, const Eigen::VectorXcd &c,
+                                  const SoapRadialTable &tab, double K,
+                                  const std::vector<double> &wl, double norm,
+                                  DescriptorValue &out) const {
+  const int S = static_cast<int>(ntypes);
+  const int nm = n_max;
+  const int lm = l_max;
+
+  // Analytic position-gradient dD/dr
   // Only neighbor j's term in c depends on its bond vector d_j = r_j − r_i, so
   // dc[ch_j,n,l,m]/dd_j = K[ d(f_c·I_{nl})/dr · conj(Y_lm) · û   (radial)
   //                          + f_c·I_{nl} · conj(dY_lm/dd) ]     (angular).
   // Chain through p = w_l·Re(Σ_m conj(c_α)·c_β) and the L2-normalise Jacobian
-  // (I − D Dᵀ)/‖p‖. grad_neigh[j] = dD/dr_j = dD/dd_j; grad_self = −Σ_j dD/dd_j.
+  // (I − D Dᵀ)/‖p‖. grad_neigh[j] = dD/dr_j = dD/dd_j; grad_self = −Σ_j
+  // dD/dd_j.
   const Eigen::Index Sd = out.values.size();
   out.grad_self = DescriptorGrad::Zero(Sd, 3);
   out.grad_neigh.assign(a.neighbors.size(), DescriptorGrad::Zero(Sd, 3));
@@ -253,7 +288,7 @@ DescriptorValue SoapModel::get_descriptor(const Atom &a) const {
     if (chj < 0 || chj >= S) {
       continue;
     }
-    const double fc = cutoff(r, rcut);
+    const double fc = cutoff_fc(r, rcut);
     const double fcp = -0.5 * pi / rcut * std::sin(pi * r / rcut); // f_c'(r)
 
     // Radial projection I(n,l) and its r-derivative (spline + spline.prime()).
@@ -277,53 +312,72 @@ DescriptorValue SoapModel::get_descriptor(const Atom &a) const {
     const Eigen::Vector3d thetahat(ctn * cph, ctn * sph, -st);
     const Eigen::Vector3d phihat(-sph, cph, 0.0);
     // Guard the 1/sinθ coordinate singularity on the z-axis: clamp only the
-    // derivative divisions, keeping gradients finite everywhere (exact away from
-    // the poles, approximate only within ~1e-8 rad of the axis — far rarer than
-    // a finite-difference kink).
+    // derivative divisions, keeping gradients finite everywhere (exact away
+    // from the poles, approximate only within ~1e-8 rad of the axis — far rarer
+    // than a finite-difference kink).
     const double st_safe = std::max(st, 1e-8);
 
     for (auto &v : dc) {
       v = Eigen::VectorXcd::Zero(c.size());
     }
+    const std::complex<double> exp_minus_i_phi =
+        std::exp(std::complex<double>(0.0, -phi));
+
+    const double inv_r = 1.0 / r;
+    const double inv_r_st = 1.0 / (r * st_safe);
+    const double cot_theta = ctn / st_safe;
+
+    const auto theta_c = thetahat.cast<std::complex<double>>();
+    const auto phi_c = phihat.cast<std::complex<double>>();
+
     for (int l = 0; l <= lm; ++l) {
       for (int m = -l; m <= l; ++m) {
-        const std::complex<double> Ylm =
-            boost::math::spherical_harmonic(static_cast<unsigned>(l), m, theta, phi);
-        // dY_lm/dθ = m·cotθ·Y_lm + √((l−m)(l+m+1))·e^{−iφ}·Y_{l,m+1};
-        // dY_lm/dφ = i·m·Y_lm.   dY/dd = (dY/dθ)θ̂/r + (dY/dφ)φ̂/(r sinθ).
-        const std::complex<double> Ymp1 =
-            (m + 1 <= l) ? boost::math::spherical_harmonic(
-                               static_cast<unsigned>(l), m + 1, theta, phi)
-                         : std::complex<double>(0.0, 0.0);
+        const auto Ylm = boost::math::spherical_harmonic(
+            static_cast<unsigned>(l), m, theta, phi);
+
+        const auto Ymp1 =
+            (m < l) ? boost::math::spherical_harmonic(static_cast<unsigned>(l),
+                                                      m + 1, theta, phi)
+                    : std::complex<double>{0.0, 0.0};
+
         const double Cc = std::sqrt(static_cast<double>(l - m) * (l + m + 1));
-        const std::complex<double> dYdth =
-            static_cast<double>(m) * (ctn / st_safe) * Ylm +
-            Cc * std::exp(std::complex<double>(0.0, -phi)) * Ymp1;
-        const std::complex<double> dYdph(0.0, static_cast<double>(m));
-        const std::complex<double> a1 = dYdth / r;
-        const std::complex<double> a2 = (dYdph * Ylm) / (r * st_safe);
-        Eigen::Vector3cd dYdd;
-        for (int k = 0; k < 3; ++k) {
-          dYdd[k] = a1 * thetahat[k] + a2 * phihat[k];
-        }
-        const std::complex<double> Yc = std::conj(Ylm);
-        const Eigen::Vector3cd dYcd = dYdd.conjugate(); // d(conj Y)/dd
+
+        const auto dYdth = static_cast<double>(m) * cot_theta * Ylm +
+                           Cc * exp_minus_i_phi * Ymp1;
+
+        const auto dYdph =
+            std::complex<double>{0.0, static_cast<double>(m)} * Ylm;
+
+        const auto a1 = dYdth * inv_r;
+        const auto a2 = dYdph * inv_r_st;
+
+        const Eigen::Vector3cd dYcd = (a1 * theta_c + a2 * phi_c).conjugate();
+
+        const auto Yc = std::conj(Ylm);
+
         for (int n = 0; n < nm; ++n) {
-          const double Rr = fc * Inl(n, l);
-          const double dRr = fcp * Inl(n, l) + fc * Ipnl(n, l);
-          const std::complex<double> radial = K * dRr * Yc;
-          const std::complex<double> ang = K * Rr;
-          const Eigen::Index id = idx(chj, n, l, m);
-          for (int k = 0; k < 3; ++k) {
-            dc[static_cast<std::size_t>(k)][id] = radial * u[k] + ang * dYcd[k];
-          }
+          const double In = Inl(n, l);
+          const double Ipn = Ipnl(n, l);
+
+          const double Rr = fc * In;
+          const double dRr = fcp * In + fc * Ipn;
+
+          const auto radial = K * dRr * Yc;
+          const auto ang = K * Rr;
+
+          const Eigen::Index id = coeff_index(chj, n, l, m);
+
+          dc[0][id] = radial * u[0] + ang * dYcd[0];
+          dc[1][id] = radial * u[1] + ang * dYcd[1];
+          dc[2][id] = radial * u[2] + ang * dYcd[2];
         }
       }
     }
 
-    // dp_k/dd = w_l·Re( conj(dc_α)·c_β + conj(c_α)·dc_β ), summed over m. Eigen's
-    // a.dot(b) already conjugates a; dc is nonzero only on channel ch_j, so the
-    // δ_{α,ch_j}/δ_{β,ch_j} selection falls out of the zero segments.
+    // dp_k/dd = w_l·Re( conj(dc_α)·c_β + conj(c_α)·dc_β ), summed over m.
+    // Eigen's a.dot(b) already conjugates a; dc is nonzero only on channel
+    // ch_j, so the δ_{α,ch_j}/δ_{β,ch_j} selection falls out of the zero
+    // segments.
     DescriptorGrad dpc(Sd, 3);
     Eigen::Index kk = 0;
     for (auto [sa, sb] : upper_triangle(S)) {
@@ -333,12 +387,13 @@ DescriptorValue SoapModel::get_descriptor(const Atom &a) const {
           for (int l = 0; l <= lm; ++l) {
             const Eigen::Index len = 2 * l + 1;
             for (int k = 0; k < 3; ++k) {
-              const auto t1 = dc[static_cast<std::size_t>(k)]
-                                  .segment(idx(sa, n, l, -l), len)
-                                  .dot(c.segment(idx(sb, n2, l, -l), len));
-              const auto t2 = c.segment(idx(sa, n, l, -l), len)
+              const auto t1 =
+                  dc[static_cast<std::size_t>(k)]
+                      .segment(coeff_index(sa, n, l, -l), len)
+                      .dot(c.segment(coeff_index(sb, n2, l, -l), len));
+              const auto t2 = c.segment(coeff_index(sa, n, l, -l), len)
                                   .dot(dc[static_cast<std::size_t>(k)].segment(
-                                      idx(sb, n2, l, -l), len));
+                                      coeff_index(sb, n2, l, -l), len));
               dpc(kk, k) = wl[l] * (t1 + t2).real();
             }
             ++kk;
@@ -357,8 +412,6 @@ DescriptorValue SoapModel::get_descriptor(const Atom &a) const {
     out.grad_neigh[jj] = dpc;
     out.grad_self -= dpc;
   }
-
-  return out;
 }
 
 } // namespace potfit

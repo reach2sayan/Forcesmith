@@ -2,6 +2,7 @@
 
 #include <cmath>
 #include <numbers>
+#include <ranges>
 
 namespace potfit {
 
@@ -15,8 +16,8 @@ DescriptorValue SymmetryFunctionModel::get_descriptor(const Atom &a) const {
   out.grad_self = DescriptorGrad::Zero(S, 3);
   out.grad_neigh.assign(nn, DescriptorGrad::Zero(S, 3));
 
-  for (std::size_t jj = 0; jj < nn; ++jj) {
-    const Vec3 &dist = a.neighbors[jj].dist; // r_j − r_i
+  for (auto [nb, gneigh] : std::views::zip(a.neighbors, out.grad_neigh)) {
+    const Vec3 &dist = nb.dist; // r_j − r_i
     const double r = dist.norm();
     if (r < 1e-14 || r >= rcut) {
       continue;
@@ -27,8 +28,7 @@ DescriptorValue SymmetryFunctionModel::get_descriptor(const Atom &a) const {
     const double dfc = -0.5 * std::numbers::pi / rcut * std::sin(x);
     const Vec3 rhat = dist / r; // dr/dr_j
 
-    for (Eigen::Index k = 0; k < S; ++k) {
-      const G2 &g2 = radial[static_cast<std::size_t>(k)];
+    for (auto [k, g2] : radial | std::views::enumerate) {
       const double dr = r - g2.rs;
       const double gauss = std::exp(-g2.eta * dr * dr);
       const double g = gauss * fc;                              // term value
@@ -36,7 +36,7 @@ DescriptorValue SymmetryFunctionModel::get_descriptor(const Atom &a) const {
 
       out.values[k] += g;
       // dD_k/dr_j = dg · r̂ ; dD_k/dr_i = −dg · r̂ (translational invariance).
-      out.grad_neigh[jj].row(k) = dg * rhat.transpose();
+      gneigh.row(k) = dg * rhat.transpose();
       out.grad_self.row(k) -= dg * rhat.transpose();
     }
   }

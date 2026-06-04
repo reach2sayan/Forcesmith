@@ -19,17 +19,44 @@ if (POTFIT_USE_MKL)
     find_package(PkgConfig QUIET)
     if (PkgConfig_FOUND)
         # IMPORTED_TARGET → PkgConfig::MKL carries the include dir (/usr/include/mkl)
-        # and the full -lmkl_intel_lp64 -lmkl_sequential -lmkl_core -lpthread -lm -ldl #link line
-        pkg_check_modules(MKL QUIET IMPORTED_TARGET mkl-dynamic-lp64-seq)
+        # and the full MKL link line. Prefer the TBB-threaded layer
+        # (-lmkl_tbb_thread -ltbb): it parallelises MKL GEMM and the LAPACKE-backed
+        # dense decompositions (e.g. Eigen's ColPivHouseholderQR → dgeqp3, the LM
+        # solver hotspot) across cores, and shares the *same* TBB runtime the
+        # parallel Jacobian already uses — no OpenMP+TBB oversubscription. Fall back
+        # to the single-threaded sequential layer if the TBB module isn't present.
+        set(MKL_THREADING_LAYER "tbb")
+        set(_mkl_pc "mkl-dynamic-lp64-tbb")
+        pkg_check_modules(MKL QUIET ${_mkl_pc})
+        if (NOT MKL_FOUND)
+            set(MKL_THREADING_LAYER "sequential")
+            set(_mkl_pc "mkl-dynamic-lp64-seq")
+            pkg_check_modules(MKL QUIET ${_mkl_pc})
+        endif ()
+        if (MKL_FOUND)
+            # Resolve every MKL .so from the single libdir the .pc advertises, so
+            # the interface/threading/core libs all come from ONE consistent MKL
+            # install. Without this, find_library() inside the IMPORTED_TARGET
+            # pass can mix a system /usr/lib mkl_core (which lacks mkl_tbb_thread)
+            # with an oneAPI mkl_tbb_thread → version skew → undefined references.
+            # This only happens when the oneAPI environment (setvars.sh) is absent
+            # — e.g. when CLion drives the build instead of a sourced shell.
+            # CMAKE_LIBRARY_PATH is searched ahead of the implicit system dirs, so
+            # prepending the .pc's own libdir makes resolution environment-independent.
+            pkg_get_variable(_mkl_libdir ${_mkl_pc} libdir)
+            get_filename_component(_mkl_libdir "${_mkl_libdir}" REALPATH)
+            list(PREPEND CMAKE_LIBRARY_PATH "${_mkl_libdir}")
+            pkg_check_modules(MKL QUIET IMPORTED_TARGET ${_mkl_pc})
+        endif ()
     endif ()
 endif ()
 
 if (POTFIT_USE_MKL AND MKL_FOUND)
     target_link_libraries(potfit_eigen INTERFACE PkgConfig::MKL)
     target_compile_definitions(potfit_eigen INTERFACE EIGEN_USE_MKL_ALL)
-    message(STATUS "Eigen backend: system Intel MKL (lp64, sequential) via pkg-config")
+    message(STATUS "Eigen backend: system Intel MKL (lp64, ${MKL_THREADING_LAYER}) via pkg-config")
 elseif (POTFIT_USE_MKL)
-    message(STATUS "Eigen backend: built-in kernels (system MKL pkg-config 'mkl-dynamic-lp64-seq' not found)")
+    message(STATUS "Eigen backend: built-in kernels (system MKL pkg-config 'mkl-dynamic-lp64-{tbb,seq}' not found)")
 else ()
     message(STATUS "Eigen backend: built-in kernels (POTFIT_USE_MKL=OFF)")
 endif ()

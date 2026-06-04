@@ -101,6 +101,7 @@ void expect_reduces(ForceCalculator truth, ForceCalculator start,
 }
 
 Solver lm() { return Solver{EigenLMSolver{10}}; }       // 10 LM iterations
+Solver lmne() { return Solver{NormalEquationsLMSolver{10}}; } // normal-eqns LM
 Solver ipopt() { return Solver{IpoptSolver{10}}; }      // 10 Ipopt iterations
 
 // ── Model builders (eps / amplitudes drive the perturbation) ──────────────────
@@ -212,6 +213,10 @@ TEST(SolverPotentials, EAM_Ipopt) {
   expect_reduces(make_eam(1.0), make_eam(0.6), {make_dimer(2.5)}, 1.0, ipopt(),
                  "EAM/Ipopt");
 }
+TEST(SolverPotentials, EAM_LMNE) {
+  expect_reduces(make_eam(1.0), make_eam(0.6), {make_dimer(2.5)}, 1.0, lmne(),
+                 "EAM/LMNE");
+}
 
 // ── ADP ───────────────────────────────────────────────────────────────────────
 
@@ -271,6 +276,11 @@ TEST(SolverPotentials, SymmetryFunction_LM) {
                  make_symfunc({0.3, -0.1, 0.05}), {make_cluster()}, 1.0, lm(),
                  "SymFunc/LM");
 }
+TEST(SolverPotentials, SymmetryFunction_LMNE) {
+  expect_reduces(make_symfunc({0.6, -0.35, 0.2}),
+                 make_symfunc({0.3, -0.1, 0.05}), {make_cluster()}, 1.0, lmne(),
+                 "SymFunc/LMNE");
+}
 
 // ── ML: SOAP descriptor + linear head ─────────────────────────────────────────
 
@@ -281,4 +291,8 @@ TEST(SolverPotentials, Soap_LM) {
 TEST(SolverPotentials, Soap_Ipopt) {
   expect_reduces(make_soap(1.0), make_soap(0.5), {make_cluster()}, 1.0, ipopt(),
                  "SOAP/Ipopt");
+}
+TEST(SolverPotentials, Soap_LMNE) {
+  expect_reduces(make_soap(1.0), make_soap(0.5), {make_cluster()}, 1.0, lmne(),
+                 "SOAP/LMNE");
 }

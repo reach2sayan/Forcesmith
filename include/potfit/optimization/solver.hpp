@@ -69,6 +69,24 @@ struct EigenLMSolver {
 
 static_assert(SolverImpl<EigenLMSolver>);
 
+// Levenberg–Marquardt on the *normal equations*. Each iteration forms
+// A = JᵀJ and g = Jᵀr and solves the damped system (A + λ·diag(A)) δ = −g by
+// Cholesky, instead of a column-pivoted QR of the tall m×n Jacobian (Eigen's
+// built-in LM).
+struct NormalEquationsLMSolver {
+  int max_iter = 500;
+  double xtol = 1e-7;        // step:    ‖δ‖ ≤ xtol·(‖x‖ + xtol)
+  double ftol = 1e-7;        // cost:    Δ(½‖F‖²) ≤ ftol·old_cost
+  double gtol = 1e-8;        // gradient: ‖Jᵀr‖∞ ≤ gtol
+  double lambda0 = 1e-3;     // initial Marquardt damping
+  double lambda_up = 10.0;   // grow λ on a rejected step
+  double lambda_down = 10.0; // shrink λ on an accepted step
+  int minimize(Eigen::VectorXd &x, ResidualFn f, JacobianFn jac,
+               int n_vals) const;
+};
+
+static_assert(SolverImpl<NormalEquationsLMSolver>);
+
 // Powell's dogleg via Eigen::HybridNonLinearSolver.
 // Minimises ||F||² by finding zeros of g(x)[j] = Fᵀ ∂F/∂xⱼ (central FD).
 struct EigenHybridSolver {
@@ -89,8 +107,9 @@ struct BoostDESolver {
   double crossover_probability = 0.5;
   std::size_t NP_factor = 15; // NP = NP_factor × D
   std::size_t max_generations = 1000;
-  // Population evaluation is intentionally serial — see BoostDESolver::minimize.
-  // Parallelism comes one level down, from the functor's per-config TBB loop.
+  // Population evaluation is intentionally serial — see
+  // BoostDESolver::minimize. Parallelism comes one level down, from the
+  // functor's per-config TBB loop.
   unsigned seed = 42;
   int minimize(Eigen::VectorXd &x, ResidualFn f, JacobianFn jac,
                int n_vals) const;

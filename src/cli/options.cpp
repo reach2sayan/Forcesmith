@@ -34,7 +34,8 @@ ParseResult parse(int argc, char *argv[]) {
       "smooth-weight", po::value<double>()->default_value(0.0),
       "curvature (Tikhonov) regularization weight on free knots (0 = "
       "disabled)")("algorithm,a", po::value<std::string>()->default_value("lm"),
-                   "optimization algorithm: lm | powell (dogleg) | de | ls "
+                   "optimization algorithm: lm | lmne (normal-equations LM, "
+                   "threaded BLAS) | powell (dogleg) | de | ls "
                    "(Powell direction-set line search) | ipopt (L-BFGS)")(
       "seed", po::value<unsigned>()->default_value(0),
       "RNG seed for DE (0 = random_device)")(

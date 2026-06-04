@@ -1,5 +1,6 @@
 #include "potfit/io/force_model_reader.hpp"
 #include "potfit/io/write_model.hpp"
+#include "potfit/potentials/symmetry_functions.hpp"
 
 #include <boost/leaf/handle_errors.hpp>
 #include <gtest/gtest.h>
@@ -8,7 +9,9 @@
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <span>
 #include <string>
+#include <vector>
 
 namespace leaf = boost::leaf;
 using namespace potfit;
@@ -472,6 +475,63 @@ TEST(WriteModel, NonFiniteKnots_FailsLoudly) {
         },
         [&]() { ADD_FAILURE() << "expected a ParseError, got unknown error"; });
     EXPECT_TRUE(failed) << "write_model should reject non-finite tabulation";
+}
+
+// An ML model's per-feature standardization (computed by prepare()) must survive a
+// native write → read so a reloaded potential predicts identically.
+TEST(WriteModel, ML_Standardization_RoundTrips) {
+    SymmetryFunctionModel sf;
+    sf.ntypes = 1;
+    sf.rcut = 6.0;
+    sf.radial = {{0.5, 0.0}, {1.2, 1.5}, {0.3, 2.5}};
+    sf.heads.reserve(1);
+    sf.heads.emplace_back(EnergyHead{MLPHead::make({3, 5, 1}, MLPHead::Act::Tanh, 2)});
+
+    std::vector<Configuration> cfgs;
+    {
+        Configuration c;
+        c.bc = PeriodicBC(100.0 * Mat3::Identity());
+        Atom a0, a1, a2, a3;
+        a0.type = 0; a0.pos = {0.0, 0.0, 0.0};
+        a1.type = 0; a1.pos = {2.1, 0.3, -0.2};
+        a2.type = 0; a2.pos = {0.4, 2.0, 0.5};
+        a3.type = 0; a3.pos = {-1.3, 0.7, 1.9};
+        c.atoms = {a0, a1, a2, a3};
+        cfgs.push_back(c);
+    }
+    sf.prepare(std::span<Configuration>(cfgs.data(), cfgs.size()));
+    ASSERT_TRUE(sf.has_standardization());
+    const Eigen::VectorXd mean0 = sf.mean_[0];
+    const Eigen::VectorXd iv0 = sf.inv_std_[0];
+
+    ForceCalculator fc{std::move(sf)};
+    TmpModel tmp("ml_std");
+    bool ok = false;
+    leaf::try_handle_all(
+        [&]() -> leaf::result<void> {
+            BOOST_LEAF_CHECK(write_native_model(fc, tmp.path));
+            std::ifstream f(tmp.path);
+            const std::string s{std::istreambuf_iterator<char>(f),
+                                std::istreambuf_iterator<char>{}};
+            EXPECT_NE(s.find("standardization"), std::string::npos);
+            BOOST_LEAF_AUTO(m, parse_force_model(s));
+            if (!std::holds_alternative<SymmetryFunctionModel>(m)) {
+                ADD_FAILURE() << "expected SF model after reload";
+                return {};
+            }
+            const auto& rsf = std::get<SymmetryFunctionModel>(m);
+            if (rsf.inv_std_.size() == 0) {
+                ADD_FAILURE() << "standardization not restored";
+                return {};
+            }
+            EXPECT_TRUE(rsf.mean_[0].isApprox(mean0));
+            EXPECT_TRUE(rsf.inv_std_[0].isApprox(iv0));
+            ok = true;
+            return {};
+        },
+        [&](const ParseError& e) { ADD_FAILURE() << "ParseError: " << e.message; },
+        [&]()                    { ADD_FAILURE() << "unknown error"; });
+    EXPECT_TRUE(ok);
 }
 
 #if defined(__clang__)

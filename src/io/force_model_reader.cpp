@@ -469,6 +469,32 @@ leaf::result<ForceCalculator> finish_ml(Model calc, json &j,
     }
     calc.heads.emplace_back(std::move(*rh));
   }
+  // Optional per-feature standardization (one {mean, inv_std} per type), written
+  // by output_writer's add_standardization. Absent → identity transform (older
+  // startpot files still load). Each vector is empty (type had no atoms) or S long.
+  if (j.contains("standardization")) {
+    const auto &st = j["standardization"];
+    if (!st.is_array() || st.size() != ntypes) {
+      return fail("ml", "standardization must be an array of " +
+                            std::to_string(ntypes) + " entries, got " +
+                            std::to_string(st.is_array() ? st.size() : 0));
+    }
+    calc.mean_.reserve(ntypes);
+    calc.inv_std_.reserve(ntypes);
+    for (const auto &e : st) {
+      const auto mean = e.value("mean", std::vector<double>{});
+      const auto iv = e.value("inv_std", std::vector<double>{});
+      if (mean.size() != iv.size() || (!mean.empty() && mean.size() != S)) {
+        return fail("ml", "standardization mean/inv_std length " +
+                              std::to_string(mean.size()) +
+                              " != descriptor size " + std::to_string(S));
+      }
+      calc.mean_.emplace_back(Eigen::Map<const Eigen::VectorXd>(
+          mean.data(), static_cast<Eigen::Index>(mean.size())));
+      calc.inv_std_.emplace_back(Eigen::Map<const Eigen::VectorXd>(
+          iv.data(), static_cast<Eigen::Index>(iv.size())));
+    }
+  }
   return ForceCalculator{std::move(calc)};
 }
 
@@ -490,7 +516,11 @@ leaf::result<ForceCalculator> build_ml(json &j, std::size_t ntypes) {
     for (const auto &g : desc["g2"]) {
       calc.radial.push_back({g.at("eta").get<double>(), g.value("rs", 0.0)});
     }
-    return finish_ml(std::move(calc), j, ntypes, calc.radial.size());
+    // Read the descriptor size BEFORE the move — argument evaluation order is
+    // unspecified, so `calc.radial.size()` in the call args can run after calc is
+    // moved-from (emptying radial → S=0).
+    const std::size_t S = calc.radial.size();
+    return finish_ml(std::move(calc), j, ntypes, S);
   }
 
   if (dtype == "soap") {
@@ -501,7 +531,8 @@ leaf::result<ForceCalculator> build_ml(json &j, std::size_t ntypes) {
     calc.rcut = desc.value("rcut", 6.0);
     calc.sigma = desc.value("sigma", 0.5);
     calc.init_radial_basis();
-    return finish_ml(std::move(calc), j, ntypes, calc.descriptor_size());
+    const std::size_t S = calc.descriptor_size();
+    return finish_ml(std::move(calc), j, ntypes, S);
   }
 
   return fail("ml", "unknown descriptor type '" + dtype + "'");

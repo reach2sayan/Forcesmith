@@ -1,6 +1,7 @@
 #include "potfit/optimization/solver.hpp"
 
 #include <boost/math/optimization/differential_evolution.hpp>
+#include <Eigen/Cholesky>
 #include <unsupported/Eigen/NonLinearOptimization>
 
 #include <algorithm>
@@ -9,6 +10,32 @@
 #include <random>
 #include <ranges>
 #include <vector>
+
+namespace {
+// Process-wide threading hygiene, applied once at library-load static-init time
+// (before any BLAS computation and before main; solver.o is always linked, so
+// this initializer always fires). Lets every run go without an
+// OPENBLAS_NUM_THREADS=1 prefix.
+//
+// Ipopt's MUMPS (libcoinmumps) drags in OpenBLAS, which spawns nproc idle
+// threads on load (parked in futex_wait) and oversubscribes the box — pure
+// overhead, since the hot path is Eigen → threaded MKL. Shrink its pool to 1.
+// Weak symbol: a no-op when OpenBLAS isn't present.
+//
+// The companion concern — MUMPS also linking the MKL *sequential* threading
+// layer, which could fight our TBB layer — is handled at link time, not here:
+// Dependencies.cmake links libmkl_tbb_thread directly (and ahead of
+// libcoinmumps), so in MKL's layered model the TBB threading symbols bind first.
+// (MKL's runtime mkl_set_threading_layer() lives only in libmkl_rt, not the
+// layered libs, so it isn't an option here.)
+extern "C" void openblas_set_num_threads(int) __attribute__((weak));
+
+const int kThreadingHygiene = [] {
+  if (openblas_set_num_threads)
+    openblas_set_num_threads(1);
+  return 0;
+}();
+} // namespace
 
 namespace potfit {
 
@@ -62,10 +89,106 @@ int EigenLMSolver::minimize(Eigen::VectorXd &x, ResidualFn f, JacobianFn jac,
   FunctorAdapter adapter{std::move(f), static_cast<int>(x.size()), n_vals,
                          std::move(jac)};
   Eigen::LevenbergMarquardt<FunctorAdapter> lm(adapter);
-  lm.parameters.maxfev = max_iter;
+  // max_iter counts LM *iterations* (one Jacobian + trust-region step each), to
+  // match NormalEquationsLMSolver and IpoptSolver. Eigen's lm.minimize() is
+  // instead bounded by maxfev (function evaluations), so the same --maxiter flag
+  // meant wildly different work across solvers. Drive minimizeOneStep directly
+  // and set maxfev high enough that the per-step search is never the limiter.
+  namespace LM = Eigen::LevenbergMarquardtSpace;
+  lm.parameters.maxfev = std::max(max_iter, 1) * 100 + 100;
   lm.parameters.xtol = xtol;
   lm.parameters.ftol = ftol;
-  return static_cast<int>(lm.minimize(x));
+  if (lm.minimizeInit(x) == LM::ImproperInputParameters)
+    return static_cast<int>(LM::ImproperInputParameters);
+  LM::Status status = LM::Running; // minimizeInit leaves NotStarted; prime the loop
+  for (int i = 0; i < max_iter && status == LM::Running; ++i)
+    status = lm.minimizeOneStep(x);
+  // Still Running ⇒ stopped by the iteration cap, not a numerical failure; report
+  // it as the max-iter-reached code (2), matching NormalEquationsLMSolver.
+  return status == LM::Running ? 2 : static_cast<int>(status);
+}
+
+int NormalEquationsLMSolver::minimize(Eigen::VectorXd &x, ResidualFn f,
+                                      JacobianFn jac, int n_vals) const {
+  const int n = static_cast<int>(x.size());
+  if (n == 0)
+    return 0;
+
+  // Reuse FunctorAdapter purely for its df(): the supplied (typed, parallel)
+  // Jacobian when present, else a central-FD fallback — identical to the QR LM.
+  const FunctorAdapter adapter{f, n, n_vals, std::move(jac)};
+
+  Eigen::VectorXd r = f(x);
+  double cost = 0.5 * r.squaredNorm(); // ½‖F‖²
+
+  Eigen::MatrixXd J(n_vals, n);
+  adapter.df(x, J);
+
+  Eigen::MatrixXd A(n, n); // JᵀJ (Gauss–Newton approx. Hessian)
+  Eigen::VectorXd g(n);    // Jᵀr (½∇‖F‖²)
+
+  double lambda = lambda0;
+  int info = 2; // 2 = hit max_iter; 1 = converged; 0 = stalled
+
+  for (int iter = 0; iter < max_iter; ++iter) {
+    // BLAS-3/2 that routes to threaded MKL under EIGEN_USE_MKL_ALL.
+    A.noalias() = J.transpose() * J;
+    g.noalias() = J.transpose() * r;
+
+    if (g.lpNorm<Eigen::Infinity>() <= gtol) {
+      info = 1;
+      break;
+    }
+
+    const Eigen::VectorXd jtj_diag = A.diagonal();
+
+    // Inner loop: grow λ until the damped Cholesky step actually lowers the cost
+    // (Marquardt's classic accept/reject). A saturated λ means no downhill step
+    // exists → treat as converged to a (local) minimum.
+    bool accepted = false;
+    for (int t = 0; t < 30; ++t) {
+      Eigen::MatrixXd aug = A;
+      aug.diagonal() += lambda * jtj_diag; // (A + λ·diag(A))
+
+      // A + λ·diag(A) is SPD for λ>0 ⇒ Cholesky; fall back to LDLT if a tiny
+      // pivot slips through (rank-deficient J, λ underflow).
+      Eigen::LLT<Eigen::MatrixXd> llt(aug);
+      Eigen::VectorXd delta;
+      if (llt.info() == Eigen::Success)
+        delta = llt.solve(-g);
+      else
+        delta = aug.ldlt().solve(-g);
+
+      const Eigen::VectorXd x_new = x + delta;
+      Eigen::VectorXd r_new = f(x_new);
+      const double cost_new = 0.5 * r_new.squaredNorm();
+
+      if (cost_new < cost) {
+        const double dx = delta.norm();
+        const double dcost = cost - cost_new;
+        x = x_new;
+        r = std::move(r_new);
+        const double old_cost = cost;
+        cost = cost_new;
+        lambda = std::max(lambda / lambda_down, 1e-12);
+        accepted = true;
+        if (dx <= xtol * (x.norm() + xtol) || dcost <= ftol * old_cost)
+          info = 1;
+        break;
+      }
+      lambda = std::min(lambda * lambda_up, 1e12);
+    }
+
+    if (info == 1)
+      break;
+    if (!accepted) {
+      info = 1; // λ saturated without a downhill step ⇒ at a minimum
+      break;
+    }
+
+    adapter.df(x, J); // re-linearise at the accepted point
+  }
+  return info;
 }
 
 int EigenHybridSolver::minimize(Eigen::VectorXd &x, ResidualFn f,

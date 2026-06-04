@@ -15,6 +15,7 @@
 #include "potfit/api/potfit.hpp"
 #include "potfit/force/force_calculator.hpp"
 #include "potfit/io/config_reader.hpp" // io::ParseError
+#include "potfit/optimization/ipopt_solver.hpp"
 #include "potfit/optimization/solver.hpp"
 #include "potfit/potentials/soap.hpp"
 
@@ -68,7 +69,8 @@ struct Args {
   int maxiter = 100;
   double eweight = 0.0;     // forces-first
   double stress_weight = 0.0;
-  std::string algorithm = "lm";
+  std::string algorithm = "ipopt"; // L-BFGS: best optimizer for the NN fit (see
+                                   // apply_options); lm/lmne lag badly here
   int max_configs = 20;     // small by default (FD×FD is heavy)
   int stride = 1;
   int n_max = 4;
@@ -174,8 +176,20 @@ void apply_options(PotFit &s, const Args &a) {
     s.set_solver(Solver{BoostDESolver{}});
   } else if (a.algorithm == "ls") {
     s.set_solver(Solver{LineSearchSolver{a.maxiter}});
-  } else {
+  } else if (a.algorithm == "lmne") {
+    // Normal-equations LM: JᵀJ/Jᵀr/Cholesky route to threaded MKL (no serial QR).
+    s.set_solver(Solver{NormalEquationsLMSolver{a.maxiter}});
+  } else if (a.algorithm == "lm") {
     s.set_solver(Solver{EigenLMSolver{a.maxiter}});
+  } else {
+    // Default for the SOAP+NN fit: L-BFGS (ipopt) on ½‖F‖², gradient JᵀF reusing
+    // the cached parallel df. Gauss-Newton/LM is built for well-conditioned,
+    // few-parameter least-squares (the classical analytic potentials); on a
+    // high-dim, ill-conditioned 2400-param NN it makes poor steps. Benchmarks
+    // (100 configs, maxiter 5): ipopt lowered force RMSE 0.726→0.715, while
+    // lm/lmne *raised* it to ~0.737 — and lm at maxiter 20 burned 24 min / 3×
+    // the CPU to still end at 0.735. See memory ml_fit_perf_profile.
+    s.set_solver(Solver{IpoptSolver{a.maxiter}});
   }
 }
 
@@ -345,7 +359,7 @@ int main(int argc, char *argv[]) {
       "stress-weight",
       po::value(&a.stress_weight)->default_value(a.stress_weight))(
       "algorithm,a", po::value(&a.algorithm)->default_value(a.algorithm),
-      "lm | powell | de | ls")(
+      "ipopt (L-BFGS, default/best for NN) | lm | lmne | powell | de | ls")(
       "max-configs", po::value(&a.max_configs)->default_value(a.max_configs))(
       "stride", po::value(&a.stride)->default_value(a.stride))(
       "n-max", po::value(&a.n_max)->default_value(a.n_max))(

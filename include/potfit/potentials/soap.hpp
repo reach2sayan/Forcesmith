@@ -26,6 +26,7 @@
 
 #include <cstddef>
 #include <memory>
+#include <vector>
 
 namespace potfit {
 
@@ -59,6 +60,41 @@ struct SoapModel : MLBase<SoapModel> {
   [[nodiscard]] double descriptor_cutoff() const { return rcut; }
   [[nodiscard]] bool analytic_grads() const { return true; }
   [[nodiscard]] std::size_t descriptor_size() const;
+
+private:
+  // get_descriptor is decomposed into three sequential steps that share the
+  // expansion-coefficient store c and the flat (channel,n,l,m) index layout.
+
+  // Flat index into c for channel ch, radial n, degree l, order m. m is the
+  // fastest axis (offset by +l_max) so the 2l+1 coefficients of a fixed
+  // (ch,n,l) are contiguous — the power-spectrum m-sum is one Eigen dot.
+  [[nodiscard]] Eigen::Index coeff_index(int ch, int n, int l, int m) const {
+    const int nlm = 2 * l_max + 1;
+    return ((static_cast<Eigen::Index>(ch) * n_max + n) * (l_max + 1) + l) *
+               nlm +
+           (m + l_max);
+  }
+
+  // Step 1 — expansion coefficients c^α_{nlm} = K Σ_j f_c(r_j) I^j_{nl} Y*_{lm},
+  // accumulated over the atom's neighbours. tab supplies the radial projection.
+  [[nodiscard]] Eigen::VectorXcd
+  compute_coefficients(const Atom &a, const SoapRadialTable &tab,
+                       double K) const;
+
+  // Step 2 — rotationally-invariant power spectrum p^{αβ}_{n n' l}, flattened in
+  // the canonical order. Returns the raw (un-normalised) descriptor vector; the
+  // caller computes ‖p‖ and L2-normalises (the gradient step needs that norm).
+  [[nodiscard]] Eigen::VectorXd
+  power_spectrum(const Eigen::VectorXcd &c,
+                 const std::vector<double> &wl) const;
+
+  // Step 3 — analytic position gradient dD/dr. Fills out.grad_self /
+  // out.grad_neigh given the coefficients c, the already-normalised descriptor
+  // out.values and its pre-normalisation norm.
+  void position_gradient(const Atom &a, const Eigen::VectorXcd &c,
+                         const SoapRadialTable &tab, double K,
+                         const std::vector<double> &wl, double norm,
+                         DescriptorValue &out) const;
 };
 
 static_assert(ForceCalculatorModel<SoapModel>);

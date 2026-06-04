@@ -102,6 +102,68 @@ TEST(MLCache, CachedNewtonThirdLaw) {
   }
 }
 
+// After prepare(), the whitened cached descriptors are zero-mean / unit-variance
+// per live feature (the whole point: O(1)-scaled inputs for a well-conditioned
+// fit). Dead (constant) features collapse to identically zero.
+TEST(MLStandardize, ZeroMeanUnitVar) {
+  auto m = make_sf_model();
+  auto cfgs = make_configs();
+  m.prepare(std::span<Configuration>(cfgs.data(), cfgs.size()));
+  ASSERT_TRUE(m.has_standardization());
+  ASSERT_GT(m.inv_std_.size(), 0u);
+
+  std::vector<Eigen::VectorXd> vals;
+  for (const auto &row : m.cache_->rows) {
+    for (const auto &cc : row) {
+      vals.push_back(cc.values);
+    }
+  }
+  ASSERT_GT(vals.size(), 1u);
+  const Eigen::Index S = vals.front().size();
+
+  for (Eigen::Index k = 0; k < S; ++k) {
+    double mean = 0.0;
+    for (const auto &v : vals) {
+      mean += v[k];
+    }
+    mean /= static_cast<double>(vals.size());
+    double var = 0.0;
+    for (const auto &v : vals) {
+      var += (v[k] - mean) * (v[k] - mean);
+    }
+    var /= static_cast<double>(vals.size());
+
+    EXPECT_NEAR(mean, 0.0, 1e-9) << "feature " << k;
+    if (m.inv_std_[0][k] > 0.0) {
+      EXPECT_NEAR(var, 1.0, 1e-6) << "live feature " << k;
+    } else {
+      EXPECT_NEAR(var, 0.0, 1e-12) << "dead feature " << k;
+    }
+  }
+}
+
+// A descriptor feature that is constant across the dataset (here a G2 with a huge
+// η so exp(−η r²) underflows to 0 for every neighbour) has zero variance, so it is
+// dropped: inv_std == 0, the cached value is 0, and its gradient rows are 0.
+TEST(MLStandardize, DeadFeatureMapsToZero) {
+  auto m = make_sf_model();
+  m.radial[2] = {5000.0, 0.0}; // exp(−5000 r²) ≈ 0 for all real bond lengths
+  auto cfgs = make_configs();
+  m.prepare(std::span<Configuration>(cfgs.data(), cfgs.size()));
+  ASSERT_TRUE(m.has_standardization());
+
+  EXPECT_EQ(m.inv_std_[0][2], 0.0); // dead → exactly zero
+  for (const auto &row : m.cache_->rows) {
+    for (const auto &cc : row) {
+      EXPECT_NEAR(cc.values[2], 0.0, 1e-12);
+      EXPECT_NEAR(cc.grad_self.row(2).norm(), 0.0, 1e-12);
+      for (const auto &gn : cc.grad_neigh) {
+        EXPECT_NEAR(gn.row(2).norm(), 0.0, 1e-12);
+      }
+    }
+  }
+}
+
 // SOAP currently fills the cache by one-time finite difference of the
 // descriptor. Energy is exact (same descriptor values); forces match the
 // FD-over-energy legacy path to FD tolerance.
