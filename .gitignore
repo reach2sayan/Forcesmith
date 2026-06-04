@@ -54,3 +54,6 @@ reference/
 *.json
 *.png
 data/
+*.log
+*.sh
+*.txt
