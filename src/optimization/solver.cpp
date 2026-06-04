@@ -87,7 +87,8 @@ struct FunctorAdapter {
 } // namespace
 
 int EigenLMSolver::minimize(Eigen::VectorXd &x, ResidualFn f, JacobianFn jac,
-                            int n_vals) const {
+                            int n_vals, const Eigen::VectorXd & /*lower*/,
+                            const Eigen::VectorXd & /*upper*/) const {
   FunctorAdapter adapter{std::move(f), static_cast<int>(x.size()), n_vals,
                          std::move(jac)};
   Eigen::LevenbergMarquardt<FunctorAdapter> lm(adapter);
@@ -111,7 +112,9 @@ int EigenLMSolver::minimize(Eigen::VectorXd &x, ResidualFn f, JacobianFn jac,
 }
 
 int EigenHybridSolver::minimize(Eigen::VectorXd &x, ResidualFn f,
-                                JacobianFn /*jac*/, int /*n_vals*/) const {
+                                JacobianFn /*jac*/, int /*n_vals*/,
+                                const Eigen::VectorXd & /*lower*/,
+                                const Eigen::VectorXd & /*upper*/) const {
   const int D = static_cast<int>(x.size());
 
   // Gradient functor: g(x)[j] = Fᵀ ∂F/∂xⱼ  (central FD, δ=1e-5)
@@ -147,21 +150,20 @@ int EigenHybridSolver::minimize(Eigen::VectorXd &x, ResidualFn f,
 }
 
 int BoostDESolver::minimize(Eigen::VectorXd &x, ResidualFn f,
-                            JacobianFn /*jac*/, int /*n_vals*/) const {
+                            JacobianFn /*jac*/, int /*n_vals*/,
+                            const Eigen::VectorXd &lower,
+                            const Eigen::VectorXd &upper) const {
   const int D = static_cast<int>(x.size());
 
-  // Build per-parameter bounds; auto-derive from current x if not provided.
-  std::vector<double> lb = lower_bounds;
-  std::vector<double> ub = upper_bounds;
-  if (lb.empty() || ub.empty()) {
-    lb.resize(D);
-    ub.resize(D);
-    for (int j = 0; j < D; ++j) {
-      const double v = x[j];
-      const double half = std::max(2.0 * std::abs(v), 5e-4);
-      lb[j] = v - half;
-      ub[j] = v + half;
-    }
+  // DE needs a finite search box. Use each parameter's supplied [lower, upper]
+  // where finite; where a bound is ±∞, auto-derive a ±half-width box from the
+  // current x (mirrors the per-component fallback used for an unbounded fit).
+  std::vector<double> lb(D), ub(D);
+  for (int j = 0; j < D; ++j) {
+    const double v = x[j];
+    const double half = std::max(2.0 * std::abs(v), 5e-4);
+    lb[j] = std::isfinite(lower[j]) ? lower[j] : v - half;
+    ub[j] = std::isfinite(upper[j]) ? upper[j] : v + half;
   }
 
   using DEParams = boost::math::optimization::differential_evolution_parameters<
@@ -175,7 +177,11 @@ int BoostDESolver::minimize(Eigen::VectorXd &x, ResidualFn f,
   params.max_generations = max_generations;
   params.threads = 1;
 
-  std::vector<double> ig(x.data(), x.data() + D);
+  // Clamp the start point into the box; a user bound may exclude the current x,
+  // and DE requires the initial guess to lie within [lower, upper].
+  std::vector<double> ig(D);
+  for (int j = 0; j < D; ++j)
+    ig[j] = std::clamp(x[j], lb[j], ub[j]);
   params.initial_guess = &ig;
 
   auto cost = [&](const std::vector<double> &v) {
@@ -193,17 +199,21 @@ int BoostDESolver::minimize(Eigen::VectorXd &x, ResidualFn f,
 }
 
 int LineSearchSolver::minimize(Eigen::VectorXd &x, ResidualFn f,
-                               JacobianFn /*jac*/, int /*n_vals*/) const {
+                               JacobianFn /*jac*/, int /*n_vals*/,
+                               const Eigen::VectorXd & /*lower*/,
+                               const Eigen::VectorXd & /*upper*/) const {
   const int D = static_cast<int>(x.size());
-  if (D == 0)
+  if (D == 0) {
     return 0;
+  }
 
   const PowellDirectionSet powell{f};
 
-  // Direction set, initialised to the unit basis.
+  // Direction set, initialized to the unit basis.
   std::vector<Eigen::VectorXd> dirs(D, Eigen::VectorXd::Zero(D));
-  for (int i = 0; i < D; ++i)
-    dirs[i][i] = 1.0;
+  for (int i = 0; i < D; ++i) {
+    dirs[i] = Eigen::VectorXd::Unit(D, i);
+  }
 
   for (int iter = 0; iter < max_iter; ++iter) {
     const Eigen::VectorXd p0 = x;
@@ -213,8 +223,9 @@ int LineSearchSolver::minimize(Eigen::VectorXd &x, ResidualFn f,
     const double fret = powell.phi(x);
 
     // Converged once a whole sweep barely moves the parameters.
-    if ((x - p0).norm() <= xtol)
+    if ((x - p0).norm() <= xtol) {
       break;
+    }
 
     // Adopt the conjugate direction iff Powell's criterion holds, then replace
     // the most-effective old direction with it.
@@ -248,13 +259,13 @@ LineSearchSolver::PowellDirectionSet::SweepResult
 LineSearchSolver::PowellDirectionSet::sweep(
     Eigen::VectorXd &x, const std::vector<Eigen::VectorXd> &dirs) const {
   SweepResult s;
-  for (int i = 0; i < static_cast<int>(dirs.size()); ++i) {
+  for (const auto i : std::views::iota(std::size_t{0}, dirs.size())) {
     const double before = phi(x);
     line_min(x, dirs[i]);
     const double dec = before - phi(x);
     if (dec > s.del) {
       s.del = dec;
-      s.ibig = i;
+      s.ibig = static_cast<int>(i);
     }
   }
   return s;

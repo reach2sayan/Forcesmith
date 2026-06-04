@@ -65,15 +65,15 @@ boost::leaf::result<void> write_model(const ForceCalculator &model,
             write_native_stiweb(path, calc);
             return true;
           } else if constexpr (std::is_same_v<T, ACSF>) {
-            warn_non_native("ml");
-            write_native_ml(path, calc);
+            warn_non_native("acsf");
+            write_native_acsf(path, calc);
             return true;
           } else if constexpr (std::is_same_v<T, SoapModel>) {
-            warn_non_native("ml");
+            warn_non_native("soap");
             write_native_soap(path, calc);
             return true;
           } else if constexpr (std::is_same_v<T, LMBTR>) {
-            warn_non_native("ml");
+            warn_non_native("lmbtr");
             write_native_lmbtr(path, calc);
             return true;
           } else {

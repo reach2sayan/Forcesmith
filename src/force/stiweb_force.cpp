@@ -252,6 +252,27 @@ void StiwebForceCalculator::scatter_params(const Eigen::VectorXd &src,
   }
 }
 
+void StiwebForceCalculator::gather_bounds(Eigen::VectorXd &lo,
+                                          Eigen::VectorXd &hi,
+                                          std::size_t off) const {
+  for (const auto &p : params) {
+    for (const Param *f : sw_fields(p)) {
+      if (!f->fixed) {
+        lo[off] = f->min;
+        hi[off] = f->max;
+        ++off;
+      }
+    }
+  }
+  for (const auto &l : lambda) {
+    if (!l.fixed) {
+      lo[off] = l.min;
+      hi[off] = l.max;
+      ++off;
+    }
+  }
+}
+
 double StiwebForceCalculator::max_cutoff() const {
   return std::transform_reduce(
       params.begin(), params.end(), 0.0,

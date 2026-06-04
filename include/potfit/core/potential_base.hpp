@@ -6,6 +6,7 @@
 #include <boost/leaf/result.hpp>
 #include <concepts>
 #include <filesystem>
+#include <limits>
 #include <memory>
 #include <string_view>
 #include <utility>
@@ -15,7 +16,7 @@ namespace potfit {
 // Any type satisfying the following concept can be stored in a Potential:
 //   eval(double)->double, deriv(double)->double, span()->pair<double,double>
 //   param_count()->int, gather_params(VectorXd&,int), scatter_params(const
-//   VectorXd&,int)
+//   VectorXd&,int), gather_bounds(VectorXd&,VectorXd&,int)
 
 namespace detail {
 struct PotentialConcept {
@@ -26,8 +27,11 @@ struct PotentialConcept {
   virtual std::size_t param_count() const = 0;
   virtual void gather_params(Eigen::VectorXd &x, std::size_t off) const = 0;
   virtual void scatter_params(const Eigen::VectorXd &x, std::size_t off) = 0;
+  virtual void gather_bounds(Eigen::VectorXd &lo, Eigen::VectorXd &hi,
+                             std::size_t off) const = 0;
   virtual void set_param(std::size_t i, double v) = 0;
   virtual void set_fixed(std::size_t i, bool f) = 0;
+  virtual void set_bounds(std::size_t i, double lo, double hi) = 0;
   virtual std::size_t smoothness_count() const = 0;
   virtual void write_smoothness(Eigen::VectorXd &x, std::size_t off,
                                 double weight) const = 0;
@@ -55,6 +59,21 @@ class Potential : private detail::ErasedValue<detail::PotentialConcept> {
                                   std::size_t off) override {
       impl_.scatter_params(x, off);
     }
+    constexpr void gather_bounds(Eigen::VectorXd &lo, Eigen::VectorXd &hi,
+                                 std::size_t off) const override {
+      if constexpr (requires(const T &t, Eigen::VectorXd &v, std::size_t o) {
+                      t.gather_bounds(v, v, o);
+                    }) {
+        impl_.gather_bounds(lo, hi, off);
+      } else {
+        // Type carries no bound metadata → all free params unbounded.
+        const std::size_t n = static_cast<std::size_t>(impl_.param_count());
+        for (std::size_t k = 0; k < n; ++k) {
+          lo[off + k] = -std::numeric_limits<double>::infinity();
+          hi[off + k] = std::numeric_limits<double>::infinity();
+        }
+      }
+    }
     constexpr void set_param(std::size_t i, double v) override {
       if constexpr (requires(T &t, std::size_t j, double w) {
                       t.set_param(j, w);
@@ -67,6 +86,13 @@ class Potential : private detail::ErasedValue<detail::PotentialConcept> {
                       t.set_fixed(j, g);
                     }) {
         impl_.set_fixed(i, f);
+      }
+    }
+    constexpr void set_bounds(std::size_t i, double lo, double hi) override {
+      if constexpr (requires(T &t, std::size_t j, double a, double b) {
+                      t.set_bounds(j, a, b);
+                    }) {
+        impl_.set_bounds(i, lo, hi);
       }
     }
     constexpr std::size_t smoothness_count() const override {
@@ -104,8 +130,15 @@ public:
   constexpr void scatter_params(const Eigen::VectorXd &x, std::size_t off) {
     self_->scatter_params(x, off);
   }
+  constexpr void gather_bounds(Eigen::VectorXd &lo, Eigen::VectorXd &hi,
+                               std::size_t off) const {
+    self_->gather_bounds(lo, hi, off);
+  }
   constexpr void set_param(std::size_t i, double v) { self_->set_param(i, v); }
   constexpr void set_fixed(std::size_t i, bool f) { self_->set_fixed(i, f); }
+  constexpr void set_bounds(std::size_t i, double lo, double hi) {
+    self_->set_bounds(i, lo, hi);
+  }
   constexpr std::size_t smoothness_count() const {
     return self_->smoothness_count();
   }

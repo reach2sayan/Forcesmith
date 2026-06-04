@@ -71,6 +71,18 @@ void PairForceCalculator::scatter_params(const Eigen::VectorXd &src,
   broadcast_globals();
 }
 
+void PairForceCalculator::gather_bounds(Eigen::VectorXd &lo, Eigen::VectorXd &hi,
+                                        std::size_t off) const {
+  gather_bounds_range(pair, lo, hi, off);
+  std::ranges::for_each(globals, [&](const auto &g) {
+    if (!g.value.fixed) {
+      lo[off] = g.value.min;
+      hi[off] = g.value.max;
+      ++off;
+    }
+  });
+}
+
 void PairForceCalculator::broadcast_globals() {
   for (const auto &g : globals) {
     for (const auto &lk : g.links) {

@@ -84,6 +84,8 @@ struct HeadConcept {
   virtual std::size_t param_count() const = 0;
   virtual void gather_params(Eigen::VectorXd &x, std::size_t off) const = 0;
   virtual void scatter_params(const Eigen::VectorXd &x, std::size_t off) = 0;
+  virtual void gather_bounds(Eigen::VectorXd &lo, Eigen::VectorXd &hi,
+                             std::size_t off) const = 0;
   // Generic (de)serialization surface so the io layer can round-trip any head
   // without knowing its concrete type (keeps nlohmann out of this header).
   //   type_tag()     — "linear" …
@@ -130,6 +132,16 @@ template <typename Derived> struct HeadParams {
     for (Param *p : self().field_ptrs()) {
       if (!p->fixed) {
         p->value = src[off++];
+      }
+    }
+  }
+  void gather_bounds(Eigen::VectorXd &lo, Eigen::VectorXd &hi,
+                     std::size_t off) const {
+    for (const Param *p : self().field_ptrs()) {
+      if (!p->fixed) {
+        lo[off] = p->min;
+        hi[off] = p->max;
+        ++off;
       }
     }
   }
@@ -223,6 +235,10 @@ class EnergyHead : private detail::ErasedValue<detail::HeadConcept> {
     void scatter_params(const Eigen::VectorXd &x, std::size_t off) override {
       impl_.scatter_params(x, off);
     }
+    void gather_bounds(Eigen::VectorXd &lo, Eigen::VectorXd &hi,
+                       std::size_t off) const override {
+      impl_.gather_bounds(lo, hi, off);
+    }
     std::string type_tag() const override { return impl_.type_tag(); }
     std::vector<int> architecture() const override {
       return impl_.architecture();
@@ -278,6 +294,10 @@ public:
   }
   void scatter_params(const Eigen::VectorXd &x, std::size_t off) {
     self_->scatter_params(x, off);
+  }
+  void gather_bounds(Eigen::VectorXd &lo, Eigen::VectorXd &hi,
+                     std::size_t off) const {
+    self_->gather_bounds(lo, hi, off);
   }
   std::string type_tag() const { return self_->type_tag(); }
   std::vector<int> architecture() const { return self_->architecture(); }
@@ -605,6 +625,14 @@ struct MLBase : ForceCalculatorBase<Derived>, NoGlobals {
       h.scatter_params(src, off);
       off += h.param_count();
     }
+  }
+
+  void gather_bounds(Eigen::VectorXd &lo, Eigen::VectorXd &hi,
+                     std::size_t off) const {
+    std::for_each(heads.begin(), heads.end(), [&](const auto &h) {
+      h.gather_bounds(lo, hi, off);
+      off += h.param_count();
+    });
   }
 
   constexpr double max_cutoff() const { return self().descriptor_cutoff(); }

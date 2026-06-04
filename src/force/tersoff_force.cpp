@@ -248,6 +248,20 @@ void TersoffForceCalculator::scatter_params(const Eigen::VectorXd &src,
   }
 }
 
+void TersoffForceCalculator::gather_bounds(Eigen::VectorXd &lo,
+                                           Eigen::VectorXd &hi,
+                                           std::size_t off) const {
+  for (const auto &p : params) {
+    for (const Param *f : tersoff_fields(p)) {
+      if (!f->fixed) {
+        lo[off] = f->min;
+        hi[off] = f->max;
+        ++off;
+      }
+    }
+  }
+}
+
 double TersoffForceCalculator::max_cutoff() const {
   return std::transform_reduce(
       params.begin(), params.end(), 0.0,

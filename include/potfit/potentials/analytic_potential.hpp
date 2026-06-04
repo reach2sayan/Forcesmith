@@ -51,6 +51,23 @@ template <typename Derived, std::size_t N> struct AnalyticParams {
       }
     }
   }
+  // Per-free-param box constraints, in the same order as gather_params so the
+  // bound vectors align element-for-element with the gathered x.
+  constexpr void gather_bounds(Eigen::VectorXd &lo, Eigen::VectorXd &hi,
+                               std::size_t off) const {
+    for (const auto &p : params) {
+      if (!p.fixed) {
+        lo[off] = p.min;
+        hi[off] = p.max;
+        ++off;
+      }
+    }
+  }
+  // Set parameter i's [min, max] box (raw index, bypassing the fixed flag).
+  constexpr void set_bounds(std::size_t i, double lo, double hi) {
+    params[i].min = lo;
+    params[i].max = hi;
+  }
 
 protected:
   constexpr AnalyticParams(std::array<double, N> vals, double lo,
@@ -320,6 +337,14 @@ template <typename Base> struct SmoothCutoff {
       h.value = src[off + base.param_count()];
     }
   }
+  constexpr void gather_bounds(Eigen::VectorXd &lo, Eigen::VectorXd &hi,
+                               std::size_t off) const {
+    base.gather_bounds(lo, hi, off);
+    if (!h.fixed) {
+      lo[off + base.param_count()] = h.min;
+      hi[off + base.param_count()] = h.max;
+    }
+  }
   // Raw-index parameter access (used to broadcast a shared global h). Indices
   // 0..N-1 address the base; index N addresses the appended cutoff width h.
   constexpr void set_param(std::size_t i, double v) {
@@ -334,6 +359,14 @@ template <typename Base> struct SmoothCutoff {
       base.set_fixed(i, f);
     } else {
       h.fixed = f;
+    }
+  }
+  constexpr void set_bounds(std::size_t i, double lo, double hi) {
+    if (i < Base::num_params) {
+      base.set_bounds(i, lo, hi);
+    } else {
+      h.min = lo;
+      h.max = hi;
     }
   }
   constexpr bool is_fixed(std::size_t i) const {

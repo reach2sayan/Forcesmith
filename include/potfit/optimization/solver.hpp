@@ -17,17 +17,26 @@ using ResidualFn = std::function<Eigen::VectorXd(const Eigen::VectorXd &)>;
 using JacobianFn =
     std::function<void(const Eigen::VectorXd &, Eigen::MatrixXd &)>;
 
+// lower/upper are full-length box constraints aligned element-for-element with
+// x (the gathered free parameters), ±∞ where a parameter is unbounded. Only
+// solvers with native box-constraint support (Ipopt, differential evolution)
+// honor them; the gradient solvers ignore the two extra arguments.
 template <typename T>
 concept CSolver = requires(const T &s, Eigen::VectorXd &x, ResidualFn f,
-                              JacobianFn jac, int n_vals) {
-  { s.minimize(x, f, jac, n_vals) } -> std::convertible_to<int>;
+                              JacobianFn jac, int n_vals,
+                              const Eigen::VectorXd &bounds) {
+  {
+    s.minimize(x, f, jac, n_vals, bounds, bounds)
+  } -> std::convertible_to<int>;
 };
 
 namespace detail {
 struct SolverConcept {
   virtual ~SolverConcept() = default;
-  virtual int minimize(Eigen::VectorXd &, ResidualFn, JacobianFn,
-                       int) const = 0;
+  virtual int minimize(Eigen::VectorXd &, ResidualFn, JacobianFn, int,
+                       const Eigen::VectorXd &,
+                       const Eigen::VectorXd &) const = 0;
+  virtual bool honors_bounds() const = 0;
 };
 } // namespace detail
 
@@ -35,9 +44,18 @@ class Solver : private detail::ErasedMoveOnly<detail::SolverConcept> {
   template <typename T> struct Model final : detail::SolverConcept {
     T impl_;
     constexpr explicit Model(T t) : impl_(std::move(t)) {}
-    int minimize(Eigen::VectorXd &x, ResidualFn f, JacobianFn jac,
-                 int n_vals) const override {
-      return impl_.minimize(x, std::move(f), std::move(jac), n_vals);
+    int minimize(Eigen::VectorXd &x, ResidualFn f, JacobianFn jac, int n_vals,
+                 const Eigen::VectorXd &lower,
+                 const Eigen::VectorXd &upper) const override {
+      return impl_.minimize(x, std::move(f), std::move(jac), n_vals, lower,
+                            upper);
+    }
+    bool honors_bounds() const override {
+      if constexpr (requires(const T &t) { t.honors_bounds(); }) {
+        return impl_.honors_bounds();
+      } else {
+        return false;
+      }
     }
   };
   using Base = detail::ErasedMoveOnly<detail::SolverConcept>;
@@ -51,18 +69,23 @@ public:
   Solver &operator=(Solver &&) = default;
   Solver(const Solver &) = delete;
   Solver &operator=(const Solver &) = delete;
-  int minimize(Eigen::VectorXd &x, ResidualFn f, JacobianFn jac,
-               int n_vals) const {
-    return self_->minimize(x, std::move(f), std::move(jac), n_vals);
+  int minimize(Eigen::VectorXd &x, ResidualFn f, JacobianFn jac, int n_vals,
+               const Eigen::VectorXd &lower,
+               const Eigen::VectorXd &upper) const {
+    return self_->minimize(x, std::move(f), std::move(jac), n_vals, lower,
+                           upper);
   }
+  // True iff the wrapped solver applies the box constraints (Ipopt / DE).
+  bool honors_bounds() const { return self_->honors_bounds(); }
 };
 
 struct EigenLMSolver {
   int max_iter = 500;
   double xtol = 1e-7;
   double ftol = 1e-7;
-  int minimize(Eigen::VectorXd &x, ResidualFn f, JacobianFn jac,
-               int n_vals) const;
+  int minimize(Eigen::VectorXd &x, ResidualFn f, JacobianFn jac, int n_vals,
+               const Eigen::VectorXd &lower,
+               const Eigen::VectorXd &upper) const;
 };
 
 static_assert(CSolver<EigenLMSolver>);
@@ -72,17 +95,19 @@ static_assert(CSolver<EigenLMSolver>);
 struct EigenHybridSolver {
   int max_iter = 500;
   double xtol = 1e-7;
-  int minimize(Eigen::VectorXd &x, ResidualFn f, JacobianFn jac,
-               int n_vals) const;
+  int minimize(Eigen::VectorXd &x, ResidualFn f, JacobianFn jac, int n_vals,
+               const Eigen::VectorXd &lower,
+               const Eigen::VectorXd &upper) const;
 };
 
 static_assert(CSolver<EigenHybridSolver>);
 
 // Differential evolution via boost::math::optimization::differential_evolution.
 // mutation_factor (F) must be in (0, 1); values ≥ 1.0 throw std::domain_error.
+// Honors the box constraints passed to minimize(): each parameter's finite
+// [lower, upper] is used directly; where a bound is ±∞ it auto-derives a
+// ±half-width box from the current x (DE requires a finite search box).
 struct BoostDESolver {
-  std::vector<double> lower_bounds; // per-param; empty → auto from current x
-  std::vector<double> upper_bounds;
   double mutation_factor = 0.65; // F ∈ (0, 1)
   double crossover_probability = 0.5;
   std::size_t NP_factor = 15; // NP = NP_factor × D
@@ -91,8 +116,10 @@ struct BoostDESolver {
   // BoostDESolver::minimize. Parallelism comes one level down, from the
   // functor's per-config TBB loop.
   unsigned seed = 42;
-  int minimize(Eigen::VectorXd &x, ResidualFn f, JacobianFn jac,
-               int n_vals) const;
+  int minimize(Eigen::VectorXd &x, ResidualFn f, JacobianFn jac, int n_vals,
+               const Eigen::VectorXd &lower,
+               const Eigen::VectorXd &upper) const;
+  bool honors_bounds() const { return true; }
 };
 
 static_assert(CSolver<BoostDESolver>);
@@ -104,8 +131,9 @@ static_assert(CSolver<BoostDESolver>);
 struct LineSearchSolver {
   int max_iter = 200;
   double xtol = 1e-7;
-  int minimize(Eigen::VectorXd &x, ResidualFn f, JacobianFn jac,
-               int n_vals) const;
+  int minimize(Eigen::VectorXd &x, ResidualFn f, JacobianFn jac, int n_vals,
+               const Eigen::VectorXd &lower,
+               const Eigen::VectorXd &upper) const;
 
 private:
   // Powell's direction-set minimiser over φ(x) = ½‖F(x)‖², built around linmin.

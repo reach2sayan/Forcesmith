@@ -80,6 +80,8 @@ struct StiwebForceCalculator : ForceCalculatorBase<StiwebForceCalculator>,
   std::size_t param_count() const;
   void gather_params(Eigen::VectorXd &dst, std::size_t off) const;
   void scatter_params(const Eigen::VectorXd &src, std::size_t off);
+  void gather_bounds(Eigen::VectorXd &lo, Eigen::VectorXd &hi,
+                     std::size_t off) const;
   double max_cutoff() const;
 };
 

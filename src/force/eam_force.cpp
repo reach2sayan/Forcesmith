@@ -52,6 +52,20 @@ void EAMForceCalculator::scatter_params(const Eigen::VectorXd &src,
   broadcast_globals();
 }
 
+void EAMForceCalculator::gather_bounds(Eigen::VectorXd &lo, Eigen::VectorXd &hi,
+                                       std::size_t off) const {
+  gather_bounds_range(pair, lo, hi, off);
+  gather_bounds_range(density, lo, hi, off);
+  gather_bounds_range(embedding, lo, hi, off);
+  std::ranges::for_each(globals, [&](const auto &g) {
+    if (!g.value.fixed) {
+      lo[off] = g.value.min;
+      hi[off] = g.value.max;
+      ++off;
+    }
+  });
+}
+
 void EAMForceCalculator::broadcast_globals() {
   // pair (SymmetricMatrix) and density/embedding (TypeArray) are distinct
   // types, so select the table with a templated lambda rather than a ternary.

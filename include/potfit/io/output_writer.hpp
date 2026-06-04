@@ -61,7 +61,7 @@ void write_native_stiweb(const std::filesystem::path &path,
 //   {model:"ml", ntypes, descriptor:{type:"acsf", rcut, g1, g2:[{eta,rs}],
 //    g3:[{kappa}], g4:[{eta,zeta,lambda}], g5:[{eta,zeta,lambda}]},
 //    heads:[{type, …}]}
-void write_native_ml(const std::filesystem::path &path, const ACSF &ml);
+void write_native_acsf(const std::filesystem::path &path, const ACSF &ml);
 
 // SOAP ML model: descriptor hyperparameters + per-type linear heads,
 // using the head's generic serialization surface so any head round-trips.

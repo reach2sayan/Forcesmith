@@ -476,9 +476,13 @@ leaf::result<ForceCalculator> build_ml(json &j, std::size_t ntypes) {
     return fail("ml", "missing 'descriptor' object");
   }
   const json &desc = j["descriptor"];
-  const std::string dtype =
-      desc.value("type", std::string("symmetry_functions"));
+  if (!desc.contains("type") || !desc["type"].is_string()) {
+    return fail("ml", "descriptor missing string 'type' "
+                      "(expected acsf/soap/lmbtr)");
+  }
+  const std::string dtype = desc["type"].get<std::string>();
 
+  // "symmetry_functions" is the legacy alias for "acsf".
   if (dtype == "symmetry_functions" || dtype == "acsf") {
     ACSF calc;
     calc.ntypes = ntypes;

@@ -19,9 +19,11 @@ constexpr double kIpoptInf = 2e19;
 // (used both as the start point and as the sink for the final solution).
 class PotfitTNLP final : public Ipopt::TNLP {
 public:
-  PotfitTNLP(Eigen::VectorXd &x, ResidualFn f, JacobianFn jac, int n_vals)
+  PotfitTNLP(Eigen::VectorXd &x, ResidualFn f, JacobianFn jac, int n_vals,
+             const Eigen::VectorXd &lower, const Eigen::VectorXd &upper)
       : x_(x), f_(std::move(f)), jac_(std::move(jac)),
-        n_(static_cast<int>(x.size())), n_vals_(n_vals) {}
+        n_(static_cast<int>(x.size())), n_vals_(n_vals), lower_(lower),
+        upper_(upper) {}
 
   bool get_nlp_info(Ipopt::Index &n, Ipopt::Index &m, Ipopt::Index &nnz_jac_g,
                     Ipopt::Index &nnz_h_lag,
@@ -34,12 +36,14 @@ public:
     return true;
   }
 
-  // No parameter bounds exist in Potfit's solver interface → unbounded box.
+  // Per-parameter box constraints, clamping ±∞ to Ipopt's ±kIpoptInf sentinel.
   bool get_bounds_info(Ipopt::Index n, Ipopt::Number *x_l, Ipopt::Number *x_u,
                        Ipopt::Index /*m*/, Ipopt::Number * /*g_l*/,
                        Ipopt::Number * /*g_u*/) override {
-    std::fill_n(x_l, n, -kIpoptInf);
-    std::fill_n(x_u, n, kIpoptInf);
+    for (Ipopt::Index j = 0; j < n; ++j) {
+      x_l[j] = std::max(lower_[j], -kIpoptInf);
+      x_u[j] = std::min(upper_[j], kIpoptInf);
+    }
     return true;
   }
 
@@ -127,18 +131,20 @@ private:
   JacobianFn jac_;
   int n_;
   int n_vals_;
+  Eigen::VectorXd lower_;
+  Eigen::VectorXd upper_;
   Ipopt::SolverReturn status_{Ipopt::INTERNAL_ERROR};
 };
 
 } // namespace
 
 int IpoptSolver::minimize(Eigen::VectorXd &x, ResidualFn f, JacobianFn jac,
-                          int n_vals) const {
+                          int n_vals, const Eigen::VectorXd &lower,
+                          const Eigen::VectorXd &upper) const {
   Ipopt::SmartPtr<PotfitTNLP> tnlp =
-      new PotfitTNLP(x, std::move(f), std::move(jac), n_vals);
+      new PotfitTNLP(x, std::move(f), std::move(jac), n_vals, lower, upper);
 
-  Ipopt::SmartPtr<Ipopt::IpoptApplication> app =
-      IpoptApplicationFactory();
+  Ipopt::SmartPtr<Ipopt::IpoptApplication> app = IpoptApplicationFactory();
   app->Options()->SetNumericValue("tol", tol);
   app->Options()->SetNumericValue("acceptable_tol", acceptable_tol);
   app->Options()->SetIntegerValue("max_iter", max_iter);

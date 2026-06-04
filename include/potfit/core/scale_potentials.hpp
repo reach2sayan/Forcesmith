@@ -27,6 +27,9 @@ struct LinearAdjustedPotential {
   constexpr void scatter_params(const Eigen::VectorXd &v, int off) {
     base.scatter_params(v, off);
   }
+  void gather_bounds(Eigen::VectorXd &lo, Eigen::VectorXd &hi, int off) const {
+    base.gather_bounds(lo, hi, off);
+  }
 };
 
 // Wrapper: scales the OUTPUT by a — density g(r) → a·g(r). Used for the
@@ -44,6 +47,9 @@ struct ScaledOutputPotential {
   }
   constexpr void scatter_params(const Eigen::VectorXd &v, int off) {
     base.scatter_params(v, off);
+  }
+  void gather_bounds(Eigen::VectorXd &lo, Eigen::VectorXd &hi, int off) const {
+    base.gather_bounds(lo, hi, off);
   }
 };
 
@@ -65,6 +71,9 @@ struct ScaledArgPotential {
   }
   constexpr void scatter_params(const Eigen::VectorXd &v, int off) {
     base.scatter_params(v, off);
+  }
+  void gather_bounds(Eigen::VectorXd &lo, Eigen::VectorXd &hi, int off) const {
+    base.gather_bounds(lo, hi, off);
   }
 };
 
@@ -93,6 +102,9 @@ struct CompensatedPairPotential {
   }
   void scatter_params(const Eigen::VectorXd &v, int off) {
     phi.scatter_params(v, off);
+  }
+  void gather_bounds(Eigen::VectorXd &lo, Eigen::VectorXd &hi, int off) const {
+    phi.gather_bounds(lo, hi, off);
   }
 };
 

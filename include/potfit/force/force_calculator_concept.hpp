@@ -89,6 +89,17 @@ void scatter_range(Range &range, const Eigen::VectorXd &src, std::size_t &off) {
   }
 }
 
+// Per-free-param box constraints, in the same order as gather_range so the
+// bound vectors align element-for-element with the gathered parameter vector.
+template <typename Range>
+void gather_bounds_range(const Range &range, Eigen::VectorXd &lo,
+                         Eigen::VectorXd &hi, std::size_t &off) {
+  for (const auto &p : range) {
+    p.gather_bounds(lo, hi, off);
+    off += p.param_count();
+  }
+}
+
 // Total number of curvature (smoothness) residuals contributed by a range of
 // potentials, and writing those residuals — mirrors gather_range/scatter_range.
 template <typename Range>
@@ -118,6 +129,7 @@ concept ForceCalculatorModel =
       { calc.param_count() } -> std::same_as<std::size_t>;
       { calc.gather_params(v, off) } -> std::same_as<void>;
       { calc.scatter_params(v, off) } -> std::same_as<void>;
+      { calc.gather_bounds(v, v, off) } -> std::same_as<void>;
       { calc.max_cutoff() } -> std::same_as<double>;
     };
 

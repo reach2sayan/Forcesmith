@@ -46,6 +46,15 @@ static double eval_residual(std::vector<Configuration>& configs,
     return fvec.squaredNorm();
 }
 
+// Gather the model's current free-parameter values (post-optimization).
+static Eigen::VectorXd current_params(ForceCalculator& model) {
+    const std::size_t n =
+        std::visit([](const auto& m) { return m.param_count(); }, model);
+    Eigen::VectorXd x(static_cast<Eigen::Index>(n));
+    std::visit([&](const auto& m){ m.gather_params(x, std::size_t{0}); }, model);
+    return x;
+}
+
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 // Residual should be zero when the potential exactly matches the reference data.
@@ -145,4 +154,75 @@ TEST(Optimizer, ResidualDecreasesOrStays) {
     const double res_after = eval_residual(configs, model, 1.0);
     EXPECT_LE(res_after, res_before * 1.01)  // allow 1% tolerance for numerical noise
         << "Residual increased after optimization: " << res_before << " -> " << res_after;
+}
+
+// ── Bounds ──────────────────────────────────────────────────────────────────
+// gather_bounds yields ±∞ for a potential built without explicit bounds, so the
+// legacy (bare-value) path stays unconstrained.
+TEST(Optimizer, UnboundedParamsGatherInfiniteBounds) {
+    Potential lj{LennardJones(1.0, 2.0, 1.0, 10.0)};
+    std::vector<Potential> pots;
+    pots.push_back(std::move(lj));
+    ForceCalculator model = make_pair_force_calculator(std::move(pots));
+
+    const std::size_t n =
+        std::visit([](const auto& m) { return m.param_count(); }, model);
+    Eigen::VectorXd lo(static_cast<Eigen::Index>(n)),
+        hi(static_cast<Eigen::Index>(n));
+    std::visit([&](const auto& m){ m.gather_bounds(lo, hi, std::size_t{0}); },
+               model);
+
+    for (Eigen::Index i = 0; i < lo.size(); ++i) {
+        EXPECT_FALSE(std::isfinite(lo[i])) << "lower[" << i << "] should be -inf";
+        EXPECT_FALSE(std::isfinite(hi[i])) << "upper[" << i << "] should be +inf";
+    }
+}
+
+// Build the perturbed LJ dimer fit but constrain epsilon to [0.6, 0.8], strictly
+// below its true value (1.0). Sigma is held fixed so epsilon is the lone free
+// parameter — otherwise sigma compensates (the model depends on eps*sigma^6) and
+// the bound never binds. With sigma pinned the unconstrained optimum is exactly
+// eps=1.0, so a bound-honoring solver must sit at the upper bound 0.8.
+static ForceCalculator make_eps_bounded_model(double sigma) {
+    Potential lj{LennardJones(0.7, sigma, sigma * 0.5, sigma * 5.0)};
+    lj.set_bounds(0, 0.6, 0.8); // index 0 = epsilon
+    lj.set_fixed(1, true);      // index 1 = sigma (held at its true value)
+    std::vector<Potential> pots;
+    pots.push_back(std::move(lj));
+    return make_pair_force_calculator(std::move(pots));
+}
+
+TEST(Optimizer, IpoptRespectsParameterBounds) {
+    const double sigma = 2.0, r = 2.5 * sigma;
+    auto cfg = make_lj_dimer(1.0, sigma, r); // true epsilon = 1.0
+    std::vector<Configuration> configs = {cfg};
+    ForceCalculator model = make_eps_bounded_model(sigma);
+
+    OptimizerOptions opts;
+    opts.energy_weight = 1.0;
+    int status = run_optimizer(configs, model, opts,
+                               Solver{IpoptSolver{2000, 1e-10}});
+    EXPECT_GE(status, 1) << "Ipopt returned failure code " << status;
+
+    const Eigen::VectorXd p = current_params(model);
+    EXPECT_GE(p[0], 0.6 - 1e-6) << "epsilon below lower bound: " << p[0];
+    EXPECT_LE(p[0], 0.8 + 1e-6) << "epsilon above upper bound: " << p[0];
+    EXPECT_NEAR(p[0], 0.8, 5e-3) << "constrained optimum should sit at the bound";
+}
+
+TEST(Optimizer, DifferentialEvolutionRespectsParameterBounds) {
+    const double sigma = 2.0, r = 2.5 * sigma;
+    auto cfg = make_lj_dimer(1.0, sigma, r);
+    std::vector<Configuration> configs = {cfg};
+    ForceCalculator model = make_eps_bounded_model(sigma);
+
+    OptimizerOptions opts;
+    opts.energy_weight = 1.0;
+    run_optimizer(configs, model, opts, Solver{BoostDESolver{}});
+
+    const Eigen::VectorXd p = current_params(model);
+    // DE samples strictly within [lower, upper], so the box must hold exactly.
+    EXPECT_GE(p[0], 0.6) << "epsilon below lower bound: " << p[0];
+    EXPECT_LE(p[0], 0.8) << "epsilon above upper bound: " << p[0];
+    EXPECT_GT(p[0], 0.7) << "epsilon should be driven toward the upper bound";
 }

@@ -234,10 +234,8 @@ PotfitFunctor::PotfitFunctor(std::span<Configuration> configs,
     row_offset_.push_back(acc);
   }
 
-  // Precompute the descriptor cache ONCE for models that support it (ML
-  // models), so every residual/Jacobian evaluation below is cheap cached
-  // algebra. Runs in the shared arena so its parallel fill composes with the
-  // global thread cap.
+  // Precompute the descriptor cache ONCE so every residual/Jacobian evaluation
+  // below is cheap cached algebra.
   shared_arena().execute([&] {
     std::visit(
         [&](auto &m) {
@@ -255,7 +253,7 @@ int PotfitFunctor::operator()(const Eigen::VectorXd &x,
     eval_into(configs_, model_, x, fvec, energy_weight_, stress_weight_,
               smooth_weight_, row_offset_, smooth_count_);
   });
-  last_fvec_ = fvec; // consumed by df() to form the gradient norm
+  last_fvec_ = fvec;
   events::on_iteration(
       events::IterationStats{++iter_, fvec.squaredNorm(), grad_norm_});
   return 0;
@@ -270,8 +268,6 @@ bool PotfitFunctor::df_cached(const Eigen::VectorXd &x,
           if constexpr (requires { m.has_cache(); }) {
             if (m.has_cache()) {
               handled = true;
-              // Exact analytic Jacobian when every head supports it; otherwise
-              // the finite-difference column path (the permanent fallback).
               if constexpr (requires { m.has_param_jacobian(); }) {
                 if (m.has_param_jacobian()) {
                   df_cached_analytic(m, x, fjac, configs_, row_offset_,
@@ -290,8 +286,6 @@ bool PotfitFunctor::df_cached(const Eigen::VectorXd &x,
 }
 
 int PotfitFunctor::df(const Eigen::VectorXd &x, Eigen::MatrixXd &fjac) const {
-  // Cache-backed models get the fast parallel-column path; everyone else uses
-  // the serial central-difference fallback below.
   if (!df_cached(x, fjac)) {
     constexpr double delta = 1e-5;
     Eigen::VectorXd fp(values_), fm(values_), xp = x;
@@ -309,9 +303,7 @@ int PotfitFunctor::df(const Eigen::VectorXd &x, Eigen::MatrixXd &fjac) const {
     });
   }
 
-  // Gradient of the least-squares objective ½‖f‖² is g = Jᵀf; cache ‖g‖ for the
-  // iteration log. last_fvec_ is f(x) from the operator() call that precedes
-  // this df(x) at the same point; the size guard skips the very first df().
+  // Gradient of the least-squares objective ½‖f‖² is g = Jᵀf;
   if (last_fvec_.size() == fjac.rows()) {
     grad_norm_ = (fjac.transpose() * last_fvec_).norm();
   }

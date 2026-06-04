@@ -8,8 +8,11 @@
 #include <boost/leaf/error.hpp>
 #include <nlohmann/json.hpp>
 
+#include <algorithm>
 #include <fstream>
 #include <functional>
+#include <iterator>
+#include <limits>
 #include <ranges>
 #include <span>
 #include <string>
@@ -114,19 +117,49 @@ leaf::result<const Entry *> find_analytic(const std::string &type_name) {
       ParseError{"unknown analytic function: " + type_name, 0});
 }
 
-leaf::result<std::vector<double>>
-gather_params(const json &p, const std::vector<std::string> &names,
-              const std::string &type_name) {
-  std::vector<double> params;
-  params.reserve(names.size());
+// One parsed analytic parameter: its start value plus optional box constraint
+// and fixed flag. min/max default to ±∞ (unbounded), fixed to false.
+struct ParamSpec {
+  double value = 0.0;
+  double min = -std::numeric_limits<double>::infinity();
+  double max = std::numeric_limits<double>::infinity();
+  bool fixed = false;
+};
+
+// Each named parameter may be either a bare number (→ value only, unbounded) or
+// an object {"value": x, "min": lo, "max": hi, "fixed": bool}. Bare numbers keep
+// the legacy format working unchanged.
+leaf::result<std::vector<ParamSpec>>
+gather_param_specs(const json &p, const std::vector<std::string> &names,
+                   const std::string &type_name) {
+  std::vector<ParamSpec> specs;
+  specs.reserve(names.size());
   for (const auto &name : names) {
     if (!p.contains(name)) {
       return leaf::new_error(ParseError{
           "missing parameter '" + name + "' for type " + type_name, 0});
     }
-    params.push_back(p.at(name).get<double>());
+    const json &jv = p.at(name);
+    ParamSpec s;
+    if (jv.is_object()) {
+      if (!jv.contains("value")) {
+        return leaf::new_error(ParseError{
+            "parameter '" + name + "' (" + type_name + ") missing 'value'", 0});
+      }
+      s.value = jv.at("value").get<double>();
+      s.min = jv.value("min", s.min);
+      s.max = jv.value("max", s.max);
+      s.fixed = jv.value("fixed", false);
+      if (s.min > s.max) {
+        return leaf::new_error(ParseError{
+            "parameter '" + name + "' (" + type_name + ") has min > max", 0});
+      }
+    } else {
+      s.value = jv.get<double>();
+    }
+    specs.push_back(s);
   }
-  return params;
+  return specs;
 }
 
 leaf::result<std::vector<double>> knot_values(const json &p) {
@@ -147,14 +180,28 @@ leaf::result<std::vector<double>> knot_values(const json &p) {
 // Each builds ONE Potential from a single self-describing JSON spec object;
 // these are the concrete products the format factory hands out.
 
-// analytic: read "type" → its registry entry → bounds → its named parameters.
+// analytic: read "type" → its registry entry → radial range → its named
+// parameters (value + optional per-parameter [min,max] box and fixed flag).
 leaf::result<Potential> make_analytic(const json &p) {
   BOOST_LEAF_AUTO(type_name, field<std::string>(p, "type"));
   BOOST_LEAF_AUTO(entry, find_analytic(type_name));
   BOOST_LEAF_AUTO(rmin, field<double>(p, "rmin"));
   BOOST_LEAF_AUTO(rmax, field<double>(p, "rmax"));
-  BOOST_LEAF_AUTO(params, gather_params(p, entry->param_names, type_name));
-  return entry->maker(params, rmin, rmax);
+  BOOST_LEAF_AUTO(specs, gather_param_specs(p, entry->param_names, type_name));
+
+  std::vector<double> values;
+  values.reserve(specs.size());
+  std::ranges::transform(specs, std::back_inserter(values),
+                         [](const ParamSpec &s) { return s.value; });
+
+  Potential pot = entry->maker(values, rmin, rmax);
+  for (std::size_t i = 0; i < specs.size(); ++i) {
+    pot.set_bounds(i, specs[i].min, specs[i].max);
+    if (specs[i].fixed) {
+      pot.set_fixed(i, true);
+    }
+  }
+  return pot;
 }
 
 // tabulated: read bounds and knots → spread the knots over a uniform grid.

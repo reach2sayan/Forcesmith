@@ -31,6 +31,14 @@ void AngularForceCalculator::scatter_params(const Eigen::VectorXd &src,
   scatter_range(angular, src, off);
 }
 
+void AngularForceCalculator::gather_bounds(Eigen::VectorXd &lo,
+                                           Eigen::VectorXd &hi,
+                                           std::size_t off) const {
+  gather_bounds_range(pair, lo, hi, off);
+  gather_bounds_range(radial, lo, hi, off);
+  gather_bounds_range(angular, lo, hi, off);
+}
+
 double AngularForceCalculator::max_cutoff() const {
   auto max_range = [](const auto &range) {
     return std::transform_reduce(

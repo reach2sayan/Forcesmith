@@ -24,8 +24,10 @@ struct IpoptSolver {
   double acceptable_tol = 1e-6; // Ipopt "acceptable_tol"
   bool silent = true;           // print_level 0 when true
 
-  int minimize(Eigen::VectorXd &x, ResidualFn f, JacobianFn jac,
-               int n_vals) const;
+  int minimize(Eigen::VectorXd &x, ResidualFn f, JacobianFn jac, int n_vals,
+               const Eigen::VectorXd &lower,
+               const Eigen::VectorXd &upper) const;
+  bool honors_bounds() const { return true; }
 };
 
 static_assert(CSolver<IpoptSolver>);

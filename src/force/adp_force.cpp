@@ -106,6 +106,15 @@ void ADPForceCalculator::scatter_params(const Eigen::VectorXd &src,
   scatter_range(quadrupole, src, off);
 }
 
+void ADPForceCalculator::gather_bounds(Eigen::VectorXd &lo, Eigen::VectorXd &hi,
+                                       std::size_t off) const {
+  gather_bounds_range(pair, lo, hi, off);
+  gather_bounds_range(density, lo, hi, off);
+  gather_bounds_range(embedding, lo, hi, off);
+  gather_bounds_range(dipole, lo, hi, off);
+  gather_bounds_range(quadrupole, lo, hi, off);
+}
+
 double ADPForceCalculator::max_cutoff() const {
   auto max_cutoff = [](const auto &range) {
     return std::transform_reduce(

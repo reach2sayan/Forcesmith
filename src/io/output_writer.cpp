@@ -187,10 +187,11 @@ static json heads_to_json(const TypeArray<EnergyHead> &heads) {
   return arr;
 }
 
-// Per-feature descriptor standardization (one {mean, inv_std} per element type),
-// emitted as a sibling of "heads" so a reloaded model predicts identically. Lives
-// on MLBase, not the head, so it is written separately from heads_to_json. Omitted
-// entirely when disabled or never computed (e.g. a model that was never fit).
+// Per-feature descriptor standardization (one {mean, inv_std} per element
+// type), emitted as a sibling of "heads" so a reloaded model predicts
+// identically. Lives on MLBase, not the head, so it is written separately from
+// heads_to_json. Omitted entirely when disabled or never computed (e.g. a model
+// that was never fit).
 template <class Model>
 static void add_standardization(json &j, const Model &ml) {
   if (!ml.standardize_features || ml.mean_.size() == 0) {
@@ -200,14 +201,14 @@ static void add_standardization(json &j, const Model &ml) {
   for (std::size_t t = 0; t < ml.mean_.size(); ++t) {
     const Eigen::VectorXd &mu = ml.mean_[t];
     const Eigen::VectorXd &iv = ml.inv_std_[t];
-    arr.push_back({{"mean", std::vector<double>(mu.data(), mu.data() + mu.size())},
-                   {"inv_std",
-                    std::vector<double>(iv.data(), iv.data() + iv.size())}});
+    arr.push_back(
+        {{"mean", std::vector<double>(mu.data(), mu.data() + mu.size())},
+         {"inv_std", std::vector<double>(iv.data(), iv.data() + iv.size())}});
   }
   j["standardization"] = std::move(arr);
 }
 
-void write_native_ml(const std::filesystem::path &path, const ACSF &ml) {
+void write_native_acsf(const std::filesystem::path &path, const ACSF &ml) {
   OPEN_FILE_WITH_HANDLE(f, path);
 
   json j;

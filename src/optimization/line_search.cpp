@@ -8,9 +8,10 @@
 
 namespace potfit {
 
-std::pair<double, double> detail::linmin_fn::bracket_minimum(
-    const std::function<double(double)> &g, double initial_step,
-    double max_step, int max_iter) {
+std::pair<double, double>
+detail::linmin_fn::bracket_minimum(const std::function<double(double)> &g,
+                                   double initial_step, double max_step,
+                                   int max_iter) {
   using std::numbers::phi;
 
   double a = 0.0;

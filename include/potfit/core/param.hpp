@@ -1,16 +1,23 @@
 #pragma once
 
+#include <limits>
+
 namespace potfit {
 
-// A single optimizable scalar that carries a fix/free flag.
-// Implicitly converts to double so it can be used directly in arithmetic
-// without changing eval code (p.A * exp(...) still compiles when p.A is Param).
+// A single optimizable scalar that carries a fix/free flag and an optional
+// [min, max] box constraint (default ±∞ → unbounded). Implicitly converts to
+// double so it can be used directly in arithmetic without changing eval code
+// (p.A * exp(...) still compiles when p.A is Param).
 struct Param {
   double value = 0.0;
   bool fixed = false;
+  double min = -std::numeric_limits<double>::infinity();
+  double max = std::numeric_limits<double>::infinity();
 
   constexpr Param() = default;
   constexpr Param(double v, bool f = false) noexcept : value(v), fixed(f) {}
+  constexpr Param(double v, double lo, double hi, bool f = false) noexcept
+      : value(v), fixed(f), min(lo), max(hi) {}
   constexpr operator double() const noexcept { return value; }
   constexpr Param &operator=(double v) noexcept {
     value = v;
