@@ -1,11 +1,11 @@
-// SOAP + neural-net (MLP) ML-potential fitting driver for the converted UNEP
-// DFT dataset — the ML parallel of tests/unep/fit_eam_api.cpp.
+// SOAP ML-potential fitting driver for the converted UNEP DFT dataset — the ML
+// parallel of tests/unep/fit_eam_api.cpp. Built as the single `ml_fit` binary.
 //
-// It builds, in memory through the public PotFit API, a SOAP descriptor + a
-// per-element MLP energy head, seeds it as the force model, and runs a
-// forces-first fit against data/unep/<el>_dft_unep.json (real DFT data from
-// UNEP-v1, Zenodo 11533864). Intended for Cu and Al (run once per element):
-//   fit_soap_nn --element Cu   /   fit_soap_nn --element Al
+// It builds, in memory through the public PotFit API, a SOAP descriptor + an
+// energy head (MLP or linear, --head nn|linear), seeds it as the force model,
+// and runs a forces-first fit against data/unep/<el>_dft_unep.json (real DFT
+// data from UNEP-v1, Zenodo 11533864). Element/head are runtime flags:
+//   ml_fit --element Cu --head nn   /   ml_fit --element Cu --head linear
 //
 // PERFORMANCE: this round uses finite-difference descriptor gradients (SOAP) AND
 // the optimizer's finite-difference Jacobian over the MLP weights, so cost grows
@@ -64,7 +64,8 @@ using namespace potfit;
 namespace {
 
 struct Args {
-  std::string element = POTFIT_ML_ELEMENT; // baked per-binary (CMake); overridable
+  std::string element = POTFIT_ML_ELEMENT; // compile-time default; --element overrides
+  std::string head = "nn";  // energy head: "nn" (MLP) | "linear"
   std::string data_dir = "data/unep";
   std::string out_dir = "tests/ml";
   int maxiter = 100;
@@ -240,7 +241,8 @@ leaf::result<double> force_rmse(PotFit &s) {
            : std::numeric_limits<double>::quiet_NaN();
 }
 
-// Build the SOAP + MLP force model (single element → ntypes 1).
+// Build the SOAP force model (single element → ntypes 1) with the requested
+// energy head: an MLP ("nn") or a linear map ("linear") over the descriptor.
 ForceCalculator build_model(const Args &a, double rcut) {
   SoapModel m;
   m.ntypes = 1;
@@ -250,15 +252,27 @@ ForceCalculator build_model(const Args &a, double rcut) {
   m.sigma = a.sigma;
   m.init_radial_basis();
 
-  std::vector<int> sizes;
-  sizes.push_back(static_cast<int>(m.descriptor_size()));
-  for (int h : a.hidden) {
-    sizes.push_back(h);
-  }
-  sizes.push_back(1);
+  const int D = static_cast<int>(m.descriptor_size());
   m.heads.reserve(1);
-  m.heads.emplace_back(
-      EnergyHead{MLPHead::make(sizes, MLPHead::Act::Tanh, a.seed)});
+  if (a.head == "linear") {
+    // E = c·D + bias makes the force residual linear in the coeffs, so lm/lmne
+    // converge in ~one Gauss–Newton step. Start at zero; free the bias only
+    // when energies are weighted (with forces-only fitting its Jacobian column
+    // is identically zero and the normal equations go singular).
+    LinearHead h;
+    h.coeffs.assign(static_cast<std::size_t>(D), Param{0.0, false});
+    h.bias = Param{0.0, /*fixed=*/a.eweight == 0.0};
+    m.heads.emplace_back(EnergyHead{std::move(h)});
+  } else {
+    std::vector<int> sizes;
+    sizes.push_back(D);
+    for (int h : a.hidden) {
+      sizes.push_back(h);
+    }
+    sizes.push_back(1);
+    m.heads.emplace_back(
+        EnergyHead{MLPHead::make(sizes, MLPHead::Act::Tanh, a.seed)});
+  }
   return ForceCalculator{std::move(m)};
 }
 
@@ -324,8 +338,8 @@ leaf::result<Result> fit_element(const Args &a) {
             << std::flush;
 
   std::filesystem::create_directories(a.out_dir + "/fits");
-  BOOST_LEAF_CHECK(
-      s.write(a.out_dir + "/fits/" + ell + "_soap_nn.json", "native"));
+  BOOST_LEAF_CHECK(s.write(
+      a.out_dir + "/fits/" + ell + "_soap_" + a.head + ".json", "native"));
   return res;
 }
 
@@ -350,9 +364,10 @@ void report(const std::string &el, const Result &r) {
 
 int main(int argc, char *argv[]) {
   Args a;
-  po::options_description desc("SOAP + NN ML fit (API)");
+  po::options_description desc("SOAP ML fit (API)");
   desc.add_options()("help,h", "show this message")(
       "element,e", po::value(&a.element)->default_value(a.element), "Cu | Al | …")(
+      "head", po::value(&a.head)->default_value(a.head), "nn (MLP) | linear")(
       "data-dir", po::value(&a.data_dir)->default_value(a.data_dir))(
       "out-dir", po::value(&a.out_dir)->default_value(a.out_dir))(
       "maxiter", po::value(&a.maxiter)->default_value(a.maxiter))(
@@ -382,12 +397,19 @@ int main(int argc, char *argv[]) {
     return 1;
   }
 
-  std::cerr << "... fitting " << a.element << " (SOAP+NN)\n";
+  if (a.head != "nn" && a.head != "linear") {
+    std::cerr << "error: --head must be 'nn' or 'linear' (got '" << a.head
+              << "')\n\n"
+              << desc << "\n";
+    return 1;
+  }
 
-  // Per-iteration logging to console + a per-element rotating file. The element
-  // is baked into the filename so parallel per-element runs don't clobber each
-  // other's log. The guards must outlive fit_element()'s optimize() call.
-  potfit::log::init("ml_fit_" + a.element + ".log");
+  std::cerr << "... fitting " << a.element << " (SOAP+" << a.head << ")\n";
+
+  // Per-iteration logging to console + a per-(element,head) rotating file, so
+  // parallel runs don't clobber each other's log. The guards must outlive
+  // fit_element()'s optimize() call.
+  potfit::log::init("ml_fit_" + a.element + "_" + a.head + ".log");
   auto log_sinks = potfit::log::connect_signals();
 
   int ret = 0;

@@ -173,25 +173,16 @@ if (POTFIT_BUILD_UNEP_FITS)
     endforeach ()
 endif ()
 
-# ── Per-element SOAP + NN ML fit drivers (parallel of the UNEP EAM fits) ──────
-# One executable per metal, the element baked in via POTFIT_ML_ELEMENT, all built
-# from the single self-contained source tests/ml/fit_soap_nn.cpp. Off by default
-# (heavy: FD optimizer Jacobian × FD-gradient SOAP); enable with
-# -DPOTFIT_BUILD_ML_FITS=ON. The aggregate target `ml_fits` builds every element.
-option(POTFIT_BUILD_ML_FITS "Build the per-element SOAP+NN ML fit executables" OFF)
+# ── SOAP ML fit driver (parallel of the UNEP EAM fits) ───────────────────────
+# A single `ml_fit` executable built from tests/ml/fit_soap_nn.cpp. The element
+# and energy head are runtime flags (--element Cu, --head nn|linear), so there is
+# one binary rather than one per metal. Off by default (heavy: FD optimizer
+# Jacobian × FD-gradient SOAP); enable with -DPOTFIT_BUILD_ML_FITS=ON.
+option(POTFIT_BUILD_ML_FITS "Build the SOAP ML fit executable (ml_fit)" OFF)
 if (POTFIT_BUILD_ML_FITS)
-    set(POTFIT_ML_ELEMENTS
-            Ag Al Au Cr Cu Mg Mo Ni Pb Pd Pt Ta Ti V W Zr)
-    add_custom_target(ml_fits)
-    foreach (el IN LISTS POTFIT_ML_ELEMENTS)
-        string(TOLOWER "${el}" el_lc)
-        set(tgt "ml_fit_${el_lc}")
-        add_executable(${tgt} tests/ml/fit_soap_nn.cpp)
-        target_include_directories(${tgt} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/include")
-        target_compile_definitions(${tgt} PRIVATE POTFIT_ML_ELEMENT="${el}")
-        target_link_libraries(${tgt} PRIVATE potfit_warnings potfit Boost::program_options)
-        add_dependencies(ml_fits ${tgt})
-    endforeach ()
+    add_executable(ml_fit tests/ml/fit_soap_nn.cpp)
+    target_include_directories(ml_fit PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/include")
+    target_link_libraries(ml_fit PRIVATE potfit_warnings potfit Boost::program_options)
 endif ()
 
 include(ClangFormat)

@@ -107,6 +107,7 @@ TEST(MLCache, CachedNewtonThirdLaw) {
 // fit). Dead (constant) features collapse to identically zero.
 TEST(MLStandardize, ZeroMeanUnitVar) {
   auto m = make_sf_model();
+  m.standardize_features = true; // off by default; this test exercises it
   auto cfgs = make_configs();
   m.prepare(std::span<Configuration>(cfgs.data(), cfgs.size()));
   ASSERT_TRUE(m.has_standardization());
@@ -147,6 +148,7 @@ TEST(MLStandardize, ZeroMeanUnitVar) {
 // dropped: inv_std == 0, the cached value is 0, and its gradient rows are 0.
 TEST(MLStandardize, DeadFeatureMapsToZero) {
   auto m = make_sf_model();
+  m.standardize_features = true; // off by default; this test exercises it
   m.radial[2] = {5000.0, 0.0}; // exp(−5000 r²) ≈ 0 for all real bond lengths
   auto cfgs = make_configs();
   m.prepare(std::span<Configuration>(cfgs.data(), cfgs.size()));

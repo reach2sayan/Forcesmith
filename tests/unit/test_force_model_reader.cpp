@@ -483,6 +483,7 @@ TEST(WriteModel, ML_Standardization_RoundTrips) {
     SymmetryFunctionModel sf;
     sf.ntypes = 1;
     sf.rcut = 6.0;
+    sf.standardize_features = true; // off by default; this test exercises it
     sf.radial = {{0.5, 0.0}, {1.2, 1.5}, {0.3, 2.5}};
     sf.heads.reserve(1);
     sf.heads.emplace_back(EnergyHead{MLPHead::make({3, 5, 1}, MLPHead::Act::Tanh, 2)});

@@ -361,7 +361,7 @@ struct MLBase : ForceCalculatorBase<Derived>, NoGlobals {
   // FIXED transforms — not optimizer parameters — so they live outside
   // gather/scatter and are written with the model. Public so the io layer can
   // (de)serialize them and tests can assert.
-  bool standardize_features = true;
+  bool standardize_features = false;
   mutable TypeArray<Eigen::VectorXd> mean_; // per type, length descriptor_size
   mutable TypeArray<Eigen::VectorXd>
       inv_std_; // per type, 1/σ (0 for dead feats)

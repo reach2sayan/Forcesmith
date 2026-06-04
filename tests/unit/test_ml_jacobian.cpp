@@ -38,6 +38,7 @@ ForceCalculator make_symfunc_linear(const std::vector<double> &coeffs) {
   SymmetryFunctionModel m;
   m.ntypes = 1;
   m.rcut = 5.0;
+  m.standardize_features = true; // off by default; exercise the whitening path
   m.radial = {{0.5, 0.0}, {1.2, 1.5}, {0.3, 2.5}};
   LinearHead h;
   for (double cv : coeffs) {
@@ -55,6 +56,7 @@ ForceCalculator make_symfunc_mlp(const std::vector<int> &sizes,
   SymmetryFunctionModel m;
   m.ntypes = 1;
   m.rcut = 5.0;
+  m.standardize_features = true; // off by default; exercise the whitening path
   m.radial = {{0.5, 0.0}, {1.2, 1.5}, {0.3, 2.5}};
   m.heads.reserve(1);
   m.heads.emplace_back(EnergyHead{MLPHead::make(sizes, act, 7)});
