@@ -117,7 +117,7 @@ void ACSF::accumulate_radial(DescriptorValue &out,
 
     // G1: Σ f_c
     for (std::size_t t : std::views::iota(std::size_t{0}, g1)) {
-      scatter_radial(out, j.orig, L.radial(SymmetryFunctionFamily::G1, j.s, t),
+      scatter_radial(out, j.orig_index, L.radial(SymmetryFunctionFamily::G1, j.s, t),
                      rhat, fc, fcp);
     }
     // G2: Σ exp(−η(r−Rs)²) f_c
@@ -125,7 +125,7 @@ void ACSF::accumulate_radial(DescriptorValue &out,
       const auto t = static_cast<std::size_t>(ti);
       const double dr = r - p.rs;
       const double gauss = std::exp(-p.eta * dr * dr);
-      scatter_radial(out, j.orig, L.radial(SymmetryFunctionFamily::G2, j.s, t),
+      scatter_radial(out, j.orig_index, L.radial(SymmetryFunctionFamily::G2, j.s, t),
                      rhat, gauss * fc, gauss * (-2.0 * p.eta * dr * fc + fcp));
     }
     // G3: Σ cos(κ r) f_c
@@ -133,7 +133,7 @@ void ACSF::accumulate_radial(DescriptorValue &out,
       const auto t = static_cast<std::size_t>(ti);
       const double k = gp.kappa;
       const double c = std::cos(k * r), s = std::sin(k * r);
-      scatter_radial(out, j.orig, L.radial(SymmetryFunctionFamily::G3, j.s, t),
+      scatter_radial(out, j.orig_index, L.radial(SymmetryFunctionFamily::G3, j.s, t),
                      rhat, c * fc, -k * s * fc + c * fcp);
     }
   }
@@ -154,8 +154,8 @@ void ACSF::accumulate_angular(DescriptorValue &out,
                  nb[pair.first], nb[pair.second]);
            })) {
     AngularPair p;
-    p.oj = nbj.orig;
-    p.ok = nbk.orig;
+    p.oj = nbj.orig_index;
+    p.ok = nbk.orig_index;
     p.rij = nbj.r;
     p.rik = nbk.r;
     p.rij_h = nbj.rhat;
@@ -210,6 +210,19 @@ DescriptorValue ACSF::get_descriptor(const Atom &a) const {
   accumulate_radial(out, nb, L);
   accumulate_angular(out, nb, L);
   return out;
+}
+
+std::vector<std::optional<Eigen::Index>>
+ACSF::descriptor_index_map(const SpeciesRegistry &old_reg,
+                           const SpeciesRegistry &new_reg) const {
+  const std::size_t S_old = potfit::ntypes(old_reg);
+  const std::size_t S_new = potfit::ntypes(new_reg);
+  const AcsfLayout old_L{S_old,      g1,        radial.size(),
+                         g3.size(),  g4.size(), g5.size()};
+  const AcsfLayout new_L{S_new,      g1,        radial.size(),
+                         g3.size(),  g4.size(), g5.size()};
+  return remap_layout(old_L.d_, new_L.d_, old_slot_of_new(old_reg, new_reg),
+                      S_old, S_new);
 }
 
 } // namespace potfit

@@ -9,7 +9,8 @@
 //   G2  (per species)       Σ_j exp(−η (r_ij − Rs)²) f_c(r_ij)
 //   G3  (per species)       Σ_j cos(κ r_ij) f_c(r_ij)
 //   G4  (per species pair)  2^{1−ζ} Σ_{j<k} (1+λ cosθ)^ζ
-//                              exp(−η(r_ij²+r_ik²+r_jk²)) f_c(r_ij)f_c(r_ik)f_c(r_jk)
+//                              exp(−η(r_ij²+r_ik²+r_jk²))
+//                              f_c(r_ij)f_c(r_ik)f_c(r_jk)
 //   G5  (per species pair)  2^{1−ζ} Σ_{j<k} (1+λ cosθ)^ζ
 //                              exp(−η(r_ij²+r_ik²)) f_c(r_ij)f_c(r_ik)
 // cosθ = (d_j·d_k)/(r_ij r_ik). Radial families channel over the neighbour
@@ -24,6 +25,7 @@
 #include "potfit/force/ml_force.hpp"
 
 #include <cstddef>
+#include <optional>
 #include <utility>
 #include <vector>
 
@@ -54,17 +56,17 @@ struct AcsfLayout {
     d_.add(nG5, P); // Family::G5
   }
 
-  [[nodiscard]] Eigen::Index size() const { return d_.size(); }
+  [[nodiscard]] constexpr Eigen::Index size() const { return d_.size(); }
 
-  // base + chan * count + t. radial() takes the per-species channel s; angular()
-  // takes the per-pair channel po; the two names document which channel space
-  // the caller is in.
-  [[nodiscard]] Eigen::Index radial(SymmetryFunctionFamily f, std::size_t s,
-                                    std::size_t t) const {
+  // base + chan * count + t. radial() takes the per-species channel s;
+  // angular() takes the per-pair channel po; the two names document which
+  // channel space the caller is in.
+  [[nodiscard]] constexpr Eigen::Index
+  radial(SymmetryFunctionFamily f, std::size_t s, std::size_t t) const {
     return d_.index(std::to_underlying(f), s, t);
   }
-  [[nodiscard]] Eigen::Index angular(SymmetryFunctionFamily f, std::size_t po,
-                                     std::size_t t) const {
+  [[nodiscard]] constexpr Eigen::Index
+  angular(SymmetryFunctionFamily f, std::size_t po, std::size_t t) const {
     return d_.index(std::to_underlying(f), po, t);
   }
 };
@@ -107,12 +109,19 @@ struct ACSF : MLBase<ACSF> {
             .size());
   }
 
+  // Re-rank hook (see MLBase::remap): new-layout flat index → old-layout flat
+  // index (or nullopt for a block touching a newly-added species). Delegates to
+  // the generic remap_layout over this descriptor's block structure.
+  [[nodiscard]] std::vector<std::optional<Eigen::Index>>
+  descriptor_index_map(const SpeciesRegistry &old_reg,
+                       const SpeciesRegistry &new_reg) const;
+
 private:
-  // A valid neighbour after distance/species filtering (collect_neighbors).
+  // A valid neighbour after distance/species filtering (collect_neighbours).
   // `orig` is the index into atom.neighbors so the analytic gradients scatter
   // into the full-length, neighbour-parallel grad_neigh array.
   struct Neighbor {
-    std::size_t orig;
+    std::size_t orig_index;
     Vec3 d;    // bond vector r_j − r_i
     Vec3 rhat; // d / r
     double r;
@@ -120,9 +129,6 @@ private:
     std::size_t s;  // neighbour species
   };
 
-  // Pipeline steps (defined in acsf.cpp). Member functions because they read
-  // rcut/ntypes and the per-family parameter vectors; they accumulate in place
-  // into the shared out.values/grad_self/grad_neigh.
   [[nodiscard]] std::vector<Neighbor> collect_neighbors(const Atom &a) const;
   void accumulate_radial(DescriptorValue &out, const std::vector<Neighbor> &nb,
                          const AcsfLayout &L) const; // G1/G2/G3

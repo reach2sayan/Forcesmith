@@ -40,6 +40,13 @@ namespace {
 [[nodiscard]] constexpr std::size_t ntypes_of(const ForceCalculator &m) {
   return std::visit([](const auto &c) { return c.ntypes; }, m);
 }
+// ML models (ACSF/SOAP/LMBTR) re-rank by direct head remap rather than the
+// analytic decompose/materialize-from-spec round-trip.
+[[nodiscard]] constexpr bool is_ml(const ForceCalculator &m) {
+  return std::holds_alternative<ACSF>(m) ||
+         std::holds_alternative<SoapModel>(m) ||
+         std::holds_alternative<LMBTR>(m);
+}
 [[nodiscard]] constexpr double max_cutoff_of(const ForceCalculator &m) {
   return std::visit([](const auto &c) { return c.max_cutoff(); }, m);
 }
@@ -533,6 +540,21 @@ PotFit::decompose_seeded_into_spec(const SpeciesRegistry &reg) {
       *seeded_);
 }
 
+leaf::result<ForceCalculator>
+PotFit::remap_seeded_ml(const SpeciesRegistry &old_reg,
+                        const SpeciesRegistry &new_reg) const {
+  return std::visit(
+      [&](const auto &c) -> leaf::result<ForceCalculator> {
+        if constexpr (requires { c.remap(old_reg, new_reg); }) {
+          BOOST_LEAF_AUTO(remapped, c.remap(old_reg, new_reg));
+          return ForceCalculator{std::move(remapped)};
+        } else {
+          return err("remap_seeded_ml called on a non-ML model");
+        }
+      },
+      *seeded_);
+}
+
 leaf::result<void> PotFit::ensure_frozen() {
   if (!dirty_) {
     return {};
@@ -554,6 +576,16 @@ leaf::result<void> PotFit::ensure_frozen() {
   if (seeded_) {
     if (ntypes_of(*seeded_) == n) {
       model_ = *seeded_;
+    } else if (is_ml(*seeded_)) {
+      // ML re-rank: no symbol-keyed spec exists, so remap the model directly.
+      if (!seeded_registry_) {
+        return err("cannot re-rank a seeded ML model: original element ordering "
+                   "unknown");
+      }
+      BOOST_LEAF_AUTO(remapped, remap_seeded_ml(*seeded_registry_, registry_));
+      model_ = std::move(remapped);
+      seeded_.reset();
+      seeded_registry_.reset();
     } else {
       BOOST_LEAF_CHECK(detach_seeded("re-rank"));
       BOOST_LEAF_CHECK(materialize_from_spec());

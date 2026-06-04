@@ -192,6 +192,13 @@ private:
   boost::leaf::result<void> materialize_from_spec(); // pair / EAM
   boost::leaf::result<void>
   decompose_seeded_into_spec(const SpeciesRegistry &model_reg); // pair / EAM
+  // Re-rank a seeded ML model (ACSF/SOAP/LMBTR) directly: remap heads + reindex
+  // descriptor blocks for the new element ordering (see MLBase::remap). ML state
+  // has no symbol-keyed spec representation, so this replaces the
+  // decompose/materialize-from-spec round-trip used for analytic potentials.
+  boost::leaf::result<ForceCalculator>
+  remap_seeded_ml(const SpeciesRegistry &old_reg,
+                  const SpeciesRegistry &new_reg) const;
   [[nodiscard]] boost::leaf::result<Configuration *> config_at(std::size_t cfg);
   // Bounds-checked per-atom force write; the public set_ref_force overloads
   // resolve their handles to (cfg, atom) indices and funnel through here.

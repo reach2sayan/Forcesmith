@@ -26,6 +26,7 @@
 
 #include <cstddef>
 #include <memory>
+#include <optional>
 #include <vector>
 
 namespace potfit {
@@ -60,6 +61,14 @@ struct SoapModel : MLBase<SoapModel> {
   [[nodiscard]] double descriptor_cutoff() const { return rcut; }
   [[nodiscard]] bool analytic_grads() const { return true; }
   [[nodiscard]] std::size_t descriptor_size() const;
+
+  // Re-rank hook (see MLBase::remap): new-layout flat index → old-layout flat
+  // index (or nullopt for a power-spectrum block touching a newly-added
+  // species). SOAP's pair blocks are variable-length (n≤n' on the diagonal), so
+  // this replays the canonical enumeration rather than using remap_layout.
+  [[nodiscard]] std::vector<std::optional<Eigen::Index>>
+  descriptor_index_map(const SpeciesRegistry &old_reg,
+                       const SpeciesRegistry &new_reg) const;
 
 private:
   // get_descriptor is decomposed into three sequential steps that share the

@@ -48,11 +48,10 @@ std::vector<LMBTR::Neighbor> LMBTR::collect_neighbors(const Atom &a) const {
     const Vec3 &d = neigh.dist;
     const double r = d.norm();
     const auto si = static_cast<long long>(neigh.neighbor->type.index);
-    if (r < 1e-14 || r >= rcut || si < 0 ||
-        static_cast<std::size_t>(si) >= S) {
+    if (r < 1e-14 || r >= rcut || si < 0 || static_cast<std::size_t>(si) >= S) {
       continue;
     }
-    nb.push_back(Neighbor{r, d, static_cast<std::size_t>(si)});
+    nb.emplace_back(r, d, static_cast<std::size_t>(si));
   }
   return nb;
 }
@@ -104,6 +103,18 @@ DescriptorValue LMBTR::get_descriptor(const Atom &a) const {
     normalize_l2_inplace(out.values);
   }
   return out;
+}
+
+std::vector<std::optional<Eigen::Index>>
+LMBTR::descriptor_index_map(const SpeciesRegistry &old_reg,
+                            const SpeciesRegistry &new_reg) const {
+  const std::size_t S_old = potfit::ntypes(old_reg);
+  const std::size_t S_new = potfit::ntypes(new_reg);
+  const auto grid_n = [](const Grid &g) { return g.n; };
+  const LmbtrLayout old_L{S_old, k2.transform(grid_n), k3.transform(grid_n)};
+  const LmbtrLayout new_L{S_new, k2.transform(grid_n), k3.transform(grid_n)};
+  return remap_layout(old_L.d_, new_L.d_, old_slot_of_new(old_reg, new_reg),
+                      S_old, S_new);
 }
 
 } // namespace potfit

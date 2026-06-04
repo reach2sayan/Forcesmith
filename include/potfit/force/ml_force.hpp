@@ -38,6 +38,7 @@
 #include <cstddef>
 #include <execution>
 #include <memory>
+#include <optional>
 #include <ranges>
 #include <span>
 #include <string>
@@ -93,6 +94,14 @@ struct HeadConcept {
   virtual Eigen::VectorXd all_values() const = 0;
   virtual void set_all_values(const Eigen::VectorXd &v) = 0;
   virtual std::unique_ptr<HeadConcept> clone() const = 0;
+  // Re-rank support (species count change). remapped() re-lays-out the head to
+  // map.size() descriptor features, pulling coeff k from old index map[k]
+  // (nullopt ⇒ 0), preserving the bias and per-coeff fixed flags. zero_like()
+  // builds a fresh zero head of the same type sized to `n` features, for an
+  // element that did not exist before the re-rank.
+  virtual std::unique_ptr<HeadConcept>
+  remapped(const std::vector<std::optional<Eigen::Index>> &map) const = 0;
+  virtual std::unique_ptr<HeadConcept> zero_like(Eigen::Index n) const = 0;
 };
 } // namespace detail
 
@@ -173,6 +182,13 @@ struct LinearHead : HeadParams<LinearHead> {
   std::vector<Param *> field_ptrs();
   std::vector<const Param *> field_ptrs() const;
 
+  // Re-rank: copy coeff k from old index map[k] (nullopt ⇒ 0.0), keeping bias
+  // and the coeffs' fixed flag. zero_like(n): n zero (free) coeffs + default
+  // bias, for a newly-added element.
+  [[nodiscard]] LinearHead
+  remapped(const std::vector<std::optional<Eigen::Index>> &map) const;
+  [[nodiscard]] LinearHead zero_like(Eigen::Index n) const;
+
   // all_values()/set_all_values() inherited from HeadParams emit [coeffs…,
   // bias].
   constexpr std::string type_tag() const { return "linear"; }
@@ -218,9 +234,21 @@ class EnergyHead : private detail::ErasedValue<detail::HeadConcept> {
     std::unique_ptr<detail::HeadConcept> clone() const override {
       return std::make_unique<Model>(*this);
     }
+    std::unique_ptr<detail::HeadConcept>
+    remapped(const std::vector<std::optional<Eigen::Index>> &map) const override {
+      return std::make_unique<Model>(impl_.remapped(map));
+    }
+    std::unique_ptr<detail::HeadConcept>
+    zero_like(Eigen::Index n) const override {
+      return std::make_unique<Model>(impl_.zero_like(n));
+    }
   };
 
   using Base = detail::ErasedValue<detail::HeadConcept>;
+
+  // Wrap an already-built concept (used by remapped()/zero_like()).
+  explicit EnergyHead(std::unique_ptr<detail::HeadConcept> p)
+      : Base(std::move(p)) {}
 
 public:
   template <typename T>
@@ -255,6 +283,13 @@ public:
   std::vector<int> architecture() const { return self_->architecture(); }
   Eigen::VectorXd all_values() const { return self_->all_values(); }
   void set_all_values(const Eigen::VectorXd &v) { self_->set_all_values(v); }
+  [[nodiscard]] EnergyHead
+  remapped(const std::vector<std::optional<Eigen::Index>> &map) const {
+    return EnergyHead(self_->remapped(map));
+  }
+  [[nodiscard]] EnergyHead zero_like(Eigen::Index n) const {
+    return EnergyHead(self_->zero_like(n));
+  }
 };
 
 template <typename Derived>
@@ -304,6 +339,47 @@ struct MLBase : ForceCalculatorBase<Derived>, NoGlobals {
            std::ranges::all_of(heads, [](const EnergyHead &h) {
              return h.has_param_jacobian();
            });
+  }
+
+  // ── Species re-rank ─────────────────────────────────────────────────────────
+  // Produce a copy of this model laid out for new_reg (a re-rank: an element was
+  // added or removed, so the compact slots shifted). Elements are matched by
+  // symbol via the Z-sorted registries: a retained element's head moves to its
+  // new slot and its descriptor-blocked coefficients are reindexed; a newly-added
+  // element gets a fresh zero head. The result is structurally valid but carries
+  // untrained weights for the new element(s), so the caller must RE-FIT it.
+  // Standardization is dropped (prepare() recomputes it every fit); the cache is
+  // invalidated. self() must expose descriptor_index_map(old_reg, new_reg).
+  [[nodiscard]] boost::leaf::result<Derived>
+  remap(const SpeciesRegistry &old_reg, const SpeciesRegistry &new_reg) const {
+    Derived out = self();
+    // Build the descriptor index map (derived from the registries, not ntypes)
+    // BEFORE changing out.ntypes so descriptor_size() below sees the new count.
+    const std::vector<std::optional<Eigen::Index>> idx =
+        self().descriptor_index_map(old_reg, new_reg);
+    const std::vector<std::optional<std::size_t>> old_of_new =
+        old_slot_of_new(old_reg, new_reg);
+    const std::size_t S_new = potfit::ntypes(new_reg);
+    out.ntypes = S_new;
+    const auto new_size = static_cast<Eigen::Index>(out.descriptor_size());
+
+    TypeArray<EnergyHead> new_heads;
+    new_heads.reserve(S_new);
+    for (std::size_t t = 0; t < S_new; ++t) {
+      if (const auto s_old = old_of_new[t]) {
+        new_heads.emplace_back(heads[*s_old].remapped(idx));
+      } else {
+        // heads is non-empty (a seeded model always has >=1 head); heads[0] just
+        // supplies the concrete head TYPE for the fresh zero head.
+        new_heads.emplace_back(heads[0].zero_like(new_size));
+      }
+    }
+    out.heads = std::move(new_heads);
+
+    out.mean_ = {};    // stale (old-layout); prepare() recomputes on next fit
+    out.inv_std_ = {}; // (standardize_features flag is preserved by the copy)
+    out.invalidate_cache();
+    return out;
   }
 
   // ── Per-feature descriptor standardization ─────────────────────────────────

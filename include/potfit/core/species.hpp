@@ -1,5 +1,7 @@
 #pragma once
 
+#include "potfit/core/types.hpp" // FORCE_INLINE
+
 #include <algorithm>
 #include <boost/leaf/error.hpp>
 #include <boost/leaf/result.hpp>
@@ -9,6 +11,7 @@
 #include <boost/multi_index_container.hpp>
 #include <boost/optional.hpp>
 #include <cstddef>
+#include <optional>
 #include <ranges>
 #include <span>
 #include <string>
@@ -223,6 +226,21 @@ species_of(const SpeciesRegistry &r, std::string_view symbol) {
   BOOST_ASSERT_MSG(slot < ntypes(r), "invalid species slot");
   const auto &idx = r.get<species_detail::by_index>();
   return *idx.find(slot);
+}
+
+// For each NEW compact slot, the OLD compact slot occupied by the same element
+// (nullopt if that element is newly added). The companion of a species re-rank:
+// since both registries are Z-sorted, this captures exactly how slots shifted.
+// Used by ML model re-rank (MLBase::remap and the descriptor_index_map hooks).
+[[nodiscard]] inline std::vector<std::optional<std::size_t>>
+old_slot_of_new(const SpeciesRegistry &old_reg, const SpeciesRegistry &new_reg) {
+  std::vector<std::optional<std::size_t>> m(ntypes(new_reg));
+  for (std::size_t t = 0; t < ntypes(new_reg); ++t) {
+    if (auto s = species_of(old_reg, species_at(new_reg, t).symbol)) {
+      m[t] = s.value().index;
+    }
+  }
+  return m;
 }
 
 } // namespace potfit

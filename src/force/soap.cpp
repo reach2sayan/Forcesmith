@@ -6,12 +6,15 @@
 #include <boost/math/special_functions/bessel.hpp>
 #include <boost/math/special_functions/spherical_harmonic.hpp>
 
+#include "potfit/force/descriptor_layout.hpp" // pair_ordinal
+
 #include <algorithm>
 #include <array>
 #include <cmath>
 #include <complex>
 #include <memory>
 #include <numbers>
+#include <optional>
 #include <vector>
 
 namespace potfit {
@@ -109,6 +112,55 @@ FORCE_INLINE double cutoff_fc(double r, double rc) {
   return 0.5 * (1.0 + std::cos(std::numbers::pi * r / rc));
 }
 
+// Canonical enumeration of the power-spectrum slots p^{αβ}_{n n' l} in flat
+// order, invoking fn(flat_index, sa, sb, n, n2, l). The single source of truth
+// for the descriptor layout — shared by power_spectrum() (which computes each
+// value) and descriptor_index_map() (which re-slots them on a re-rank), so the
+// two can never drift. Diagonal pairs (sa==sb) use n≤n'; off-diagonal use all
+// n,n'.
+template <class F>
+void for_each_ps_slot(int S, int nm, int lm, F &&fn) {
+  Eigen::Index idx = 0;
+  for (auto [sa, sb] : upper_triangle(S)) {
+    for (int n = 0; n < nm; ++n) {
+      const int n2start = (sa == sb) ? n : 0;
+      for (int n2 = n2start; n2 < nm; ++n2) {
+        for (int l = 0; l <= lm; ++l) {
+          fn(idx, static_cast<int>(sa), static_cast<int>(sb), n, n2, l);
+          ++idx;
+        }
+      }
+    }
+  }
+}
+
+// Power-spectrum descriptor length for an arbitrary species count (the same
+// formula as SoapModel::descriptor_size, but parameterized by S for re-rank).
+std::size_t ps_size(int S, int nm, int lm) {
+  const std::size_t s = static_cast<std::size_t>(S);
+  const std::size_t n = static_cast<std::size_t>(nm);
+  const std::size_t same = s * (n * (n + 1) / 2);  // α=β: n≤n'
+  const std::size_t cross = (s * (s - 1) / 2) * n * n; // α<β: all n,n'
+  return (static_cast<std::size_t>(lm) + 1) * (same + cross);
+}
+
+// First flat index of each species-pair block, indexed by pair_ordinal. Used by
+// the re-rank index map to translate a within-block offset between layouts.
+std::vector<Eigen::Index> ps_pair_bases(int S, int nm, int lm) {
+  std::vector<Eigen::Index> base(static_cast<std::size_t>(S) * (S + 1) / 2, -1);
+  for_each_ps_slot(S, nm, lm,
+                   [&](Eigen::Index idx, int sa, int sb, int, int, int) {
+                     const std::size_t po = pair_ordinal(
+                         static_cast<std::size_t>(sa),
+                         static_cast<std::size_t>(sb),
+                         static_cast<std::size_t>(S));
+                     if (base[po] < 0) {
+                       base[po] = idx;
+                     }
+                   });
+  return base;
+}
+
 } // namespace
 
 // Optional single-threaded precompute of the radial basis. get_descriptor
@@ -119,11 +171,7 @@ void SoapModel::init_radial_basis() {
 }
 
 std::size_t SoapModel::descriptor_size() const {
-  const std::size_t S = ntypes;
-  const std::size_t nm = static_cast<std::size_t>(n_max);
-  const std::size_t same = S * (nm * (nm + 1) / 2);      // α=β: n≤n'
-  const std::size_t cross = (S * (S - 1) / 2) * nm * nm; // α<β: all n,n'
-  return (static_cast<std::size_t>(l_max) + 1) * (same + cross);
+  return ps_size(static_cast<int>(ntypes), n_max, l_max);
 }
 
 // Orchestrator: lazily build the radial caches, then run the three steps
@@ -231,26 +279,19 @@ Eigen::VectorXd SoapModel::power_spectrum(const Eigen::VectorXcd &c,
   const int nm = n_max;
   const int lm = l_max;
 
-  // Power spectrum p^{αβ}_{n n' l}, flattened in a fixed order.
+  // Power spectrum p^{αβ}_{n n' l}, flattened in the canonical order (shared
+  // with descriptor_index_map via for_each_ps_slot).
   std::vector<double> vals;
   vals.reserve(descriptor_size());
 
-  for (auto [sa, sb] : upper_triangle(S)) {
-    for (int n = 0; n < nm; ++n) {
-      const int n2start = (sa == sb) ? n : 0;
-
-      for (int n2 = n2start; n2 < nm; ++n2) {
-        for (int l = 0; l <= lm; ++l) {
-          const Eigen::Index len = 2 * l + 1;
-
-          const auto acc = c.segment(coeff_index(sa, n, l, -l), len)
-                               .dot(c.segment(coeff_index(sb, n2, l, -l), len));
-
-          vals.push_back(wl[l] * acc.real());
-        }
-      }
-    }
-  }
+  for_each_ps_slot(S, nm, lm,
+                   [&](Eigen::Index, int sa, int sb, int n, int n2, int l) {
+                     const Eigen::Index len = 2 * l + 1;
+                     const auto acc =
+                         c.segment(coeff_index(sa, n, l, -l), len)
+                             .dot(c.segment(coeff_index(sb, n2, l, -l), len));
+                     vals.push_back(wl[l] * acc.real());
+                   });
   return Eigen::Map<Eigen::VectorXd>(vals.data(),
                                      static_cast<Eigen::Index>(vals.size()));
 }
@@ -412,6 +453,41 @@ void SoapModel::position_gradient(const Atom &a, const Eigen::VectorXcd &c,
     out.grad_neigh[jj] = dpc;
     out.grad_self -= dpc;
   }
+}
+
+std::vector<std::optional<Eigen::Index>>
+SoapModel::descriptor_index_map(const SpeciesRegistry &old_reg,
+                                const SpeciesRegistry &new_reg) const {
+  const int S_old = static_cast<int>(potfit::ntypes(old_reg));
+  const int S_new = static_cast<int>(potfit::ntypes(new_reg));
+  const int nm = n_max;
+  const int lm = l_max;
+  const auto old_of_new = old_slot_of_new(old_reg, new_reg);
+
+  // Block bases per layout: a within-block (n,n2,l) offset is identical between
+  // a retained pair and its old counterpart. Both registries are Z-sorted, so a
+  // canonical new pair (sa≤sb) maps to a canonical old pair (a_old≤c_old) and a
+  // diagonal pair stays diagonal — the block structure matches element-wise.
+  const auto new_base = ps_pair_bases(S_new, nm, lm);
+  const auto old_base = ps_pair_bases(S_old, nm, lm);
+
+  std::vector<std::optional<Eigen::Index>> map(ps_size(S_new, nm, lm));
+  for_each_ps_slot(
+      S_new, nm, lm, [&](Eigen::Index idx, int sa, int sb, int, int, int) {
+        const auto a_old = old_of_new[static_cast<std::size_t>(sa)];
+        const auto c_old = old_of_new[static_cast<std::size_t>(sb)];
+        if (!a_old || !c_old) {
+          return; // a brand-new pair: leave nullopt (zero-filled)
+        }
+        const std::size_t po_new = pair_ordinal(static_cast<std::size_t>(sa),
+                                                static_cast<std::size_t>(sb),
+                                                static_cast<std::size_t>(S_new));
+        const std::size_t po_old = pair_ordinal(*a_old, *c_old,
+                                                static_cast<std::size_t>(S_old));
+        const Eigen::Index off = idx - new_base[po_new];
+        map[static_cast<std::size_t>(idx)] = old_base[po_old] + off;
+      });
+  return map;
 }
 
 } // namespace potfit

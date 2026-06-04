@@ -3,9 +3,9 @@
 // Local Many-Body Tensor Representation (LMBTR) — a local per-atom ML
 // descriptor (DScribe's LMBTR). Around each central atom it builds:
 //   k2 (distance):  for every neighbour j, the geometry value r_ij is broadened
-//                   by a unit-area Gaussian onto a fixed distance grid, weighted
-//                   by w = exp(−r_ij / weight_scale), channelled per neighbour
-//                   species s∈[0,ntypes).
+//                   by a unit-area Gaussian onto a fixed distance grid,
+//                   weighted by w = exp(−r_ij / weight_scale), channelled per
+//                   neighbour species s∈[0,ntypes).
 //   k3 (cosine):    for every neighbour pair (j,k), the geometry value cosθ_ijk
 //                   is broadened onto a fixed cosine grid, weighted by
 //                   w = exp(−(r_ij+r_ik+r_jk) / weight_scale), channelled per
@@ -77,8 +77,15 @@ struct LMBTR : MLBase<LMBTR> {
     return static_cast<std::size_t>(layout().size());
   }
 
+  // Re-rank hook (see MLBase::remap): new-layout flat index → old-layout flat
+  // index (or nullopt for a block touching a newly-added species). Delegates to
+  // the generic remap_layout over this descriptor's block structure.
+  [[nodiscard]] std::vector<std::optional<Eigen::Index>>
+  descriptor_index_map(const SpeciesRegistry &old_reg,
+                       const SpeciesRegistry &new_reg) const;
+
 private:
-  // A valid neighbour after distance/species filtering (collect_neighbors).
+  // A valid neighbour after distance/species filtering (collect_neighbours).
   struct Neighbor {
     double r;
     Vec3 d;
@@ -91,9 +98,6 @@ private:
     return LmbtrLayout{ntypes, k2.transform(grid_n), k3.transform(grid_n)};
   }
 
-  // Pipeline steps (defined in lmbtr.cpp). Member functions because they read
-  // rcut/ntypes/weight_scale; they broaden in place into the shared values
-  // vector at the layout-assigned block offsets.
   [[nodiscard]] std::vector<Neighbor> collect_neighbors(const Atom &a) const;
   void accumulate_k2(Eigen::VectorXd &values, const std::vector<Neighbor> &nb,
                      const Grid &g, const LmbtrLayout &L) const;

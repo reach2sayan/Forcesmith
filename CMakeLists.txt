@@ -136,6 +136,7 @@ set(UNIT_TEST_SOURCES
         tests/unit/test_acsf.cpp
         tests/unit/test_lmbtr.cpp
         tests/unit/test_ml_fit.cpp
+        tests/unit/test_ml_rerank.cpp
         tests/unit/test_types.cpp
 )
 

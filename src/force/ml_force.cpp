@@ -74,4 +74,26 @@ std::vector<const Param *> LinearHead::field_ptrs() const {
   return f;
 }
 
+LinearHead
+LinearHead::remapped(const std::vector<std::optional<Eigen::Index>> &map) const {
+  LinearHead out;
+  out.bias = bias; // keep bias value + fixed flag
+  // New coeffs inherit the old coeffs' fixed flag; brand-new features stay 0.
+  const bool fixed = coeffs.empty() ? false : coeffs.front().fixed;
+  out.coeffs.assign(map.size(), Param{0.0, fixed});
+  for (auto [k, src] : map | std::views::enumerate) {
+    if (src) {
+      out.coeffs[static_cast<std::size_t>(k)] =
+          coeffs[static_cast<std::size_t>(*src)];
+    }
+  }
+  return out;
+}
+
+LinearHead LinearHead::zero_like(Eigen::Index n) const {
+  LinearHead out;
+  out.coeffs.assign(static_cast<std::size_t>(n), Param{0.0, false});
+  return out; // default bias{0.0, true}
+}
+
 } // namespace potfit
