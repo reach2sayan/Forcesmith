@@ -288,11 +288,11 @@ void write_native_lmbtr(const std::filesystem::path &path, const LMBTR &ml) {
   desc["rcut"] = ml.rcut;
   desc["weight_scale"] = ml.weight_scale;
   desc["normalize"] = ml.normalize_l2;
-  if (ml.use_k2) {
-    desc["k2"] = grid(ml.k2);
+  if (ml.k2) {
+    desc["k2"] = grid(*ml.k2);
   }
-  if (ml.use_k3) {
-    desc["k3"] = grid(ml.k3);
+  if (ml.k3) {
+    desc["k3"] = grid(*ml.k3);
   }
   j["descriptor"] = std::move(desc);
   j["heads"] = heads_to_json(ml.heads);

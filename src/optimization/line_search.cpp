@@ -8,11 +8,9 @@
 
 namespace potfit {
 
-namespace {
-
-std::pair<double, double>
-bracket_minimum(const std::function<double(double)> &g, double initial_step,
-                double max_step, int max_iter) {
+std::pair<double, double> detail::linmin_fn::bracket_minimum(
+    const std::function<double(double)> &g, double initial_step,
+    double max_step, int max_iter) {
   using std::numbers::phi;
 
   double a = 0.0;
@@ -41,11 +39,10 @@ bracket_minimum(const std::function<double(double)> &g, double initial_step,
   return {a, b};
 }
 
-} // namespace
-
-double linmin(Eigen::VectorXd &x, const Eigen::VectorXd &dir,
-              const std::function<Eigen::VectorXd(const Eigen::VectorXd &)> &F,
-              const LinSearchOptions &opts) {
+double detail::linmin_fn::operator()(
+    Eigen::VectorXd &x, const Eigen::VectorXd &dir,
+    const std::function<Eigen::VectorXd(const Eigen::VectorXd &)> &F,
+    const LinSearchOptions &opts) const {
   auto g = [&](double alpha) -> double {
     return 0.5 * F(x + alpha * dir).squaredNorm();
   };

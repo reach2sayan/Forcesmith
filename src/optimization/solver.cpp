@@ -1,5 +1,7 @@
 #include "potfit/optimization/solver.hpp"
 
+#include "potfit/optimization/line_search.hpp"
+
 #include <boost/math/optimization/differential_evolution.hpp>
 #include <Eigen/Cholesky>
 #include <unsupported/Eigen/NonLinearOptimization>
@@ -226,8 +228,8 @@ int LineSearchSolver::minimize(Eigen::VectorXd &x, ResidualFn f,
   }
   return 0;
 }
-void PowellDirectionSet::line_min(Eigen::VectorXd &x,
-                                  const Eigen::VectorXd &dir) const {
+void LineSearchSolver::PowellDirectionSet::line_min(
+    Eigen::VectorXd &x, const Eigen::VectorXd &dir) const {
   const double before = phi(x);
   const Eigen::VectorXd save = x;
   linmin(x, dir, f);
@@ -242,9 +244,9 @@ void PowellDirectionSet::line_min(Eigen::VectorXd &x,
   }
 }
 
-PowellDirectionSet::SweepResult
-PowellDirectionSet::sweep(Eigen::VectorXd &x,
-                          const std::vector<Eigen::VectorXd> &dirs) const {
+LineSearchSolver::PowellDirectionSet::SweepResult
+LineSearchSolver::PowellDirectionSet::sweep(
+    Eigen::VectorXd &x, const std::vector<Eigen::VectorXd> &dirs) const {
   SweepResult s;
   for (int i = 0; i < static_cast<int>(dirs.size()); ++i) {
     const double before = phi(x);
@@ -259,9 +261,9 @@ PowellDirectionSet::sweep(Eigen::VectorXd &x,
 }
 
 std::optional<Eigen::VectorXd>
-PowellDirectionSet::conjugate_direction(const Eigen::VectorXd &p0,
-                                        const Eigen::VectorXd &x, double fp,
-                                        double fret, double del) const {
+LineSearchSolver::PowellDirectionSet::conjugate_direction(
+    const Eigen::VectorXd &p0, const Eigen::VectorXd &x, double fp, double fret,
+    double del) const {
   const Eigen::VectorXd xi = x - p0;  // net direction moved this sweep
   const Eigen::VectorXd ptt = x + xi; // extrapolated point 2x − p0
   const double fptt = phi(ptt);

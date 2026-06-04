@@ -19,13 +19,55 @@
 // every family, so the model reports analytic gradients.
 
 #include "potfit/core/atom.hpp"
+#include "potfit/force/descriptor_layout.hpp"
 #include "potfit/force/force_calculator_concept.hpp"
 #include "potfit/force/ml_force.hpp"
 
 #include <cstddef>
+#include <utility>
 #include <vector>
 
 namespace potfit {
+
+// The five symmetry-function families, in descriptor-block order. Radial
+// families (G1-G3) channel over the neighbour species s; angular families
+// (G4-G5) channel over unordered species pairs. The underlying values double as
+// the block ids in AcsfLayout's DescriptorLayout (pushed in this order).
+enum class SymmetryFunctionFamily : std::size_t { G1, G2, G3, G4, G5 };
+
+// Flat layout of the ACSF descriptor vector — the contiguous blocks
+//   [G1 per species][G2 per species][G3 per species][G4 per pair][G5 per pair]
+// — built once from the family counts + ntypes. A thin wrapper over the shared
+// DescriptorLayout that keeps the radial/angular vocabulary; the single source
+// of truth for both descriptor_size() and the per-component indices, so
+// get_descriptor never hand-rolls offset arithmetic.
+struct AcsfLayout {
+  DescriptorLayout d_;
+
+  AcsfLayout(std::size_t S, std::size_t nG1, std::size_t nG2, std::size_t nG3,
+             std::size_t nG4, std::size_t nG5) {
+    const std::size_t P = S * (S + 1) / 2;
+    d_.add(nG1, S); // Family::G1
+    d_.add(nG2, S); // Family::G2
+    d_.add(nG3, S); // Family::G3
+    d_.add(nG4, P); // Family::G4
+    d_.add(nG5, P); // Family::G5
+  }
+
+  [[nodiscard]] Eigen::Index size() const { return d_.size(); }
+
+  // base + chan * count + t. radial() takes the per-species channel s; angular()
+  // takes the per-pair channel po; the two names document which channel space
+  // the caller is in.
+  [[nodiscard]] Eigen::Index radial(SymmetryFunctionFamily f, std::size_t s,
+                                    std::size_t t) const {
+    return d_.index(std::to_underlying(f), s, t);
+  }
+  [[nodiscard]] Eigen::Index angular(SymmetryFunctionFamily f, std::size_t po,
+                                     std::size_t t) const {
+    return d_.index(std::to_underlying(f), po, t);
+  }
+};
 
 struct ACSF : MLBase<ACSF> {
   struct G2 {
@@ -60,10 +102,32 @@ struct ACSF : MLBase<ACSF> {
     return use_analytic_grads;
   }
   [[nodiscard]] std::size_t descriptor_size() const {
-    const std::size_t S = ntypes;
-    const std::size_t P = S * (S + 1) / 2;
-    return S * (g1 + radial.size() + g3.size()) + P * (g4.size() + g5.size());
+    return static_cast<std::size_t>(
+        AcsfLayout{ntypes, g1, radial.size(), g3.size(), g4.size(), g5.size()}
+            .size());
   }
+
+private:
+  // A valid neighbour after distance/species filtering (collect_neighbors).
+  // `orig` is the index into atom.neighbors so the analytic gradients scatter
+  // into the full-length, neighbour-parallel grad_neigh array.
+  struct Neighbor {
+    std::size_t orig;
+    Vec3 d;    // bond vector r_j − r_i
+    Vec3 rhat; // d / r
+    double r;
+    double fc, fcp; // cosine cutoff value & derivative
+    std::size_t s;  // neighbour species
+  };
+
+  // Pipeline steps (defined in acsf.cpp). Member functions because they read
+  // rcut/ntypes and the per-family parameter vectors; they accumulate in place
+  // into the shared out.values/grad_self/grad_neigh.
+  [[nodiscard]] std::vector<Neighbor> collect_neighbors(const Atom &a) const;
+  void accumulate_radial(DescriptorValue &out, const std::vector<Neighbor> &nb,
+                         const AcsfLayout &L) const; // G1/G2/G3
+  void accumulate_angular(DescriptorValue &out, const std::vector<Neighbor> &nb,
+                          const AcsfLayout &L) const; // G4/G5
 };
 
 static_assert(ForceCalculatorModel<ACSF>);

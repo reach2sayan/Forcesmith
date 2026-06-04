@@ -24,6 +24,18 @@ template <std::integral I> constexpr auto upper_triangle(I n) {
          std::views::join;
 }
 
+// (ti, tj) pairs with 0 <= ti < tj < n — the strict (off-diagonal) upper
+// triangle, i.e. the distinct unordered index pairs. Replaces the nested
+// `for (j) for (k = j + 1)` idiom:
+//   for (auto [j, k] : strict_upper_triangle(n)) ...
+template <std::integral I> constexpr auto strict_upper_triangle(I n) {
+  return std::views::iota(I{0}, n) | std::views::transform([n](I ti) {
+           return std::views::iota(ti + 1, n) |
+                  std::views::transform([ti](I tj) { return std::pair{ti, tj}; });
+         }) |
+         std::views::join;
+}
+
 // Random-access iterator over the contiguous storage of TypeArray<T>.
 // boost::stl_interfaces::iterator_interface derives all iterator operations
 // from the three primitives: operator*, operator+=, and operator- via

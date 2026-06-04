@@ -8,6 +8,8 @@
 
 #include <cmath>
 #include <numbers>
+#include <utility>
+#include <vector>
 
 using namespace potfit;
 
@@ -50,6 +52,54 @@ TEST(Acsf, DescriptorSizeFormula) {
     const std::size_t P = S * (S + 1) / 2;
     const std::size_t expect = S * (1 + 2 + 1) + P * (2 + 1);
     EXPECT_EQ(m.descriptor_size(), expect) << "ntypes=" << S;
+  }
+}
+
+// AcsfLayout is the single source of truth for the descriptor's flat layout.
+// Lock its size, the per-component indices, and that the five family blocks tile
+// [0, size()) exactly — contiguous, no gaps, no overlap.
+TEST(Acsf, LayoutIndices) {
+  const std::size_t S = 2, nG1 = 1, nG2 = 2, nG3 = 0, nG4 = 1, nG5 = 1;
+  const std::size_t P = S * (S + 1) / 2; // 3
+  const AcsfLayout L{S, nG1, nG2, nG3, nG4, nG5};
+
+  // size == hand-computed total: S*(nG1+nG2+nG3) + P*(nG4+nG5).
+  EXPECT_EQ(L.size(), static_cast<Eigen::Index>(S * (nG1 + nG2 + nG3) +
+                                                P * (nG4 + nG5)));
+
+  // Spot-check a few indices against base + chan*count + t.
+  EXPECT_EQ(L.radial(SymmetryFunctionFamily::G1, 0, 0), 0); // first slot
+  EXPECT_EQ(L.radial(SymmetryFunctionFamily::G2, 1, 1), 5); // base 2 + 1*2 + 1
+  EXPECT_EQ(L.angular(SymmetryFunctionFamily::G4, 2, 0), 8); // base 6 + 2*1 + 0
+  EXPECT_EQ(L.angular(SymmetryFunctionFamily::G5, 0, 0), 9); // base 9 + 0 + 0
+
+  // Every (family, channel, t) maps to a distinct index covering [0, size()).
+  std::vector<int> hits(static_cast<std::size_t>(L.size()), 0);
+  auto stamp = [&](Eigen::Index i) {
+    ASSERT_GE(i, 0);
+    ASSERT_LT(i, L.size());
+    ++hits[static_cast<std::size_t>(i)];
+  };
+  const std::pair<SymmetryFunctionFamily, std::size_t> radial[] = {
+      {SymmetryFunctionFamily::G1, nG1}, {SymmetryFunctionFamily::G2, nG2}, {SymmetryFunctionFamily::G3, nG3}};
+  for (auto [f, n] : radial) {
+    for (std::size_t s = 0; s < S; ++s) {
+      for (std::size_t t = 0; t < n; ++t) {
+        stamp(L.radial(f, s, t));
+      }
+    }
+  }
+  const std::pair<SymmetryFunctionFamily, std::size_t> angular[] = {{SymmetryFunctionFamily::G4, nG4},
+                                                    {SymmetryFunctionFamily::G5, nG5}};
+  for (auto [f, n] : angular) {
+    for (std::size_t po = 0; po < P; ++po) {
+      for (std::size_t t = 0; t < n; ++t) {
+        stamp(L.angular(f, po, t));
+      }
+    }
+  }
+  for (Eigen::Index i = 0; i < L.size(); ++i) {
+    EXPECT_EQ(hits[static_cast<std::size_t>(i)], 1) << "index " << i;
   }
 }
 

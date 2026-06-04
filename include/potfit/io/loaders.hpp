@@ -1,10 +1,5 @@
 #pragma once
 
-// Thin file-driven front-ends for the PotFit API. These are the only
-// difference between "the user builds a fit by hand" and "the CLI loads files":
-// they parse individual objects and push them through the very same public
-// PotFit methods. No privileged bulk path.
-
 #include "potfit/api/potfit.hpp"
 
 #include <boost/leaf/result.hpp>

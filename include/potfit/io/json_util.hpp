@@ -1,9 +1,5 @@
 #pragma once
 
-// Combinator that lifts a throwing nlohmann::json call into a leaf::result,
-// replacing the repeated `try { parse } catch (parse_error)` + `try { body }
-// catch (json::exception)` idiom used across the io readers.
-
 #include "potfit/io/config_reader.hpp" // for io::ParseError
 
 #include <boost/leaf/result.hpp>
@@ -22,11 +18,6 @@ template <class T> struct as_result<boost::leaf::result<T>> {
 };
 } // namespace detail
 
-// Run `f`; translate any nlohmann json exception (parse_error derives from
-// json::exception) into a ParseError leaf error. Flattens: if f() already
-// returns leaf::result<T>, that type is returned unchanged; otherwise the plain
-// T is wrapped. BOOST_LEAF_AUTO inside the callable therefore preserves its
-// early-error semantics.
 template <class F>
 [[nodiscard]] auto catch_json(F &&f) ->
     typename detail::as_result<std::invoke_result_t<F &&>>::type {

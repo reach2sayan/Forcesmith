@@ -28,6 +28,6 @@ struct IpoptSolver {
                int n_vals) const;
 };
 
-static_assert(SolverImpl<IpoptSolver>);
+static_assert(CSolver<IpoptSolver>);
 
 } // namespace potfit

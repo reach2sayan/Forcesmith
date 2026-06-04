@@ -9,10 +9,10 @@
 #include "potfit/force/potential_table.hpp"
 #include "potfit/force/stiweb_force.hpp"
 #include "potfit/force/tersoff_force.hpp"
-#include "potfit/io/config_reader.hpp" // ParseError
-#include "potfit/potentials/soap.hpp"
+#include "potfit/io/config_reader.hpp"
 #include "potfit/potentials/acsf.hpp"
 #include "potfit/potentials/lmbtr.hpp"
+#include "potfit/potentials/soap.hpp"
 
 #include <boost/leaf/result.hpp>
 
@@ -27,7 +27,7 @@ namespace potfit::detail {
 
 namespace leaf = boost::leaf;
 
-[[nodiscard]] inline leaf::error_id err(std::string msg) {
+[[nodiscard]] FORCE_INLINE leaf::error_id err(std::string msg) {
   return leaf::new_error(io::ParseError{std::move(msg), 0});
 }
 
@@ -161,7 +161,7 @@ inline constexpr char kGlobalsRerankError[] =
 template <class Calc> struct PotentialType; // primary left undefined
 
 template <> struct PotentialType<PairForceCalculator> {
-  static bool applies(const SpecRef &) {
+  static constexpr bool applies(const SpecRef &) {
     return true;
   } // unconditional fallback
 
@@ -337,8 +337,8 @@ template <> struct PotentialType<ACSF> {
     return err("ML models cannot be materialized from the spec maps; load them "
                "from a model file");
   }
-  static leaf::result<void> decompose(const ACSF &,
-                                      const SpeciesRegistry &, SpecRef &) {
+  static leaf::result<void> decompose(const ACSF &, const SpeciesRegistry &,
+                                      SpecRef &) {
     return err("ML models cannot be decomposed for re-ranking; load from a "
                "model file with the final element ordering");
   }
@@ -350,8 +350,8 @@ template <> struct PotentialType<SoapModel> {
     return err("ML models cannot be materialized from the spec maps; load them "
                "from a model file");
   }
-  static leaf::result<void> decompose(const SoapModel &, const SpeciesRegistry &,
-                                      SpecRef &) {
+  static leaf::result<void> decompose(const SoapModel &,
+                                      const SpeciesRegistry &, SpecRef &) {
     return err("ML models cannot be decomposed for re-ranking; load from a "
                "model file with the final element ordering");
   }

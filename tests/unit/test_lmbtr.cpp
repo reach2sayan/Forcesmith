@@ -8,6 +8,7 @@
 #include <Eigen/Geometry>
 
 #include <cmath>
+#include <optional>
 
 using namespace potfit;
 
@@ -31,8 +32,8 @@ LMBTR make_base() {
   m.ntypes = 1;
   m.rcut = 6.0;
   m.weight_scale = 3.0;
-  m.k2 = {0.0, 6.0, 6, 0.4};
-  m.k3 = {-1.0, 1.0, 6, 0.2};
+  m.k2 = LMBTR::Grid{0.0, 6.0, 6, 0.4};
+  m.k3 = LMBTR::Grid{-1.0, 1.0, 6, 0.2};
   return m;
 }
 
@@ -53,16 +54,42 @@ LMBTR with_linear_head(LMBTR m) {
 
 TEST(Lmbtr, DescriptorSizeFormula) {
   LMBTR m = make_base();
+  const LMBTR::Grid g2{0.0, 6.0, 6, 0.4};
+  const LMBTR::Grid g3{-1.0, 1.0, 6, 0.2};
   for (std::size_t S : {1u, 2u}) {
     m.ntypes = S;
     const std::size_t P = S * (S + 1) / 2;
-    m.use_k2 = true; m.use_k3 = true;
+    m.k2 = g2; m.k3 = g3;
     EXPECT_EQ(m.descriptor_size(), S * 6 + P * 6);
-    m.use_k2 = true; m.use_k3 = false;
+    m.k2 = g2; m.k3 = std::nullopt;
     EXPECT_EQ(m.descriptor_size(), S * 6);
-    m.use_k2 = false; m.use_k3 = true;
+    m.k2 = std::nullopt; m.k3 = g3;
     EXPECT_EQ(m.descriptor_size(), P * 6);
   }
+}
+
+// With k2 disabled, the k3 block moves to base 0. Its values must be unchanged
+// — i.e. equal to the k3 tail of the both-terms descriptor — which exercises the
+// layout's block-shift when an optional term is absent.
+TEST(Lmbtr, K3OnlyMatchesTail) {
+  LMBTR both = make_base();
+  both.normalize_l2 = false;
+  auto cfg = make_env();
+  build_neighbor_list(cfg, both.rcut);
+  const Eigen::VectorXd v_both = both.get_descriptor(cfg.atoms[0]).values;
+
+  const std::size_t S = both.ntypes;
+  const std::size_t n2 = static_cast<std::size_t>(both.k2->n);
+  const Eigen::Index k3_base = static_cast<Eigen::Index>(S * n2);
+  const Eigen::Index k3_len = v_both.size() - k3_base;
+
+  LMBTR k3only = both;
+  k3only.k2 = std::nullopt;
+  const Eigen::VectorXd v_k3 = k3only.get_descriptor(cfg.atoms[0]).values;
+
+  ASSERT_EQ(v_k3.size(), k3_len);
+  EXPECT_NEAR((v_k3 - v_both.tail(k3_len)).norm(), 0.0, 1e-14);
+  EXPECT_GT(v_k3.norm(), 1e-6); // non-trivial
 }
 
 TEST(Lmbtr, L2Normalized) {
@@ -180,6 +207,8 @@ TEST(Lmbtr, ReaderRoundTrip) {
 
   const auto &lm = std::get<LMBTR>(*r);
   EXPECT_EQ(lm.descriptor_size(), 16u); // 8 (k2) + 8 (k3), ntypes=1
-  EXPECT_EQ(lm.k2.n, 8);
-  EXPECT_EQ(lm.k3.n, 8);
+  ASSERT_TRUE(lm.k2.has_value());
+  ASSERT_TRUE(lm.k3.has_value());
+  EXPECT_EQ(lm.k2->n, 8);
+  EXPECT_EQ(lm.k3->n, 8);
 }

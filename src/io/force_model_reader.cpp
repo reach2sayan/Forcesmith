@@ -6,6 +6,7 @@
 #include <boost/leaf/error.hpp>
 #include <nlohmann/json.hpp>
 
+#include <optional>
 #include <string>
 #include <unordered_map>
 #include <utility>
@@ -551,14 +552,19 @@ leaf::result<ForceCalculator> build_ml(json &j, std::size_t ntypes) {
       }
       return def;
     };
+    const LMBTR::Grid def_k2{0.0, calc.rcut, 50, 0.3};
+    const LMBTR::Grid def_k3{-1.0, 1.0, 50, 0.1};
     // A k-term is active when its JSON object is present (default both on if
     // neither is given), so an empty descriptor never slips through.
     if (desc.contains("k2") || desc.contains("k3")) {
-      calc.use_k2 = desc.contains("k2");
-      calc.use_k3 = desc.contains("k3");
+      calc.k2 = desc.contains("k2") ? std::optional(read_grid("k2", def_k2))
+                                     : std::nullopt;
+      calc.k3 = desc.contains("k3") ? std::optional(read_grid("k3", def_k3))
+                                     : std::nullopt;
+    } else {
+      calc.k2 = read_grid("k2", def_k2);
+      calc.k3 = read_grid("k3", def_k3);
     }
-    calc.k2 = read_grid("k2", LMBTR::Grid{0.0, calc.rcut, 50, 0.3});
-    calc.k3 = read_grid("k3", LMBTR::Grid{-1.0, 1.0, 50, 0.1});
     if (calc.descriptor_size() == 0) {
       return fail("ml", "lmbtr descriptor needs k2 and/or k3 with n > 0");
     }

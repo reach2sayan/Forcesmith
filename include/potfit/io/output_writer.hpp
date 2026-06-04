@@ -1,7 +1,5 @@
 #pragma once
 
-// Step 12: LAMMPS / IMD / native output writers.
-
 #include "potfit/core/potential_base.hpp"
 #include "potfit/force/adp_force.hpp"
 #include "potfit/force/angular_force.hpp"
@@ -17,9 +15,6 @@
 
 namespace potfit::io {
 
-// Sample each potential on a uniform grid and write JSON tabulated format.
-// Works correctly for both SplinePotential and analytic types (LJ, Morse,
-// etc.).
 static constexpr int kDefaultKnots = 500;
 void write_lammps(const std::filesystem::path &path,
                   const std::vector<Potential> &potentials);
@@ -31,8 +26,8 @@ void write_native(const std::filesystem::path &path,
                   const std::vector<Potential> &potentials,
                   int nknots = kDefaultKnots);
 
-// Write a fitted EAM model as structured tabulated JSON, mirroring the input
-// envelope: {model:"eam", ntypes, pair, density, embedding} where each section
+// Write a fitted EAM model as structured tabulated JSON
+// {model:"eam", ntypes, pair, density, embedding} where each section
 // is {format:"tabulated", potentials:[{rmin,rmax,knots}]}.
 void write_native_eam(const std::filesystem::path &path,
                       const EAMForceCalculator &eam,
@@ -72,10 +67,12 @@ void write_native_ml(const std::filesystem::path &path, const ACSF &ml);
 // using the head's generic serialization surface so any head round-trips.
 //   {model:"ml", ntypes, descriptor:{type:"soap", n_max,l_max,rcut,sigma},
 //    heads:[{type, …}]}
-void write_native_soap(const std::filesystem::path &path, const SoapModel &soap);
+void write_native_soap(const std::filesystem::path &path,
+                       const SoapModel &soap);
 
 // LMBTR ML model: descriptor hyperparameters (k2/k3 grids, weighting) + heads.
-//   {model:"ml", ntypes, descriptor:{type:"lmbtr", rcut, weight_scale, normalize,
+//   {model:"ml", ntypes, descriptor:{type:"lmbtr", rcut, weight_scale,
+//   normalize,
 //    k2:{min,max,n,sigma}, k3:{min,max,n,sigma}}, heads:[{type, …}]}
 void write_native_lmbtr(const std::filesystem::path &path, const LMBTR &ml);
 
