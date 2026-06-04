@@ -56,6 +56,12 @@ private:
   // running counter.
   std::vector<int> row_offset_;
   mutable std::uint64_t iter_ = 0;
+  // Most recent residual vector from operator(), and the gradient norm ‖Jᵀf‖
+  // computed from it in df(). operator() emits on_iteration before df() runs for
+  // the same x, so the logged |grad| reflects the *previous* linearisation —
+  // a one-iteration lag that is fine for a progress log.
+  mutable Eigen::VectorXd last_fvec_;
+  mutable double grad_norm_ = 0.0;
 };
 
 } // namespace potfit

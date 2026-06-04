@@ -106,6 +106,24 @@ add_library(boost_math INTERFACE)
 target_include_directories(boost_math SYSTEM INTERFACE "${boost_math_SOURCE_DIR}/include")
 target_link_libraries(boost_math INTERFACE Boost::boost)
 
+# spdlog — header-only logging (https://github.com/gabime/spdlog). Header-only
+# mode (no SPDLOG_COMPILED_LIB): we only add its include dir, like boost_parser,
+# so its bundled fmt is confined to the TUs that include spdlog (just logging.cpp).
+FetchContent_Declare(spdlog
+        GIT_REPOSITORY https://github.com/gabime/spdlog.git
+        GIT_TAG v1.14.1
+        GIT_SHALLOW TRUE
+)
+FetchContent_GetProperties(spdlog)
+if (NOT spdlog_POPULATED)
+    if (POLICY CMP0169)
+        cmake_policy(SET CMP0169 OLD)
+    endif ()
+    FetchContent_Populate(spdlog)
+endif ()
+add_library(spdlog INTERFACE)
+target_include_directories(spdlog SYSTEM INTERFACE "${spdlog_SOURCE_DIR}/include")
+
 # IPOPT + MUMPS built from source into the build tree (no system install needed).
 # Defines the INTERFACE IMPORTED target IPOPT::ipopt and the ExternalProject
 # target IpoptProject (depended on by potfit_engine so the libs exist before link).

@@ -255,8 +255,9 @@ int PotfitFunctor::operator()(const Eigen::VectorXd &x,
     eval_into(configs_, model_, x, fvec, energy_weight_, stress_weight_,
               smooth_weight_, row_offset_, smooth_count_);
   });
+  last_fvec_ = fvec; // consumed by df() to form the gradient norm
   events::on_iteration(
-      events::IterationStats{++iter_, fvec.squaredNorm(), 0.0});
+      events::IterationStats{++iter_, fvec.squaredNorm(), grad_norm_});
   return 0;
 }
 
@@ -291,24 +292,29 @@ bool PotfitFunctor::df_cached(const Eigen::VectorXd &x,
 int PotfitFunctor::df(const Eigen::VectorXd &x, Eigen::MatrixXd &fjac) const {
   // Cache-backed models get the fast parallel-column path; everyone else uses
   // the serial central-difference fallback below.
-  if (df_cached(x, fjac)) {
-    return 0;
+  if (!df_cached(x, fjac)) {
+    constexpr double delta = 1e-5;
+    Eigen::VectorXd fp(values_), fm(values_), xp = x;
+    shared_arena().execute([&] {
+      for (int j = 0; j < inputs_; ++j) {
+        xp[j] += delta;
+        eval_into(configs_, model_, xp, fp, energy_weight_, stress_weight_,
+                  smooth_weight_, row_offset_, smooth_count_);
+        xp[j] -= 2.0 * delta;
+        eval_into(configs_, model_, xp, fm, energy_weight_, stress_weight_,
+                  smooth_weight_, row_offset_, smooth_count_);
+        xp[j] += delta;
+        fjac.col(j) = (fp - fm) / (2.0 * delta);
+      }
+    });
   }
 
-  constexpr double delta = 1e-5;
-  Eigen::VectorXd fp(values_), fm(values_), xp = x;
-  shared_arena().execute([&] {
-    for (int j = 0; j < inputs_; ++j) {
-      xp[j] += delta;
-      eval_into(configs_, model_, xp, fp, energy_weight_, stress_weight_,
-                smooth_weight_, row_offset_, smooth_count_);
-      xp[j] -= 2.0 * delta;
-      eval_into(configs_, model_, xp, fm, energy_weight_, stress_weight_,
-                smooth_weight_, row_offset_, smooth_count_);
-      xp[j] += delta;
-      fjac.col(j) = (fp - fm) / (2.0 * delta);
-    }
-  });
+  // Gradient of the least-squares objective ½‖f‖² is g = Jᵀf; cache ‖g‖ for the
+  // iteration log. last_fvec_ is f(x) from the operator() call that precedes
+  // this df(x) at the same point; the size guard skips the very first df().
+  if (last_fvec_.size() == fjac.rows()) {
+    grad_norm_ = (fjac.transpose() * last_fvec_).norm();
+  }
   return 0;
 }
 

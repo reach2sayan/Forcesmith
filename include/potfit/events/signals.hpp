@@ -14,7 +14,7 @@ namespace potfit::events {
 struct IterationStats {
   std::uint64_t iteration = 0;
   double objective = 0.0;
-  double grad_norm = 0.0;
+  double grad_norm = 0.0; // ‖Jᵀf‖; lags one residual eval (see PotfitFunctor)
 };
 
 struct ForceEvalStats {

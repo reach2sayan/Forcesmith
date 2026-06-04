@@ -7,6 +7,7 @@
 #include "potfit/force/force_calculator.hpp"
 #include "potfit/io/config_reader.hpp"
 #include "potfit/io/loaders.hpp"
+#include "potfit/io/logging.hpp"
 #include "potfit/optimization/ipopt_solver.hpp"
 #include "potfit/optimization/solver.hpp"
 
@@ -60,10 +61,8 @@ std::optional<potfit::Solver> build_solver(const CliOptions &o) {
 int run(const CliOptions &o) {
 
   int ret = 0;
-  auto iter_conn = potfit::events::on_iteration.connect(
-      [](const potfit::events::IterationStats &s) {
-        std::cout << "iter " << s.iteration << "  obj=" << s.objective << "\n";
-      });
+  potfit::log::init();
+  auto log_sinks = potfit::log::connect_signals(); // kept alive for the run
 
   auto checkpoint_error_fn = [&](const potfit::CheckpointError &e) {
     std::cerr << "checkpoint error: " << e.message << "\n";

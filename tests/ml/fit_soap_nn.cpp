@@ -15,6 +15,7 @@
 #include "potfit/api/potfit.hpp"
 #include "potfit/force/force_calculator.hpp"
 #include "potfit/io/config_reader.hpp" // io::ParseError
+#include "potfit/io/logging.hpp"
 #include "potfit/optimization/ipopt_solver.hpp"
 #include "potfit/optimization/solver.hpp"
 #include "potfit/potentials/soap.hpp"
@@ -382,6 +383,13 @@ int main(int argc, char *argv[]) {
   }
 
   std::cerr << "... fitting " << a.element << " (SOAP+NN)\n";
+
+  // Per-iteration logging to console + a per-element rotating file. The element
+  // is baked into the filename so parallel per-element runs don't clobber each
+  // other's log. The guards must outlive fit_element()'s optimize() call.
+  potfit::log::init("ml_fit_" + a.element + ".log");
+  auto log_sinks = potfit::log::connect_signals();
+
   int ret = 0;
   leaf::try_handle_all(
       [&]() -> leaf::result<void> {

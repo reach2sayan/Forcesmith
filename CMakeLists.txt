@@ -38,6 +38,7 @@ set(POTFIT_ENGINE_SOURCES
         src/force/smoothness.cpp
         src/io/config_reader.cpp
         src/io/force_model_reader.cpp
+        src/io/logging.cpp
         src/io/output_writer.cpp
         src/io/potential_reader.cpp
         src/io/write_model.cpp
@@ -61,7 +62,9 @@ target_link_libraries(potfit_engine PUBLIC
         TBB::tbb
         IPOPT::ipopt
 )
-target_link_libraries(potfit_engine PRIVATE potfit_warnings)
+# spdlog is only included by src/io/logging.cpp (the public header is
+# spdlog-free), so keep its include path off the engine's public interface.
+target_link_libraries(potfit_engine PRIVATE potfit_warnings spdlog)
 # Ipopt+MUMPS are built by the IpoptProject ExternalProject; ensure they exist
 # before the engine compiles/links the TU that includes the Ipopt headers.
 add_dependencies(potfit_engine IpoptProject)
