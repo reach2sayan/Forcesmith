@@ -8,7 +8,7 @@
 // the descriptor gradients dD_i/dr.
 //
 // Layering (mirrors the rest of the force layer):
-//   * MLBaseImpl<Derived> is a CRTP ForceCalculator base. Its eval_forces is
+//   * MLBase<Derived> is a CRTP ForceCalculator base. Its eval_forces is
 //     descriptor-agnostic: it calls the concrete model's get_descriptor hook,
 //     feeds the descriptor to the head, and assembles energy/forces/stress.
 //   * Derived (e.g. ACSF) supplies the descriptor:
@@ -56,7 +56,7 @@ using DescriptorGrad = Eigen::Matrix<double, Eigen::Dynamic, 3>;
 //   grad_neigh — dD_i/dr_j per neighbor jj, parallel to atom.neighbors (each
 //   S×3)
 // grad_self/grad_neigh are only consumed when has_grad is true; a model that
-// reports analytic_grads()==false may leave them empty and let MLBaseImpl
+// reports analytic_grads()==false may leave them empty and let MLBase
 // finite-difference the forces instead.
 struct DescriptorValue {
   Eigen::VectorXd values;

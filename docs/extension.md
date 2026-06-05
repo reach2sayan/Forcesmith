@@ -1,17 +1,19 @@
 # Extending Forcesmith
 
-Forcesmith has two polymorphic surfaces a user is expected to extend: **potentials**
-(the radial functions being fitted) and **solvers** (the optimisation
-algorithms). Both are implemented as Sean-Parent-style **value-semantic type
+Forcesmith has three polymorphic surfaces a user is expected to extend:
+**potentials** (the radial functions being fitted), **solvers** (the
+optimisation algorithms), and **energy heads** (the descriptor → energy map of an
+ML model). All three are implemented as Sean-Parent-style **value-semantic type
 erasure** — there is no virtual hierarchy to inherit from and no enum to edit.
 You write a plain struct that satisfies a small compile-time contract, then hand
 an instance to the API.
 
 A consequence worth stating up front: the **CLI menus are intentionally fixed**.
-`--algorithm` offers `lm | powell | de | ls`, and a model file selects analytic
-potentials by `"type"` name from a registry. These menus are *not* the extension
-mechanism. A brand-new potential or solver is supplied **programmatically**,
-through `forcesmith::Forcesmith`, without recompiling the engine or widening any menu.
+`--algorithm` offers `lm | powell | de | ls | ipopt`, and a model file selects
+analytic potentials by `"type"` name from a registry. These menus are *not* the
+extension mechanism. A brand-new potential, solver, or head is supplied
+**programmatically**, through `forcesmith::Forcesmith`, without recompiling the
+engine or widening any menu.
 
 ---
 
@@ -151,8 +153,8 @@ static_assert(forcesmith::SolverImpl<MyGradientDescent>);
 ```
 
 The built-in solvers (`EigenLMSolver`, `EigenHybridSolver`, `BoostDESolver`,
-`LineSearchSolver`) are good references for handling the empty-Jacobian case and
-for carrying their own tuning fields.
+`LineSearchSolver`, `IpoptSolver`) are good references for handling the
+empty-Jacobian case and for carrying their own tuning fields.
 
 ### Using it — API injection (the only path needed)
 
@@ -167,7 +169,65 @@ If no solver is set, `optimize()` falls back to the default Levenberg–Marquard
 (`make_default_solver`). A client solver **does not** go on the CLI: the
 `--algorithm` menu is fixed by design, and custom algorithms are supplied
 programmatically. (The CLI's `build_solver` in `src/cli/app.cpp` only maps the
-four built-in names; there is no need to touch it for a library extension.)
+five built-in names; there is no need to touch it for a library extension.)
+
+---
+
+## Adding a new ML energy head
+
+An ML model (the `ml` family) is a per-atom **descriptor** (ACSF, SOAP, LMBTR)
+feeding an **energy head** that maps the descriptor vector D to an atomic energy.
+The head is the customisation surface — the type-erased `EnergyHead`
+(`include/forcesmith/force/ml_force.hpp`). The shipped head is `LinearHead`
+(E = c·D + bias); a non-linear head is a new struct, not an engine edit.
+
+### The contract
+
+A head supplies the maths and its fittable slots; everything else is generated.
+The minimum a concrete head provides:
+
+```cpp
+double          energy(const Eigen::VectorXd& D) const;   // E_i(D)
+Eigen::VectorXd grad(const Eigen::VectorXd& D) const;      // dE/dD
+std::vector<Param*>       field_ptrs();                    // fittable slots
+std::vector<const Param*> field_ptrs() const;
+std::string      type_tag() const;                        // serialised tag
+std::vector<int> architecture() const;                    // shape, for I/O
+```
+
+Derive from the `HeadParams<Derived>` CRTP mixin
+(`include/forcesmith/force/ml_force.hpp`) and it synthesises
+`param_count` / `gather_params` / `scatter_params` / `gather_bounds` and
+(de)serialisation from your `field_ptrs()` — the same free-vs-`fixed` convention
+as potentials. `Param` carries `{value, fixed, min, max}`.
+
+A head may optionally expose an **analytic parameter-Jacobian** so the fit avoids
+finite-differencing the head:
+
+```cpp
+bool            has_param_jacobian() const;               // false ⇒ FD fallback
+Eigen::VectorXd param_grad(const Eigen::VectorXd& D) const;     // dE/dθ
+Eigen::MatrixXd dgrad_dparam(const Eigen::VectorXd& D) const;   // d(dE/dD)/dθ
+```
+
+For multi-element re-ranking, a head also implements `remapped(map)` (re-index its
+coefficients to a new descriptor layout) and `zero_like(n)` (a fresh zero head of
+`n` features for a newly-added element). `LinearHead` is the worked reference for
+all of the above.
+
+### Using it — API injection
+
+Heads are attached to the ML model in memory, then seeded as the force model:
+
+```cpp
+Model m = /* descriptor (ACSF/SOAP/LMBTR), ntypes 1 */;
+m.heads.emplace_back(forcesmith::EnergyHead{MyHead{/* sized to */ m.descriptor_size()}});
+```
+
+Descriptors themselves (ACSF, SOAP, LMBTR) follow the project's `MLBase<Derived>`
+CRTP pattern; adding a brand-new descriptor is the heavier change and is the
+exception to the "purely additive, client-side" rule, since the descriptor layout
+and its gradient feed the force engine directly.
 
 ---
 

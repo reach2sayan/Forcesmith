@@ -1,7 +1,7 @@
 #pragma once
 
 // Behler-style atom-centered symmetry functions (ACSF) — a local per-atom ML
-// descriptor that feeds the MLBaseImpl pipeline.
+// descriptor that feeds the MLBase pipeline.
 //
 // Families (DScribe ACSF conventions), all using the cosine cutoff
 //   f_c(r) = ½(1 + cos(π r / rcut)) for r < rcut, else 0:
