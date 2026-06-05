@@ -22,27 +22,30 @@ namespace {
 // Potential, reproducing the generic helpers exactly.
 FORCE_INLINE double eval_gated(const SplinePotential *sp, const Potential &p,
                                SiteId site, double r) {
-  if (site.cacheable())
+  if (site.cacheable()) {
     return sp ? sp->eval_at(site.index()) : p.eval_at(site);
+  }
   return in_range(p, r) ? p.eval(r) : 0.0;
 }
 FORCE_INLINE double deriv_gated(const SplinePotential *sp, const Potential &p,
                                 SiteId site, double r) {
-  if (site.cacheable())
+  if (site.cacheable()) {
     return sp ? sp->deriv_at(site.index()) : p.deriv_at(site);
+  }
   return in_range(p, r) ? p.deriv(r) : 0.0;
 }
 FORCE_INLINE std::pair<double, double>
 eval_deriv_gated(const SplinePotential *sp, const Potential &p, SiteId site,
                  double r) {
-  if (site.cacheable())
+  if (site.cacheable()) {
     return sp ? sp->eval_and_deriv_at(site.index()) : p.eval_and_deriv_at(site);
+  }
   return in_range(p, r) ? p.eval_and_deriv(r) : std::pair{0.0, 0.0};
 }
 } // namespace
 
 // Count the free globals (each is exactly one optimizer slot when not fixed).
-static std::size_t free_globals(const std::vector<GlobalParam> &globals) {
+static FORCE_INLINE std::size_t free_globals(const std::vector<GlobalParam> &globals) {
   return std::ranges::count_if(globals,
                                [](const auto &g) { return !g.value.fixed; });
 }
@@ -62,8 +65,6 @@ void EAMForceCalculator::gather_params(Eigen::VectorXd &dst,
   gather_range(pair, dst, off);
   gather_range(density, dst, off);
   gather_range(embedding, dst, off);
-  // Globals follow the per-potential params; their linked slots are fixed and
-  // therefore already excluded above.
   std::ranges::for_each(globals, [&](const auto &g) {
     if (!g.value.fixed) {
       dst[off++] = g.value.value;
