@@ -4,7 +4,7 @@ Per-element EAM fitting driver for the converted UNEP DFT dataset.
 
 For every requested element this runs a **two-stage, forces-first** fit
 against ``data/unep/<el>_dft_unep.json`` (real DFT forces/energies/stresses
-from UNEP-v1, Zenodo 11533864) using the existing ``build/release/potfit``
+from UNEP-v1, Zenodo 11533864) using the existing ``build/release/forcesmith``
 binary, and reports per-atom force RMSE before and after the fit.
 
 Pipeline (per element):
@@ -19,7 +19,7 @@ Pipeline (per element):
      ``--knots`` free knots ("analytic seeds tabulated").
   5. Stage-2 fit with ``--smooth-weight`` regularizing the free splines.
   6. Force RMSE at three checkpoints (start / stage-1 / final) via
-     ``potfit --evaluate``.
+     ``forcesmith --evaluate``.
 
 Caveats (see README.md):
   * Forces-first by design. UNEP energies carry an arbitrary per-atom zero an
@@ -33,7 +33,7 @@ Usage:
     python3 tests/unep/fit_eam.py --elements Cu Al
     python3 tests/unep/fit_eam.py --elements Cu --max-configs 40 --maxiter 60
 
-Requirements: numpy (Python 3). Reuses build/release/potfit; never runs cmake.
+Requirements: numpy (Python 3). Reuses build/release/forcesmith; never runs cmake.
 """
 
 import argparse
@@ -166,13 +166,13 @@ def tabulated_start_from_dense(dense, knots):
     return out
 
 
-# ── potfit invocation ─────────────────────────────────────────────────────────
+# ── forcesmith invocation ─────────────────────────────────────────────────────────
 
-def run_potfit(potfit, config, start, *, endpot=None, evaluate=None,
+def run_forcesmith(forcesmith, config, start, *, endpot=None, evaluate=None,
                eweight=0.1, stress_weight=0.0, smooth_weight=0.0,
                maxiter=300, algorithm="lm"):
-    """Invoke the potfit binary; returns (ok, stdout+stderr)."""
-    cmd = [str(potfit), "-c", str(config), "-s", str(start),
+    """Invoke the forcesmith binary; returns (ok, stdout+stderr)."""
+    cmd = [str(forcesmith), "-c", str(config), "-s", str(start),
            "--eweight", str(eweight), "--stress-weight", str(stress_weight),
            "--maxiter", str(maxiter), "-a", algorithm]
     if evaluate is not None:
@@ -183,16 +183,16 @@ def run_potfit(potfit, config, start, *, endpot=None, evaluate=None,
     return proc.returncode == 0, proc.stdout + proc.stderr
 
 
-def eval_rmse(potfit, config, start):
+def eval_rmse(forcesmith, config, start):
     """Run --evaluate and return (force_rmse, stress_rmse, log).
 
     Force RMSE is per-atom force component (eV/Å); stress RMSE is over the six
     stress components (eV/Å³, now matching the reference units). Either RMSE is
-    None if unavailable; both None on a potfit failure.
+    None if unavailable; both None on a forcesmith failure.
     """
     with tempfile.NamedTemporaryFile("r", suffix=".json", delete=False) as tf:
         report = tf.name
-    ok, log = run_potfit(potfit, config, start, evaluate=report)
+    ok, log = run_forcesmith(forcesmith, config, start, evaluate=report)
     if not ok:
         return None, None, log
     with open(report) as fh:
@@ -258,13 +258,13 @@ def fit_element(element, args):
     rmax = min(6.5, 2.4 * dmin)
     res.update({"dmin": dmin, "rmin": rmin, "rmax": rmax})
 
-    potfit = args.potfit
+    forcesmith = args.forcesmith
     fits.mkdir(parents=True, exist_ok=True)
 
     # Baseline: the un-fitted analytic start potential.
     start_analytic = work / "start_analytic.json"
     write_json(start_analytic, analytic_start(rmin, rmax))
-    frmse, srmse, _ = eval_rmse(potfit, cfg_path, start_analytic)
+    frmse, srmse, _ = eval_rmse(forcesmith, cfg_path, start_analytic)
     res["rmse_start"] = frmse
     res["srmse_start"] = srmse
 
@@ -272,14 +272,14 @@ def fit_element(element, args):
     # native writer, but it is the fitted analytic function sampled finely).
     if args.stage >= 1:
         analytic_fit = fits / f"{el}_eam_analytic.json"
-        ok, log = run_potfit(
-            potfit, cfg_path, start_analytic, endpot=analytic_fit,
+        ok, log = run_forcesmith(
+            forcesmith, cfg_path, start_analytic, endpot=analytic_fit,
             eweight=args.eweight, stress_weight=args.stress_weight,
             smooth_weight=0.0, maxiter=args.maxiter, algorithm=args.algorithm)
         if not ok:
             return {**res, "status": "error",
                     "error": "stage-1 (analytic) fit failed", "log": log[-1500:]}
-        frmse, srmse, _ = eval_rmse(potfit, cfg_path, analytic_fit)
+        frmse, srmse, _ = eval_rmse(forcesmith, cfg_path, analytic_fit)
         res["rmse_analytic"] = frmse
         res["srmse_analytic"] = srmse
         res["analytic_fit"] = str(analytic_fit)
@@ -293,15 +293,15 @@ def fit_element(element, args):
         write_json(start_tab, tabulated_start_from_dense(dense, args.knots))
 
         tabular_fit = fits / f"{el}_eam_fit.json"
-        ok, log = run_potfit(
-            potfit, cfg_path, start_tab, endpot=tabular_fit,
+        ok, log = run_forcesmith(
+            forcesmith, cfg_path, start_tab, endpot=tabular_fit,
             eweight=args.eweight, stress_weight=args.stress_weight,
             smooth_weight=args.smooth_weight, maxiter=args.maxiter,
             algorithm=args.algorithm)
         if not ok:
             return {**res, "status": "error",
                     "error": "stage-2 (tabular) fit failed", "log": log[-1500:]}
-        frmse, srmse, _ = eval_rmse(potfit, cfg_path, tabular_fit)
+        frmse, srmse, _ = eval_rmse(forcesmith, cfg_path, tabular_fit)
         res["rmse_tabular"] = frmse
         res["srmse_tabular"] = srmse
         res["tabular_fit"] = str(tabular_fit)
@@ -344,7 +344,7 @@ def main(argv=None):
                    help="elements to fit (default: all 16)")
     p.add_argument("--data-dir", default="data/unep")
     p.add_argument("--out-dir", default="tests/unep")
-    p.add_argument("--potfit", default="build/release/potfit")
+    p.add_argument("--forcesmith", default="build/release/forcesmith")
     p.add_argument("--maxiter", type=int, default=300)
     p.add_argument("--eweight", type=float, default=0.1)
     p.add_argument("--stress-weight", type=float, default=0.0)
@@ -362,12 +362,12 @@ def main(argv=None):
                    help="highest stage to run")
     args = p.parse_args(argv)
 
-    potfit = Path(args.potfit)
-    if not potfit.exists():
-        sys.exit(f"ERROR: potfit binary not found at {potfit}. Build it first "
+    forcesmith = Path(args.forcesmith)
+    if not forcesmith.exists():
+        sys.exit(f"ERROR: forcesmith binary not found at {forcesmith}. Build it first "
                  f"(the repo convention is that you build; this script never "
                  f"runs cmake).")
-    args.potfit = potfit
+    args.forcesmith = forcesmith
 
     elements = [e.capitalize() for e in args.elements]
 

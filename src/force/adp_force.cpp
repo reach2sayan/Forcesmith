@@ -1,6 +1,6 @@
-#include "potfit/force/adp_force.hpp"
-#include "potfit/core/neighbor_list.hpp"
-#include "potfit/events/signals.hpp"
+#include "forcesmith/force/adp_force.hpp"
+#include "forcesmith/core/neighbor_list.hpp"
+#include "forcesmith/events/signals.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -9,7 +9,7 @@
 #include <optional>
 #include <utility>
 
-namespace potfit {
+namespace forcesmith {
 
 FORCE_INLINE double ADPForceCalculator::quad_nu(const SymTens &M,
                                                 const Vec3 &d) {
@@ -124,7 +124,7 @@ double ADPForceCalculator::max_cutoff() const {
   };
 
   // Cover every radial table: dipole/quadrupole may reach farther than the
-  // pair/density tables, and those neighbours must not be truncated (potfit
+  // pair/density tables, and those neighbours must not be truncated (forcesmith
   // gates each contribution on its own per-table cutoff).
   return std::max({max_cutoff(pair), max_cutoff(density), max_cutoff(dipole),
                    max_cutoff(quadrupole)});
@@ -183,7 +183,7 @@ void ADPForceCalculator::eval_forces(Configuration &cfg) const {
         const auto &emb = embedding[ai];
 
         // Clamp out-of-range ρ to the embedding table and punish the overshoot
-        // (matches potfit's RESCALE branch, force_eam.c:334-358): F(ρ) is
+        // (matches forcesmith's RESCALE branch, force_eam.c:334-358): F(ρ) is
         // evaluated at the clamped ρ, never extrapolated.
         const auto [rho_begin, rho_end] = emb.span();
         if (ai.rho > rho_end) {
@@ -232,4 +232,4 @@ void ADPForceCalculator::eval_forces(Configuration &cfg) const {
       events::ForceEvalStats{conf_index, force_rms(cfg), cfg});
 }
 
-} // namespace potfit
+} // namespace forcesmith

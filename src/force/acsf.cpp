@@ -1,4 +1,4 @@
-#include "potfit/potentials/acsf.hpp"
+#include "forcesmith/potentials/acsf.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -8,7 +8,7 @@
 #include <utility>
 #include <vector>
 
-namespace potfit {
+namespace forcesmith {
 
 namespace {
 
@@ -218,8 +218,8 @@ DescriptorValue ACSF::get_descriptor(const Atom &a) const {
 std::vector<std::optional<Eigen::Index>>
 ACSF::descriptor_index_map(const SpeciesRegistry &old_reg,
                            const SpeciesRegistry &new_reg) const {
-  const std::size_t S_old = potfit::ntypes(old_reg);
-  const std::size_t S_new = potfit::ntypes(new_reg);
+  const std::size_t S_old = forcesmith::ntypes(old_reg);
+  const std::size_t S_new = forcesmith::ntypes(new_reg);
   const AcsfLayout old_L{S_old,     g1,        radial.size(),
                          g3.size(), g4.size(), g5.size()};
   const AcsfLayout new_L{S_new,     g1,        radial.size(),
@@ -228,4 +228,4 @@ ACSF::descriptor_index_map(const SpeciesRegistry &old_reg,
                       S_old, S_new);
 }
 
-} // namespace potfit
+} // namespace forcesmith

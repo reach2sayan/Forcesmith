@@ -1,10 +1,10 @@
-#include "potfit/core/neighbor_list.hpp"
-#include "potfit/force/eam_force.hpp"
+#include "forcesmith/core/neighbor_list.hpp"
+#include "forcesmith/force/eam_force.hpp"
 
 #include <gtest/gtest.h>
 #include <cmath>
 
-using namespace potfit;
+using namespace forcesmith;
 
 // ── Minimal analytic potential types for EAM testing ─────────────────────────
 

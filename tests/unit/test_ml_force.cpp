@@ -1,6 +1,6 @@
-#include "potfit/core/neighbor_list.hpp"
-#include "potfit/io/force_model_reader.hpp"
-#include "potfit/potentials/acsf.hpp"
+#include "forcesmith/core/neighbor_list.hpp"
+#include "forcesmith/io/force_model_reader.hpp"
+#include "forcesmith/potentials/acsf.hpp"
 
 #include <gtest/gtest.h>
 
@@ -8,7 +8,7 @@
 #include <numbers>
 #include <variant>
 
-using namespace potfit;
+using namespace forcesmith;
 
 // ── Fixtures ─────────────────────────────────────────────────────────────────
 

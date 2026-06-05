@@ -1,11 +1,11 @@
-#include "potfit/core/neighbor_list.hpp"
-#include "potfit/core/potential_base.hpp"
+#include "forcesmith/core/neighbor_list.hpp"
+#include "forcesmith/core/potential_base.hpp"
 
 #include <gtest/gtest.h>
 #include <cmath>
 #include <ranges>
 
-using namespace potfit;
+using namespace forcesmith;
 
 // Helpers ─────────────────────────────────────────────────────────────────────
 

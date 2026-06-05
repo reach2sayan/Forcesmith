@@ -1,13 +1,13 @@
-#include "potfit/force/pair_force.hpp"
-#include "potfit/optimization/ipopt_solver.hpp"
-#include "potfit/optimization/optimizer.hpp"
-#include "potfit/optimization/potfit_functor.hpp"
-#include "potfit/potentials/analytic_potential.hpp"
+#include "forcesmith/force/pair_force.hpp"
+#include "forcesmith/optimization/ipopt_solver.hpp"
+#include "forcesmith/optimization/optimizer.hpp"
+#include "forcesmith/optimization/forcesmith_functor.hpp"
+#include "forcesmith/potentials/analytic_potential.hpp"
 
 #include <gtest/gtest.h>
 #include <cmath>
 
-using namespace potfit;
+using namespace forcesmith;
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -37,7 +37,7 @@ static Configuration make_lj_dimer(double eps, double sigma, double r) {
 static double eval_residual(std::vector<Configuration>& configs,
                              ForceCalculator&            model,
                              double                      energy_weight) {
-    PotfitFunctor functor(configs, model, energy_weight);
+    ForcesmithFunctor functor(configs, model, energy_weight);
     Eigen::VectorXd x(functor.inputs());
     std::visit([&](const auto& m){ m.gather_params(x, std::size_t{0}); }, model);
 

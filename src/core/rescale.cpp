@@ -1,12 +1,12 @@
-#include "potfit/core/rescale.hpp"
-#include "potfit/core/scale_potentials.hpp"
+#include "forcesmith/core/rescale.hpp"
+#include "forcesmith/core/scale_potentials.hpp"
 
 #include <algorithm>
 #include <cmath>
 #include <limits>
 #include <ranges>
 
-namespace potfit {
+namespace forcesmith {
 
 std::vector<double> compute_rho_ref(EAMForceCalculator &calc,
                                     std::span<Configuration> configs) {
@@ -77,7 +77,7 @@ double rescale_rho_axis(EAMForceCalculator &calc,
   }
 
   const auto [emb_lo, emb_hi] = calc.embedding[dom].span();
-  const double pad = 0.003 * (emb_hi - emb_lo); // ≈ potfit's 0.3·step padding
+  const double pad = 0.003 * (emb_hi - emb_lo); // ≈ forcesmith's 0.3·step padding
   const double upper = sign_pos ? emb_hi : emb_lo;
   const double right = sign_pos ? maxrho[dom] + pad : minrho[dom] - pad;
   if (std::abs(right) < 1e-30) {
@@ -95,7 +95,7 @@ double rescale_rho_axis(EAMForceCalculator &calc,
         return minrho[t] < lo || maxrho[t] > hi;
       });
 
-  // potfit skip rule: only rescale when actually needed.
+  // forcesmith skip rule: only rescale when actually needed.
   if (!std::isfinite(a) || std::abs(a) < 1e-30 ||
       (!violation && std::abs(a) >= 0.95 && std::abs(a) <= 1.05)) {
     return 1.0;
@@ -171,4 +171,4 @@ void rescale_eam(EAMForceCalculator &calc, std::span<Configuration> configs) {
   }
 }
 
-} // namespace potfit
+} // namespace forcesmith

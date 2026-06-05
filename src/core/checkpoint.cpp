@@ -1,6 +1,6 @@
-#include "potfit/core/checkpoint.hpp"
-#include "potfit/io/force_model_reader.hpp"
-#include "potfit/io/write_model.hpp"
+#include "forcesmith/core/checkpoint.hpp"
+#include "forcesmith/io/force_model_reader.hpp"
+#include "forcesmith/io/write_model.hpp"
 
 #include <boost/archive/binary_iarchive.hpp>
 #include <boost/archive/binary_oarchive.hpp>
@@ -11,7 +11,7 @@
 #include <iterator>
 #include <string>
 
-namespace potfit {
+namespace forcesmith {
 
 namespace leaf = boost::leaf;
 
@@ -109,7 +109,7 @@ leaf::result<void> CheckpointReader::read(std::vector<Configuration> &configs,
   return {};
 }
 
-} // namespace potfit
+} // namespace forcesmith
 
 #if defined(__clang__)
 #pragma clang diagnostic pop

@@ -1,19 +1,19 @@
 #!/usr/bin/env python3
 """
-Generate NIST EAM training data for potfit end-to-end validation.
+Generate NIST EAM training data for forcesmith end-to-end validation.
 
 Downloads Mishin Cu 2001 and Mishin Al 1999 potentials from the NIST
 Interatomic Potentials Repository, converts them from LAMMPS setfl format
-to potfit JSON, generates FCC training configurations, adds Gaussian noise
-(mimicking DFT scatter), and writes all inputs for the potfit CLI.
+to forcesmith JSON, generates FCC training configurations, adds Gaussian noise
+(mimicking DFT scatter), and writes all inputs for the forcesmith CLI.
 
 After running this script, fit with:
 
-    potfit -c data/cu_training.json -s data/cu_eam_start.json -e data/cu_eam_fit.json
-    potfit -c data/al_training.json -s data/al_eam_start.json -e data/al_eam_fit.json
+    forcesmith -c data/cu_training.json -s data/cu_eam_start.json -e data/cu_eam_fit.json
+    forcesmith -c data/al_training.json -s data/al_eam_start.json -e data/al_eam_fit.json
 
 Usage:
-    python3 tools/generate_eam_configs.py [--output-dir PATH] [--potfit PATH]
+    python3 tools/generate_eam_configs.py [--output-dir PATH] [--forcesmith PATH]
 
 Requirements: numpy, scipy
 """
@@ -48,7 +48,7 @@ NIST_FILES = {
     ),
 }
 
-# Analytic starting guesses for potfit (physically motivated, not the NIST form)
+# Analytic starting guesses for forcesmith (physically motivated, not the NIST form)
 ANALYTIC_START = {
     "Cu": {
         "model": "eam",
@@ -148,7 +148,7 @@ def parse_setfl(path):
         rphi    = np.array(_read_floats(f, nr))    # r * phi(r)
 
     # Convert r*phi(r) → phi(r).  Index 0 is r=0; by convention r*phi(0)=0,
-    # so phi at r=0 is the repulsive limit (handled by rmin in potfit).
+    # so phi at r=0 is the repulsive limit (handled by rmin in forcesmith).
     r_arr = np.arange(nr) * dr
     phi_arr = np.zeros(nr)
     phi_arr[1:] = rphi[1:] / r_arr[1:]   # skip r=0
@@ -193,7 +193,7 @@ def build_splines(pot, n_knots=200):
 
 
 def to_tabulated_json(pot, n_knots=200):
-    """Convert parsed setfl data to potfit JSON tabulated format."""
+    """Convert parsed setfl data to forcesmith JSON tabulated format."""
     nr, dr, cutoff = pot["nr"], pot["dr"], pot["cutoff"]
     nrho, drho     = pot["nrho"], pot["drho"]
 
@@ -402,7 +402,7 @@ def min_interatomic_distance(records):
 
 
 def to_config_json(records, element):
-    """Convert list of (a, positions, energy, forces) to potfit config JSON."""
+    """Convert list of (a, positions, energy, forces) to forcesmith config JSON."""
     configs = []
     for a, pos, e, f in records:
         configs.append({
@@ -447,8 +447,8 @@ def main():
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--output-dir", default="data",
                         help="Directory for output files (default: data/)")
-    parser.add_argument("--potfit", default="./build/potfit",
-                        help="Path to the potfit binary for run_fitting.sh")
+    parser.add_argument("--forcesmith", default="./build/forcesmith",
+                        help="Path to the forcesmith binary for run_fitting.sh")
     parser.add_argument("--start", choices=["analytic", "tabulated"],
                         default="tabulated",
                         help="Starting potential form (default: tabulated). "
@@ -471,7 +471,7 @@ def main():
                              "actually present in the training configs, so no "
                              "knot sits in an unprobed (unconstrained) range.")
     parser.add_argument("--eweight", type=float, default=1.0,
-                        help="Energy residual weight passed to potfit --eweight "
+                        help="Energy residual weight passed to forcesmith --eweight "
                              "(default: 1.0)")
     args = parser.parse_args()
 
@@ -481,7 +481,7 @@ def main():
     rng = np.random.default_rng(42)
 
     run_lines = ["#!/bin/bash", "set -e", ""]
-    run_lines.append(f"POTFIT=\"{args.potfit}\"")
+    run_lines.append(f"FORCESMITH=\"{args.forcesmith}\"")
     run_lines.append("")
 
     for element, (url, filename) in NIST_FILES.items():
@@ -500,7 +500,7 @@ def main():
         # Build scipy splines
         F_cs, rho_at_cs, phi_cs = build_splines(pot)
 
-        # Convert to potfit tabulated JSON (200-knot subsampling)
+        # Convert to forcesmith tabulated JSON (200-knot subsampling)
         nist_json = to_tabulated_json(pot, n_knots=200)
         true_path = outdir / f"{element.lower()}_nist_true.json"
         true_path.write_text(json.dumps(nist_json, indent=2))
@@ -539,7 +539,7 @@ def main():
         elt = element.lower()
         run_lines += [
             f"echo '=== Fitting {element} ==='",
-            f"\"$POTFIT\" \\",
+            f"\"$FORCESMITH\" \\",
             f"  -c {outdir}/{elt}_training.json \\",
             f"  -s {outdir}/{elt}_eam_start.json \\",
             f"  -e {outdir}/{elt}_eam_fit.json \\",
@@ -558,7 +558,7 @@ def main():
     print("  # or run each element separately:")
     for element in NIST_FILES:
         elt = element.lower()
-        print(f"  {args.potfit} -c {outdir}/{elt}_training.json "
+        print(f"  {args.forcesmith} -c {outdir}/{elt}_training.json "
               f"-s {outdir}/{elt}_eam_start.json -e {outdir}/{elt}_eam_fit.json "
               f"--algorithm lm --maxiter 500 --eweight {args.eweight}")
 

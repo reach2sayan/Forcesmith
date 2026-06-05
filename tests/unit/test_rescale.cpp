@@ -1,12 +1,12 @@
-#include "potfit/core/neighbor_list.hpp"
-#include "potfit/core/rescale.hpp"
-#include "potfit/force/eam_force.hpp"
+#include "forcesmith/core/neighbor_list.hpp"
+#include "forcesmith/core/rescale.hpp"
+#include "forcesmith/force/eam_force.hpp"
 
 #include <gtest/gtest.h>
 #include <cmath>
 #include <vector>
 
-using namespace potfit;
+using namespace forcesmith;
 
 // ── Minimal analytic potential types ─────────────────────────────────────────
 

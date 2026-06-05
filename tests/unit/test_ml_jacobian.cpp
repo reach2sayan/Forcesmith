@@ -2,14 +2,14 @@
 //
 // The central-difference Jacobian is a perfect oracle: head-level checks compare
 // param_grad (∂E/∂θ) and dgrad_dparam (∂(∂E/∂D)/∂θ) to FD of energy()/grad();
-// the end-to-end check compares PotfitFunctor::df (which routes to the analytic
+// the end-to-end check compares ForcesmithFunctor::df (which routes to the analytic
 // df_cached_analytic for heads that support it) to a direct central-difference of
 // the residual vector. Covers the LinearHead (M = I) head-level and end-to-end
 // (with standardization / stress) paths.
 
-#include "potfit/force/force_calculator.hpp"
-#include "potfit/force/ml_force.hpp"
-#include "potfit/optimization/potfit_functor.hpp"
+#include "forcesmith/force/force_calculator.hpp"
+#include "forcesmith/force/ml_force.hpp"
+#include "forcesmith/optimization/forcesmith_functor.hpp"
 
 #include <gtest/gtest.h>
 
@@ -17,7 +17,7 @@
 #include <variant>
 #include <vector>
 
-using namespace potfit;
+using namespace forcesmith;
 
 namespace {
 
@@ -95,7 +95,7 @@ Eigen::MatrixXd fd_dgrad_dparam(Head head, const Eigen::VectorXd &D,
 }
 
 // Central-difference Jacobian of the residual vector — the end-to-end oracle.
-Eigen::MatrixXd fd_residual_jacobian(const PotfitFunctor &f,
+Eigen::MatrixXd fd_residual_jacobian(const ForcesmithFunctor &f,
                                      const Eigen::VectorXd &x, double d = 1e-6) {
   Eigen::MatrixXd J(f.values(), x.size());
   Eigen::VectorXd xp = x, fp(f.values()), fm(f.values());
@@ -147,7 +147,7 @@ TEST(MlJacobian, LinearHead_DgradDparam_IsIdentity) {
 TEST(MlJacobian, SymFuncLinear_AnalyticDf_MatchesFD) {
   ForceCalculator model = make_symfunc_linear({0.6, -0.35, 0.2});
   std::vector<Configuration> configs = {make_cluster()};
-  PotfitFunctor f(std::span<Configuration>(configs), model, /*energy_weight=*/0.5);
+  ForcesmithFunctor f(std::span<Configuration>(configs), model, /*energy_weight=*/0.5);
 
   Eigen::VectorXd x(f.inputs());
   std::visit([&](const auto &m) { m.gather_params(x, std::size_t{0}); },
@@ -165,7 +165,7 @@ TEST(MlJacobian, SymFuncLinear_AnalyticDf_MatchesFD) {
 TEST(MlJacobian, SymFuncLinear_AnalyticDf_MatchesFD_WithStress) {
   ForceCalculator model = make_symfunc_linear({0.6, -0.35, 0.2});
   std::vector<Configuration> configs = {make_cluster()};
-  PotfitFunctor f(std::span<Configuration>(configs), model,
+  ForcesmithFunctor f(std::span<Configuration>(configs), model,
                   /*energy_weight=*/0.5, /*stress_weight=*/0.3);
 
   Eigen::VectorXd x(f.inputs());

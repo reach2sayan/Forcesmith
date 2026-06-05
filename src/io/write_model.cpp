@@ -1,8 +1,8 @@
-#include "potfit/io/write_model.hpp"
+#include "forcesmith/io/write_model.hpp"
 
-#include "potfit/core/potential_base.hpp"
-#include "potfit/io/config_reader.hpp" // ParseError
-#include "potfit/io/output_writer.hpp"
+#include "forcesmith/core/potential_base.hpp"
+#include "forcesmith/io/config_reader.hpp" // ParseError
+#include "forcesmith/io/output_writer.hpp"
 
 #include <boost/leaf/error.hpp>
 #include <iostream>
@@ -11,7 +11,7 @@
 #include <variant>
 #include <vector>
 
-namespace potfit::io {
+namespace forcesmith::io {
 
 namespace leaf = boost::leaf;
 
@@ -29,7 +29,7 @@ boost::leaf::result<void> write_model(const ForceCalculator &model,
 
   // Every native writer returns leaf::result<void>, reporting file-open and
   // non-finite-tabulation failures through the result channel. The visitor
-  // forwards those errors so the model-output path (PotFit::write, checkpoints)
+  // forwards those errors so the model-output path (Forcesmith::write, checkpoints)
   // propagates them via leaf without throwing across the API.
   BOOST_LEAF_AUTO(
       wrote,
@@ -92,4 +92,4 @@ boost::leaf::result<void> write_model(const ForceCalculator &model,
   return {};
 }
 
-} // namespace potfit::io
+} // namespace forcesmith::io

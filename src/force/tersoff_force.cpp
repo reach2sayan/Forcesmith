@@ -1,6 +1,6 @@
-#include "potfit/force/tersoff_force.hpp"
-#include "potfit/core/neighbor_list.hpp"
-#include "potfit/events/signals.hpp"
+#include "forcesmith/force/tersoff_force.hpp"
+#include "forcesmith/core/neighbor_list.hpp"
+#include "forcesmith/events/signals.hpp"
 
 #include <cmath>
 #include <functional>
@@ -8,7 +8,7 @@
 #include <optional>
 #include <utility>
 
-namespace potfit {
+namespace forcesmith {
 
 FORCE_INLINE std::array<Param *, 12>
 TersoffForceCalculator::tersoff_fields(TersoffParams &p) {
@@ -308,4 +308,4 @@ void TersoffForceCalculator::eval_forces(Configuration &cfg) const {
       events::ForceEvalStats{conf_index, force_rms(cfg), cfg});
 }
 
-} // namespace potfit
+} // namespace forcesmith

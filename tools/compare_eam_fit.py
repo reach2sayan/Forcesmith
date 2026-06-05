@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-Compare a potfit-fitted EAM potential against the NIST reference.
+Compare a forcesmith-fitted EAM potential against the NIST reference.
 
-Reads the tabulated EAM JSON written by the potfit CLI (``{elt}_eam_fit.json``)
+Reads the tabulated EAM JSON written by the forcesmith CLI (``{elt}_eam_fit.json``)
 and the NIST reference (``{elt}_nist_true.json``), then produces a
 gauge-invariant physics comparison:
 

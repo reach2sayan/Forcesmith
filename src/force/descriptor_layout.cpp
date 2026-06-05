@@ -1,10 +1,10 @@
-#include "potfit/force/descriptor_layout.hpp"
+#include "forcesmith/force/descriptor_layout.hpp"
 
-#include "potfit/force/potential_table.hpp" // upper_triangle
+#include "forcesmith/force/potential_table.hpp" // upper_triangle
 
 #include <ranges>
 
-namespace potfit {
+namespace forcesmith {
 
 std::vector<std::optional<Eigen::Index>>
 remap_layout(const DescriptorLayout &old_L, const DescriptorLayout &new_L,
@@ -48,4 +48,4 @@ remap_layout(const DescriptorLayout &old_L, const DescriptorLayout &new_L,
   return map;
 }
 
-} // namespace potfit
+} // namespace forcesmith

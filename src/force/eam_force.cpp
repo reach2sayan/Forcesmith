@@ -1,13 +1,13 @@
-#include "potfit/force/eam_force.hpp"
-#include "potfit/core/neighbor_list.hpp"
-#include "potfit/events/signals.hpp"
+#include "forcesmith/force/eam_force.hpp"
+#include "forcesmith/core/neighbor_list.hpp"
+#include "forcesmith/events/signals.hpp"
 
 #include <algorithm>
 #include <cmath>
 #include <iterator>
 #include <numeric>
 
-namespace potfit {
+namespace forcesmith {
 
 // Count the free globals (each is exactly one optimizer slot when not fixed).
 static std::size_t free_globals(const std::vector<GlobalParam> &globals) {
@@ -77,7 +77,7 @@ void EAMForceCalculator::broadcast_globals() {
     for (const auto &lk : g.links) {
       const double v = g.value.value;
       switch (lk.region) {
-        using enum potfit::GlobalParam::Link::LinkRegion;
+        using enum forcesmith::GlobalParam::Link::LinkRegion;
       case PAIR:
         write(pair, lk.index, lk.param, v);
         break;
@@ -99,7 +99,7 @@ void EAMForceCalculator::finalize_globals() {
   for (const auto &g : globals)
     for (const auto &lk : g.links) {
       switch (lk.region) {
-        using enum potfit::GlobalParam::Link::LinkRegion;
+        using enum forcesmith::GlobalParam::Link::LinkRegion;
       case PAIR:
         fix(pair, lk.index, lk.param);
         break;
@@ -151,7 +151,7 @@ void EAMForceCalculator::eval_forces(Configuration &cfg) const {
 
   // ── After pass 1: embedding energy + gradF_i = dF_i/dρ_i ────────────────
   // Out-of-range ρ is clamped to the embedding table's [begin,end] and the
-  // overshoot is punished via cfg.calc_limit (matches potfit's RESCALE branch,
+  // overshoot is punished via cfg.calc_limit (matches forcesmith's RESCALE branch,
   // force_eam.c:334-358): F(ρ) is evaluated at the clamped ρ, never
   // extrapolated.
   for (auto &ai : cfg.atoms) {
@@ -214,4 +214,4 @@ void EAMForceCalculator::eval_forces(Configuration &cfg) const {
       events::ForceEvalStats{conf_index, force_rms(cfg), cfg});
 }
 
-} // namespace potfit
+} // namespace forcesmith

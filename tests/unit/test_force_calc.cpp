@@ -1,9 +1,9 @@
-#include "potfit/force/pair_force.hpp"
+#include "forcesmith/force/pair_force.hpp"
 
 #include <gtest/gtest.h>
 #include <cmath>
 
-using namespace potfit;
+using namespace forcesmith;
 
 // ── Minimal analytic LJ potential for testing ─────────────────────────────────
 

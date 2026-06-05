@@ -1,8 +1,8 @@
-#include "potfit/force/evaluate.hpp"
+#include "forcesmith/force/evaluate.hpp"
 
 #include <variant>
 
-namespace potfit::force {
+namespace forcesmith::force {
 
 EvalResult evaluate(const ForceCalculator &calc, const Configuration &cfg) {
   Configuration scratch = cfg; // non-mutating: never touch the caller's config
@@ -19,4 +19,4 @@ EvalResult evaluate(const ForceCalculator &calc, const Configuration &cfg) {
   return out;
 }
 
-} // namespace potfit::force
+} // namespace forcesmith::force

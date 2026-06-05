@@ -29,9 +29,9 @@ O(1) and meaningful — not the degenerate `lj` makeapot default.
 ## Port support used
 A new evaluate-only mode was added to the port:
 ```
-potfit -c CONFIG.json -s STARTPOT.json --evaluate OUT.json --eweight 0 --stress-weight 0
+forcesmith -c CONFIG.json -s STARTPOT.json --evaluate OUT.json --eweight 0 --stress-weight 0
 ```
-`--evaluate` runs a single `potfit::force::evaluate()` over every config (no
+`--evaluate` runs a single `forcesmith::force::evaluate()` over every config (no
 optimizer, no endpot) and writes per-config computed vs. reference
 forces/energy/stress and `total_sumsq` to `OUT.json`. It also exercises the
 enriched `on_force_eval` callback, which now carries `const Configuration&`.
@@ -52,7 +52,7 @@ python3 $H/pot2json.py startpot $D/Al_eam/Al_eam.startpot  /tmp/al_start.json --
 $H/gen_reference.sh $D/Al_eam Al_eam.param al_eam
 
 # 3. run the port in evaluate mode (forces-only gate)
-build/release/potfit -c /tmp/al_cfg.json -s /tmp/al_start.json \
+build/release/forcesmith -c /tmp/al_cfg.json -s /tmp/al_start.json \
     --evaluate /tmp/al_port_eval.json --eweight 0 --stress-weight 0
 
 # 4. diff

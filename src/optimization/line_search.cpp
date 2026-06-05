@@ -1,4 +1,4 @@
-#include "potfit/optimization/line_search.hpp"
+#include "forcesmith/optimization/line_search.hpp"
 
 #include <boost/math/tools/minima.hpp>
 
@@ -6,7 +6,7 @@
 #include <limits>
 #include <utility>
 
-namespace potfit {
+namespace forcesmith {
 
 std::pair<double, double>
 detail::linmin_fn::bracket_minimum(const std::function<double(double)> &g,
@@ -63,4 +63,4 @@ double detail::linmin_fn::operator()(
   return alpha;
 }
 
-} // namespace potfit
+} // namespace forcesmith

@@ -1,5 +1,5 @@
-// `potfit init` — a JSON-native makeapot. Scaffolds a fresh startpot for any of
-// the nine model types so the user can immediately fit it (potfit -s <out>).
+// `forcesmith init` — a JSON-native makeapot. Scaffolds a fresh startpot for any of
+// the nine model types so the user can immediately fit it (forcesmith -s <out>).
 //
 // Two output mechanisms, split by what the native writers round-trip:
 //   • analytic classical (pair/eam/adp/angular): emitted as analytic JSON
@@ -9,17 +9,17 @@
 //     writers serialise those models' parameters verbatim.
 //
 // Analytic parameter names + defaults come from the shared macro table
-// (potfit/potentials/analytic_param_defs.hpp), the same single source the
+// (forcesmith/potentials/analytic_param_defs.hpp), the same single source the
 // reader registry uses — so a scaffolded file always reloads.
 
-#include "potfit/cli/init.hpp"
+#include "forcesmith/cli/init.hpp"
 
-#include "potfit/force/force_calculator.hpp"
-#include "potfit/io/write_model.hpp"
-#include "potfit/potentials/acsf.hpp"
-#include "potfit/potentials/analytic_param_defs.hpp"
-#include "potfit/potentials/lmbtr.hpp"
-#include "potfit/potentials/soap.hpp"
+#include "forcesmith/force/force_calculator.hpp"
+#include "forcesmith/io/write_model.hpp"
+#include "forcesmith/potentials/acsf.hpp"
+#include "forcesmith/potentials/analytic_param_defs.hpp"
+#include "forcesmith/potentials/lmbtr.hpp"
+#include "forcesmith/potentials/soap.hpp"
 
 #include <boost/program_options.hpp>
 #include <nlohmann/json.hpp>
@@ -36,7 +36,7 @@
 namespace po = boost::program_options;
 using json = nlohmann::json;
 
-namespace potfit::cli::init {
+namespace forcesmith::cli::init {
 namespace {
 
 struct Args {
@@ -325,7 +325,7 @@ int scaffold_bond_order(const Args &a) {
 int run(int argc, char *argv[]) {
   Args a;
   po::options_description desc(
-      "potfit init — scaffold a fresh startpot (a JSON-native makeapot)");
+      "forcesmith init — scaffold a fresh startpot (a JSON-native makeapot)");
   desc.add_options()("help,h", "show this message")(
       "model,m", po::value(&a.model),
       "pair | eam | adp | angular | tersoff | stiweb | acsf | soap | lmbtr")(
@@ -396,4 +396,4 @@ int run(int argc, char *argv[]) {
   die("unknown --model '" + a.model + "'");
 }
 
-} // namespace potfit::cli::init
+} // namespace forcesmith::cli::init

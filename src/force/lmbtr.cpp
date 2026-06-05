@@ -1,4 +1,4 @@
-#include "potfit/potentials/lmbtr.hpp"
+#include "forcesmith/potentials/lmbtr.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -6,7 +6,7 @@
 #include <ranges>
 #include <vector>
 
-namespace potfit {
+namespace forcesmith {
 
 namespace {
 
@@ -108,8 +108,8 @@ DescriptorValue LMBTR::get_descriptor(const Atom &a) const {
 std::vector<std::optional<Eigen::Index>>
 LMBTR::descriptor_index_map(const SpeciesRegistry &old_reg,
                             const SpeciesRegistry &new_reg) const {
-  const std::size_t S_old = potfit::ntypes(old_reg);
-  const std::size_t S_new = potfit::ntypes(new_reg);
+  const std::size_t S_old = forcesmith::ntypes(old_reg);
+  const std::size_t S_new = forcesmith::ntypes(new_reg);
   const auto grid_n = [](const Grid &g) { return g.n; };
   const LmbtrLayout old_L{S_old, k2.transform(grid_n), k3.transform(grid_n)};
   const LmbtrLayout new_L{S_new, k2.transform(grid_n), k3.transform(grid_n)};
@@ -117,4 +117,4 @@ LMBTR::descriptor_index_map(const SpeciesRegistry &old_reg,
                       S_old, S_new);
 }
 
-} // namespace potfit
+} // namespace forcesmith

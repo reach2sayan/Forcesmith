@@ -1,16 +1,16 @@
-// Round-trip tests for the `potfit init` scaffolder: drive the real init code
+// Round-trip tests for the `forcesmith init` scaffolder: drive the real init code
 // path to write a startpot, then load it back through the force-model factory
 // and assert the model parses with the expected per-region cardinalities and
 // head sizes. This proves every scaffolded file is a valid, loadable startpot —
 // the contract the scaffolder exists to guarantee.
 
-#include "potfit/cli/init.hpp"
-#include "potfit/io/force_model_reader.hpp"
-#include "potfit/potentials/acsf.hpp"
-#include "potfit/potentials/analytic_param_defs.hpp"
-#include "potfit/potentials/lmbtr.hpp"
-#include "potfit/potentials/soap.hpp"
-#include "potfit/io/potential_reader.hpp"
+#include "forcesmith/cli/init.hpp"
+#include "forcesmith/io/force_model_reader.hpp"
+#include "forcesmith/potentials/acsf.hpp"
+#include "forcesmith/potentials/analytic_param_defs.hpp"
+#include "forcesmith/potentials/lmbtr.hpp"
+#include "forcesmith/potentials/soap.hpp"
+#include "forcesmith/io/potential_reader.hpp"
 
 #include <boost/leaf/handle_errors.hpp>
 #include <gtest/gtest.h>
@@ -23,7 +23,7 @@
 #include <vector>
 
 namespace leaf = boost::leaf;
-using namespace potfit;
+using namespace forcesmith;
 
 namespace {
 
@@ -35,12 +35,12 @@ int run_init(std::vector<std::string> flags) {
   for (auto &s : argv_s) {
     argv.push_back(s.data());
   }
-  return potfit::cli::init::run(static_cast<int>(argv.size()), argv.data());
+  return forcesmith::cli::init::run(static_cast<int>(argv.size()), argv.data());
 }
 
 std::filesystem::path tmp_out(const std::string &tag) {
   return std::filesystem::temp_directory_path() /
-         ("potfit_init_" + tag + ".json");
+         ("forcesmith_init_" + tag + ".json");
 }
 
 // Scaffold to a temp file and load it back; returns the parsed model or fails.

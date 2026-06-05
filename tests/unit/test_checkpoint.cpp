@@ -1,8 +1,8 @@
-#include "potfit/core/checkpoint.hpp"
-#include "potfit/io/config_reader.hpp"       // potfit::io::ParseError
-#include "potfit/io/force_model_reader.hpp"  // potfit::io::parse_force_model
-#include "potfit/potentials/analytic_potential.hpp"
-#include "potfit/potentials/spline.hpp"
+#include "forcesmith/core/checkpoint.hpp"
+#include "forcesmith/io/config_reader.hpp"       // forcesmith::io::ParseError
+#include "forcesmith/io/force_model_reader.hpp"  // forcesmith::io::parse_force_model
+#include "forcesmith/potentials/analytic_potential.hpp"
+#include "forcesmith/potentials/spline.hpp"
 
 #include <boost/leaf/handle_errors.hpp>
 #include <gtest/gtest.h>
@@ -13,7 +13,7 @@
 #include <variant>
 
 namespace leaf = boost::leaf;
-using namespace potfit;
+using namespace forcesmith;
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -43,7 +43,7 @@ struct TmpDir {
         auto ns = static_cast<long long>(
             std::chrono::steady_clock::now().time_since_epoch().count());
         path = std::filesystem::temp_directory_path() /
-               ("potfit_ckpt_" + std::to_string(ns));
+               ("forcesmith_ckpt_" + std::to_string(ns));
         std::filesystem::create_directories(path);
     }
     ~TmpDir() { std::filesystem::remove_all(path); }
@@ -67,7 +67,7 @@ static bool round_trip(const std::filesystem::path& pfx,
             return {};
         },
         [&](const CheckpointError& e)    { ADD_FAILURE() << "CheckpointError: " << e.message; ok = false; },
-        [&](const potfit::io::ParseError& e) { ADD_FAILURE() << "ParseError: " << e.message; ok = false; },
+        [&](const forcesmith::io::ParseError& e) { ADD_FAILURE() << "ParseError: " << e.message; ok = false; },
         [&]()                               { ADD_FAILURE() << "unknown error";              ok = false; }
     );
     return ok;

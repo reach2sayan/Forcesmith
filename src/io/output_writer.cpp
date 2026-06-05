@@ -1,6 +1,6 @@
-#include "potfit/io/output_writer.hpp"
+#include "forcesmith/io/output_writer.hpp"
 
-#include "potfit/io/config_reader.hpp" // ParseError
+#include "forcesmith/io/config_reader.hpp" // ParseError
 
 #include <boost/leaf/error.hpp>
 #include <nlohmann/json.hpp>
@@ -10,7 +10,7 @@
 #include <fstream>
 #include <ranges>
 
-namespace potfit::io {
+namespace forcesmith::io {
 
 namespace leaf = boost::leaf;
 
@@ -366,4 +366,4 @@ leaf::result<void> write_imd(const std::filesystem::path &path,
   return {};
 }
 
-} // namespace potfit::io
+} // namespace forcesmith::io

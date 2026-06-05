@@ -1,6 +1,6 @@
-#include "potfit/cli/app.hpp"
-#include "potfit/cli/init.hpp"
-#include "potfit/cli/options.hpp"
+#include "forcesmith/cli/app.hpp"
+#include "forcesmith/cli/init.hpp"
+#include "forcesmith/cli/options.hpp"
 
 #include <string_view>
 
@@ -8,20 +8,20 @@
 // scaffolds a fresh startpot and needs neither --config nor --startpot, so it
 // is dispatched here before the fitting CLI's required-option parsing. Anything
 // else falls through to: parse the arguments, then — unless help was shown or
-// parsing failed — drive the PotFit API via cli::run.
+// parsing failed — drive the Forcesmith API via cli::run.
 int main(int argc, char *argv[]) {
   if (argc > 1 && std::string_view{argv[1]} == "init") {
-    return potfit::cli::init::run(argc - 1, argv + 1);
+    return forcesmith::cli::init::run(argc - 1, argv + 1);
   }
 
-  const potfit::cli::ParseResult parsed = potfit::cli::parse(argc, argv);
+  const forcesmith::cli::ParseResult parsed = forcesmith::cli::parse(argc, argv);
   switch (parsed.outcome) {
-  case potfit::cli::ParseOutcome::ExitOk:
+  case forcesmith::cli::ParseOutcome::ExitOk:
     return 0;
-  case potfit::cli::ParseOutcome::ExitError:
+  case forcesmith::cli::ParseOutcome::ExitError:
     return 1;
-  case potfit::cli::ParseOutcome::Run:
-    return potfit::cli::run(parsed.options);
+  case forcesmith::cli::ParseOutcome::Run:
+    return forcesmith::cli::run(parsed.options);
   }
   return 0;
 }

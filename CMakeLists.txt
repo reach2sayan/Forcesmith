@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.28)
-project(Potfit CXX)
+project(Forcesmith CXX)
 
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -9,19 +9,19 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 include(Dependencies)
 
-add_library(potfit_warnings INTERFACE)
-target_compile_options(potfit_warnings INTERFACE
+add_library(forcesmith_warnings INTERFACE)
+target_compile_options(forcesmith_warnings INTERFACE
         -Wall -Wextra -Wpedantic -Wshadow -Wnon-virtual-dtor
         $<$<CONFIG:Debug>:-g -fsanitize=address,undefined>
         $<$<CONFIG:Release>:-O3 -march=native -DNDEBUG>)
 
-target_link_options(potfit_warnings INTERFACE $<$<CONFIG:Debug>:-fsanitize=address,undefined>)
+target_link_options(forcesmith_warnings INTERFACE $<$<CONFIG:Debug>:-fsanitize=address,undefined>)
 
 # ── Static engine library ──────────────────────────────────────────────────
-# Everything below the public API. Must NOT depend on the PotFit API (the shared
-# `potfit` lib sits on top of this). io/loaders.cpp is a thin API front-end and
+# Everything below the public API. Must NOT depend on the Forcesmith API (the shared
+# `forcesmith` lib sits on top of this). io/loaders.cpp is a thin API front-end and
 # therefore lives with the shared lib, not here.
-set(POTFIT_ENGINE_SOURCES
+set(FORCESMITH_ENGINE_SOURCES
         src/core/checkpoint.cpp
         src/core/neighbor_list.cpp
         src/core/rescale.cpp
@@ -46,17 +46,17 @@ set(POTFIT_ENGINE_SOURCES
         src/io/write_model.cpp
         src/optimization/line_search.cpp
         src/optimization/optimizer.cpp
-        src/optimization/potfit_functor.cpp
+        src/optimization/forcesmith_functor.cpp
         src/optimization/solver.cpp
         src/optimization/ipopt_solver.cpp
         src/potentials/analytic_param_defs.cpp
         src/potentials/spline.cpp
 )
 
-add_library(potfit_engine STATIC ${POTFIT_ENGINE_SOURCES})
-target_include_directories(potfit_engine PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include")
-target_link_libraries(potfit_engine PUBLIC
-        potfit::eigen
+add_library(forcesmith_engine STATIC ${FORCESMITH_ENGINE_SOURCES})
+target_include_directories(forcesmith_engine PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include")
+target_link_libraries(forcesmith_engine PUBLIC
+        forcesmith::eigen
         Boost::serialization
         Boost::boost
         boost_parser
@@ -67,40 +67,40 @@ target_link_libraries(potfit_engine PUBLIC
 )
 # spdlog is only included by src/io/logging.cpp (the public header is
 # spdlog-free), so keep its include path off the engine's public interface.
-target_link_libraries(potfit_engine PRIVATE potfit_warnings spdlog)
+target_link_libraries(forcesmith_engine PRIVATE forcesmith_warnings spdlog)
 # Ipopt+MUMPS are built by the IpoptProject ExternalProject; ensure they exist
 # before the engine compiles/links the TU that includes the Ipopt headers.
-add_dependencies(potfit_engine IpoptProject)
-# Its objects get archived into the shared `potfit` lib, so they need -fPIC.
-set_target_properties(potfit_engine PROPERTIES POSITION_INDEPENDENT_CODE ON)
+add_dependencies(forcesmith_engine IpoptProject)
+# Its objects get archived into the shared `forcesmith` lib, so they need -fPIC.
+set_target_properties(forcesmith_engine PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 # ── First-class shared API library ─────────────────────────────────────────
-# The programmatic Potfit API (potfit::PotFit) plus the thin file-driven loaders
+# The programmatic Forcesmith API (forcesmith::Forcesmith) plus the thin file-driven loaders
 # that drive it. This is the product's public surface; the CLI and the tests are
 # ordinary clients that link it.
-add_library(potfit SHARED
-        src/api/potfit.cpp
+add_library(forcesmith SHARED
+        src/api/forcesmith.cpp
         src/io/loaders.cpp
 )
-target_include_directories(potfit PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include")
-target_link_libraries(potfit PUBLIC potfit_engine)
-target_link_libraries(potfit PRIVATE potfit_warnings)
+target_include_directories(forcesmith PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include")
+target_link_libraries(forcesmith PUBLIC forcesmith_engine)
+target_link_libraries(forcesmith PRIVATE forcesmith_warnings)
 
 # ── CLI ─────────────────────────────────────────────────────────────────────
-# Target renamed to potfit_cli so the `potfit` name is free for the library; the
-# user-facing binary is still called `potfit` (libpotfit.so vs potfit — no clash).
+# Target renamed to forcesmith_cli so the `forcesmith` name is free for the library; the
+# user-facing binary is still called `forcesmith` (libforcesmith.so vs forcesmith — no clash).
 # main.cpp is a thin entry point; the CLI logic lives in src/cli/, with its
-# headers under include/potfit/cli/ (resolved as "potfit/cli/<file>.hpp").
-add_executable(potfit_cli
+# headers under include/forcesmith/cli/ (resolved as "forcesmith/cli/<file>.hpp").
+add_executable(forcesmith_cli
         src/main.cpp
         src/cli/options.cpp
         src/cli/evaluate_report.cpp
         src/cli/init.cpp
         src/cli/app.cpp)
-set_target_properties(potfit_cli PROPERTIES OUTPUT_NAME potfit)
-target_include_directories(potfit_cli PRIVATE
+set_target_properties(forcesmith_cli PROPERTIES OUTPUT_NAME forcesmith)
+target_include_directories(forcesmith_cli PRIVATE
         "${CMAKE_CURRENT_SOURCE_DIR}/include")
-target_link_libraries(potfit_cli PRIVATE potfit_warnings potfit Boost::program_options)
+target_link_libraries(forcesmith_cli PRIVATE forcesmith_warnings forcesmith Boost::program_options)
 
 enable_testing()
 FetchContent_Declare(googletest
@@ -119,7 +119,7 @@ set(UNIT_TEST_SOURCES
         tests/unit/test_checkpoint.cpp
         tests/unit/test_config_reader.cpp
         tests/unit/test_eam_force.cpp
-        tests/unit/test_potfit.cpp
+        tests/unit/test_forcesmith.cpp
         tests/unit/test_force_calc.cpp
         tests/unit/test_force_model_reader.cpp
         tests/unit/test_neighbor_list.cpp
@@ -145,33 +145,33 @@ set(UNIT_TEST_SOURCES
 )
 
 # test_init.cpp drives the real scaffolder (src/cli/init.cpp), which is not part
-# of the potfit library, so compile it into the test binary and link the
+# of the forcesmith library, so compile it into the test binary and link the
 # program_options it parses with.
-add_executable(potfit_tests ${UNIT_TEST_SOURCES} src/cli/init.cpp)
-target_include_directories(potfit_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/include")
+add_executable(forcesmith_tests ${UNIT_TEST_SOURCES} src/cli/init.cpp)
+target_include_directories(forcesmith_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/include")
 
-target_link_libraries(potfit_tests PRIVATE potfit_warnings potfit GTest::gtest_main Boost::program_options)
+target_link_libraries(forcesmith_tests PRIVATE forcesmith_warnings forcesmith GTest::gtest_main Boost::program_options)
 
 include(GoogleTest)
-gtest_discover_tests(potfit_tests)
+gtest_discover_tests(forcesmith_tests)
 
 file(GLOB INTEGRATION_TEST_SOURCES "tests/integration/*.cpp")
 if (INTEGRATION_TEST_SOURCES)
-    add_executable(potfit_integration_tests ${INTEGRATION_TEST_SOURCES})
-    target_include_directories(potfit_integration_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/include")
-    target_link_libraries(potfit_integration_tests PRIVATE potfit_warnings potfit GTest::gtest_main)
-    gtest_discover_tests(potfit_integration_tests)
+    add_executable(forcesmith_integration_tests ${INTEGRATION_TEST_SOURCES})
+    target_include_directories(forcesmith_integration_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/include")
+    target_link_libraries(forcesmith_integration_tests PRIVATE forcesmith_warnings forcesmith GTest::gtest_main)
+    gtest_discover_tests(forcesmith_integration_tests)
 endif ()
 
 # ── UNEP EAM fit driver (programmatic-API parallel of fit_eam.py) ────────────
 # A single `unep_fit` executable built from tests/unep/fit_eam_api.cpp. The
 # element is a runtime flag (--element Cu), so there is one binary rather than
-# one per metal. Off by default; enable with -DPOTFIT_BUILD_UNEP_FITS=ON.
-option(POTFIT_BUILD_UNEP_FITS "Build the UNEP EAM fit executable (unep_fit)" OFF)
-if (POTFIT_BUILD_UNEP_FITS)
+# one per metal. Off by default; enable with -DFORCESMITH_BUILD_UNEP_FITS=ON.
+option(FORCESMITH_BUILD_UNEP_FITS "Build the UNEP EAM fit executable (unep_fit)" OFF)
+if (FORCESMITH_BUILD_UNEP_FITS)
     add_executable(unep_fit tests/unep/fit_eam_api.cpp)
     target_include_directories(unep_fit PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/include")
-    target_link_libraries(unep_fit PRIVATE potfit_warnings potfit Boost::program_options)
+    target_link_libraries(unep_fit PRIVATE forcesmith_warnings forcesmith Boost::program_options)
 endif ()
 
 # ── ML fit driver (parallel of the UNEP EAM fits) ────────────────────────────
@@ -179,12 +179,12 @@ endif ()
 # energy head and element are runtime flags (--descriptor soap|symfunc,
 # --head nn|linear, --element Cu), so there is one binary rather than one per
 # metal. Off by default (heavy: FD optimizer Jacobian × FD-gradient descriptor);
-# enable with -DPOTFIT_BUILD_ML_FITS=ON.
-option(POTFIT_BUILD_ML_FITS "Build the ML fit executable (ml_fit)" OFF)
-if (POTFIT_BUILD_ML_FITS)
+# enable with -DFORCESMITH_BUILD_ML_FITS=ON.
+option(FORCESMITH_BUILD_ML_FITS "Build the ML fit executable (ml_fit)" OFF)
+if (FORCESMITH_BUILD_ML_FITS)
     add_executable(ml_fit tests/ml/ml_fit.cpp)
     target_include_directories(ml_fit PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/include")
-    target_link_libraries(ml_fit PRIVATE potfit_warnings potfit Boost::program_options)
+    target_link_libraries(ml_fit PRIVATE forcesmith_warnings forcesmith Boost::program_options)
 endif ()
 
 include(ClangFormat)

@@ -1,8 +1,8 @@
-#include "potfit/core/boundary_conditions.hpp"
+#include "forcesmith/core/boundary_conditions.hpp"
 
 #include <gtest/gtest.h>
 
-using namespace potfit;
+using namespace forcesmith;
 
 static constexpr double EPS = 1e-10;
 

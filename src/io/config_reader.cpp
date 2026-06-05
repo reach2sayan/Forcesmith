@@ -1,6 +1,6 @@
-#include "potfit/io/config_reader.hpp"
+#include "forcesmith/io/config_reader.hpp"
 
-#include "potfit/io/json_util.hpp"
+#include "forcesmith/io/json_util.hpp"
 
 #include <boost/leaf/error.hpp>
 #include <nlohmann/json.hpp>
@@ -11,7 +11,7 @@
 #include <fstream>
 #include <string>
 
-namespace potfit::io {
+namespace forcesmith::io {
 
 using json = nlohmann::json;
 namespace leaf = boost::leaf;
@@ -112,7 +112,7 @@ get_array_n(const json &arr, std::string_view ctx) {
 
 // Registry-free atom parse: resolve the element straight from the static
 // periodic-table catalog (Species::lookup). The compact table slot
-// (Species::index) is left at its default 0 — PotFit assigns the real slot
+// (Species::index) is left at its default 0 — Forcesmith assigns the real slot
 // at freeze once the full element set is known. Used by Configuration::from_*.
 [[nodiscard]] leaf::result<Atom> parse_atom_catalog(const json &a_obj,
                                                     std::string_view ctx) {
@@ -254,9 +254,9 @@ leaf::result<ParsedConfig> parse_config(std::string_view input) {
   });
 }
 
-} // namespace potfit::io
+} // namespace forcesmith::io
 
-namespace potfit {
+namespace forcesmith {
 
 boost::leaf::result<Configuration>
 Configuration::from_text(std::string_view text) {
@@ -278,4 +278,4 @@ Configuration::from_file(const std::filesystem::path &path) {
   return Configuration::from_text(text);
 }
 
-} // namespace potfit
+} // namespace forcesmith

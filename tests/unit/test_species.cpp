@@ -1,5 +1,5 @@
-#include "potfit/core/atom.hpp"
-#include "potfit/core/species.hpp"
+#include "forcesmith/core/atom.hpp"
+#include "forcesmith/core/species.hpp"
 
 #include <boost/archive/binary_iarchive.hpp>
 #include <boost/archive/binary_oarchive.hpp>
@@ -11,7 +11,7 @@
 #include <string_view>
 
 namespace leaf = boost::leaf;
-using namespace potfit;
+using namespace forcesmith;
 
 // ── Species value type ──────────────────────────────────────────────────────────
 

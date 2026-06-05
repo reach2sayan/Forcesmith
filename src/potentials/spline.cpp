@@ -1,11 +1,11 @@
-#include "potfit/potentials/spline.hpp"
+#include "forcesmith/potentials/spline.hpp"
 
 #include <algorithm>
 #include <boost/assert.hpp>
 #include <cassert>
 #include <ranges>
 
-namespace potfit {
+namespace forcesmith {
 
 namespace {
 
@@ -89,7 +89,7 @@ void SplinePotential::write_curvature(Eigen::VectorXd &dst, std::size_t offset,
 
 double SplinePotential::eval(double r) const {
   // Out of range: linear extrapolation using the boundary slope, consistent
-  // with deriv() and with potfit's splint (e.g. EAM embedding F(ρ) sampled
+  // with deriv() and with forcesmith's splint (e.g. EAM embedding F(ρ) sampled
   // outside the tabulated density range).
   const std::size_t n = x_.size();
   if (r <= x_.front()) {
@@ -116,4 +116,4 @@ double SplinePotential::deriv(double r) const {
   return interp_->prime(r);
 }
 
-} // namespace potfit
+} // namespace forcesmith

@@ -1,15 +1,15 @@
-#include "potfit/optimization/optimizer.hpp"
-#include "potfit/optimization/potfit_functor.hpp"
+#include "forcesmith/optimization/optimizer.hpp"
+#include "forcesmith/optimization/forcesmith_functor.hpp"
 
 #include <iostream>
 
-namespace potfit {
+namespace forcesmith {
 
 namespace {
 
 int run_with_solver(std::span<Configuration> configs, ForceCalculator &model,
                     const OptimizerOptions &opts, const Solver &solver) {
-  PotfitFunctor functor(configs, model, opts.energy_weight, opts.stress_weight,
+  ForcesmithFunctor functor(configs, model, opts.energy_weight, opts.stress_weight,
                         opts.smooth_weight);
 
   Eigen::VectorXd x(functor.inputs());
@@ -60,4 +60,4 @@ int run_optimizer(std::span<Configuration> configs, ForceCalculator &model,
   return run_with_solver(configs, model, opts, solver);
 }
 
-} // namespace potfit
+} // namespace forcesmith

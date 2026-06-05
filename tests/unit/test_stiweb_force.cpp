@@ -1,16 +1,16 @@
-#include "potfit/core/neighbor_list.hpp"
-#include "potfit/force/stiweb_force.hpp"
+#include "forcesmith/core/neighbor_list.hpp"
+#include "forcesmith/force/stiweb_force.hpp"
 
 #include <gtest/gtest.h>
 #include <cmath>
 
-using namespace potfit;
+using namespace forcesmith;
 
 // ── Fixtures ──────────────────────────────────────────────────────────────────
 
-// Standard Stillinger-Weber (1985) Si parameters, in potfit's parameterization.
+// Standard Stillinger-Weber (1985) Si parameters, in forcesmith's parameterization.
 // Textbook form  v2 = Aε[B(σ/r)^p − (σ/r)^q] exp(σ/(r − aσ))
-// is converted to potfit form  (A'·r^{−p} − B'·r^{−q}) exp(δ/(r − a1)).
+// is converted to forcesmith form  (A'·r^{−p} − B'·r^{−q}) exp(δ/(r − a1)).
 static constexpr double SI_EPS       = 2.1683;       // ε (eV)
 static constexpr double SI_SIGMA     = 2.0951;       // σ (Å)
 static constexpr double SI_A_SW      = 7.049556277;  // A_SW

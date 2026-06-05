@@ -1,6 +1,6 @@
-#include "potfit/core/neighbor_list.hpp"
-#include "potfit/io/force_model_reader.hpp"
-#include "potfit/potentials/lmbtr.hpp"
+#include "forcesmith/core/neighbor_list.hpp"
+#include "forcesmith/io/force_model_reader.hpp"
+#include "forcesmith/potentials/lmbtr.hpp"
 
 #include <gtest/gtest.h>
 
@@ -10,7 +10,7 @@
 #include <cmath>
 #include <optional>
 
-using namespace potfit;
+using namespace forcesmith;
 
 namespace {
 

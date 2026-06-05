@@ -1,11 +1,11 @@
-#include "potfit/core/neighbor_list.hpp"
-#include "potfit/force/angular_force.hpp"
+#include "forcesmith/core/neighbor_list.hpp"
+#include "forcesmith/force/angular_force.hpp"
 
 #include <gtest/gtest.h>
 #include <cmath>
 #include <ranges>
 
-using namespace potfit;
+using namespace forcesmith;
 
 // ── Minimal analytic potential types ─────────────────────────────────────────
 

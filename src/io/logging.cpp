@@ -1,6 +1,6 @@
-#include "potfit/io/logging.hpp"
+#include "forcesmith/io/logging.hpp"
 
-#include "potfit/events/signals.hpp"
+#include "forcesmith/events/signals.hpp"
 
 #include <spdlog/sinks/rotating_file_sink.h>
 #include <spdlog/sinks/stdout_color_sinks.h>
@@ -9,7 +9,7 @@
 #include <memory>
 #include <vector>
 
-namespace potfit::log {
+namespace forcesmith::log {
 
 void init(const std::string &file) {
   constexpr std::size_t max_size = 5UL * 1024 * 1024; // 5 MiB per file
@@ -21,7 +21,7 @@ void init(const std::string &file) {
 
   std::vector<spdlog::sink_ptr> sinks{console, rotating};
   auto logger =
-      std::make_shared<spdlog::logger>("potfit", sinks.begin(), sinks.end());
+      std::make_shared<spdlog::logger>("forcesmith", sinks.begin(), sinks.end());
   logger->set_level(spdlog::level::info);
   logger->set_pattern("[%H:%M:%S.%e] [%^%l%$] %v");
 
@@ -48,4 +48,4 @@ SignalSinks connect_signals() {
   return s;
 }
 
-} // namespace potfit::log
+} // namespace forcesmith::log

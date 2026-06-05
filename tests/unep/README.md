@@ -5,8 +5,8 @@ UNEP DFT dataset (`data/unep/<el>_dft_unep.json`, from UNEP-v1 / Zenodo
 11533864 via `tools/extxyz2force.py`) and reports how much it reduces per-atom
 **force RMSE**.
 
-It reuses the existing `build/release/potfit` binary — it never runs cmake.
-Build potfit yourself first; the script errors with a clear message if the
+It reuses the existing `build/release/forcesmith` binary — it never runs cmake.
+Build forcesmith yourself first; the script errors with a clear message if the
 binary is missing.
 
 ## What it does (per element)
@@ -22,7 +22,7 @@ A **two-stage, forces-first** fit:
    `re = dmin`, `rmin = max(1.0, 0.88·dmin)`, `rmax = min(6.5, 2.4·dmin)`.
 2. **Stage-1 analytic start** — `morse` pair + `exp_decay` density + `sqrt`
    embedding (B > 0), all parameters free.
-3. **Stage-1 fit** (`-a lm`) → a dense 500-knot tabulated EAM (potfit's native
+3. **Stage-1 fit** (`-a lm`) → a dense 500-knot tabulated EAM (forcesmith's native
    writer always re-samples to `kDefaultKnots = 500`).
 4. **Stage-2 start** — down-sample each section (pair/density/embedding) of the
    stage-1 result to `--knots` (default 15) free knots. This is the
@@ -30,7 +30,7 @@ A **two-stage, forces-first** fit:
    wildly over-parameterized.
 5. **Stage-2 fit** with `--smooth-weight` (curvature regularization) on the free
    splines.
-6. **Force RMSE** is measured via `potfit --evaluate` at three checkpoints:
+6. **Force RMSE** is measured via `forcesmith --evaluate` at three checkpoints:
    start (analytic), after stage 1, and after stage 2.
 
 ## Usage
@@ -46,7 +46,7 @@ python3 tests/unep/fit_eam.py --elements Cu
 python3 tests/unep/fit_eam.py --elements Cu --max-configs 40 --maxiter 60
 ```
 
-Key flags: `--elements`, `--data-dir`, `--out-dir`, `--potfit`, `--maxiter`,
+Key flags: `--elements`, `--data-dir`, `--out-dir`, `--forcesmith`, `--maxiter`,
 `--eweight` (default 0.1), `--stress-weight` (default 0), `--smooth-weight`
 (default 1.0), `--knots` (default 15), `--algorithm {lm,powell,de,ls}`,
 `--max-configs`/`--stride` (subsample), `--jobs` (parallel elements),
@@ -72,7 +72,7 @@ Plot both fits with `plot_fit.py --element <El>`:
 Re-load any fit with:
 
 ```bash
-build/release/potfit -c data/unep/cu_dft_unep.json \
+build/release/forcesmith -c data/unep/cu_dft_unep.json \
     -s tests/unep/fits/cu_eam_fit.json --evaluate /tmp/chk.json
 ```
 

@@ -2,8 +2,8 @@
 // programmatic-API parallel of tests/unep/fit_eam.py. Built as the single
 // `unep_fit` binary.
 //
-// fit_eam.py shells out to the `potfit` CLI binary once per stage; this driver
-// instead builds the fit in memory through the public PotFit API and runs
+// fit_eam.py shells out to the `forcesmith` CLI binary once per stage; this driver
+// instead builds the fit in memory through the public Forcesmith API and runs
 // the *same* two-stage, forces-first pipeline against
 // data/unep/<el>_dft_unep.json (real DFT forces/energies from UNEP-v1,
 // Zenodo 11533864). It is fully self-contained: cutoff derivation, the analytic
@@ -25,10 +25,10 @@
 //   5. Stage-2 fit with --smooth-weight regularizing the free splines.
 //   6. Per-atom force RMSE at start / stage-1 / final.
 
-#include "potfit/api/potfit.hpp"
-#include "potfit/io/config_reader.hpp" // io::ParseError
-#include "potfit/optimization/ipopt_solver.hpp"
-#include "potfit/optimization/solver.hpp"
+#include "forcesmith/api/forcesmith.hpp"
+#include "forcesmith/io/config_reader.hpp" // io::ParseError
+#include "forcesmith/optimization/ipopt_solver.hpp"
+#include "forcesmith/optimization/solver.hpp"
 
 #include <boost/leaf/handle_errors.hpp>
 #include <boost/program_options.hpp>
@@ -47,14 +47,14 @@
 #include <string>
 #include <vector>
 
-#ifndef POTFIT_UNEP_ELEMENT
-#define POTFIT_UNEP_ELEMENT "Cu"
+#ifndef FORCESMITH_UNEP_ELEMENT
+#define FORCESMITH_UNEP_ELEMENT "Cu"
 #endif
 
 namespace leaf = boost::leaf;
 namespace po = boost::program_options;
 using json = nlohmann::json;
-using namespace potfit;
+using namespace forcesmith;
 
 // BOOST_LEAF_CHECK expands to a GNU statement-expression ({ ... }); silence the
 // pedantic complaint about that Boost idiom for this translation unit.
@@ -67,7 +67,7 @@ using namespace potfit;
 namespace {
 
 struct Args {
-  std::string element = POTFIT_UNEP_ELEMENT;
+  std::string element = FORCESMITH_UNEP_ELEMENT;
   std::string data_dir = "data/unep";
   std::string out_dir = "tests/unep";
   int maxiter = 300;
@@ -166,7 +166,7 @@ double nearest_neighbour_distance(const json &configs) {
 
 // Stage-1 analytic EAM start (all params free): morse pair, exp_decay density,
 // sqrt embedding (B>0). Matches fit_eam.py::analytic_start.
-leaf::result<void> set_analytic_start(PotFit &s, const std::string &el,
+leaf::result<void> set_analytic_start(Forcesmith &s, const std::string &el,
                                       double rmin, double rmax) {
   BOOST_LEAF_AUTO(pair, Potential::from_text(
                             json{{"type", "morse"}, {"rmin", rmin},
@@ -208,7 +208,7 @@ std::vector<double> resample(const std::vector<double> &y, int knots) {
 // free tabulated knots, then place them on the session (mirrors
 // fit_eam.py::tabulated_start_from_dense). Also returns the start spec written
 // out for inspection.
-leaf::result<json> set_tabulated_start(PotFit &s, const std::string &el,
+leaf::result<json> set_tabulated_start(Forcesmith &s, const std::string &el,
                                        const json &dense, int knots) {
   json spec{{"model", dense.value("model", "eam")},
             {"ntypes", dense.value("ntypes", 1)}};
@@ -239,7 +239,7 @@ leaf::result<json> set_tabulated_start(PotFit &s, const std::string &el,
 
 // ── session assembly, optimization, evaluation ───────────────────────────────
 
-leaf::result<void> add_configs(PotFit &s, const json &configs) {
+leaf::result<void> add_configs(Forcesmith &s, const json &configs) {
   for (const auto &rec : configs) {
     BOOST_LEAF_AUTO(cfg, Configuration::from_text(rec.dump()));
     s.add_configuration(std::move(cfg));
@@ -247,7 +247,7 @@ leaf::result<void> add_configs(PotFit &s, const json &configs) {
   return {};
 }
 
-void apply_options(PotFit &s, const Args &a, double smooth_weight) {
+void apply_options(Forcesmith &s, const Args &a, double smooth_weight) {
   OptimizerOptions &o = s.options();
   o.energy_weight = a.eweight;
   o.stress_weight = a.stress_weight;
@@ -267,7 +267,7 @@ void apply_options(PotFit &s, const Args &a, double smooth_weight) {
 
 // Per-atom force-component RMSE (eV/Å) of the session's current model against
 // the loaded reference forces.
-leaf::result<double> force_rmse(PotFit &s) {
+leaf::result<double> force_rmse(Forcesmith &s) {
   BOOST_LEAF_AUTO(configs, s.configurations());
   double sumsq = 0.0;
   std::size_t n = 0;
@@ -319,7 +319,7 @@ leaf::result<Result> fit_element(const Args &args) {
   res.rmax = std::min(6.5, 2.4 * res.dmin);
 
   // ── Stage 1: analytic start → analytic fit (written dense) ─────────────────
-  PotFit s1;
+  Forcesmith s1;
   BOOST_LEAF_CHECK(add_configs(s1, configs));
   BOOST_LEAF_CHECK(set_analytic_start(s1, el, res.rmin, res.rmax));
   BOOST_LEAF_ASSIGN(res.rmse_start, force_rmse(s1)); // un-fitted baseline
@@ -335,7 +335,7 @@ leaf::result<Result> fit_element(const Args &args) {
   // ── Stage 2: down-sampled tabulated start → regularized tabular fit ────────
   if (args.stage >= 2) {
     BOOST_LEAF_AUTO(dense, read_json(analytic_fit));
-    PotFit s2;
+    Forcesmith s2;
     BOOST_LEAF_CHECK(add_configs(s2, configs));
     BOOST_LEAF_AUTO(start_spec, set_tabulated_start(s2, el, dense, args.knots));
     write_json(work + "/start_tab.json", start_spec);

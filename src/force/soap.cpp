@@ -1,4 +1,4 @@
-#include "potfit/potentials/soap.hpp"
+#include "forcesmith/potentials/soap.hpp"
 
 #include <Eigen/Eigenvalues>
 #include <boost/math/interpolators/cardinal_cubic_b_spline.hpp>
@@ -6,7 +6,7 @@
 #include <boost/math/special_functions/bessel.hpp>
 #include <boost/math/special_functions/spherical_harmonic.hpp>
 
-#include "potfit/force/descriptor_layout.hpp" // pair_ordinal
+#include "forcesmith/force/descriptor_layout.hpp" // pair_ordinal
 
 #include <algorithm>
 #include <array>
@@ -17,7 +17,7 @@
 #include <optional>
 #include <vector>
 
-namespace potfit {
+namespace forcesmith {
 
 // Tabulated radial projection J(a,l)(r) = ∫ r'² φ_a(r') e^{-(r'²+r²)/2σ²} i_l(r
 // r'/σ²) dr' as a cubic spline in r over [0,rcut], one per (a,l). Replacing the
@@ -455,8 +455,8 @@ void SoapModel::position_gradient(const Atom &a, const Eigen::VectorXcd &c,
 std::vector<std::optional<Eigen::Index>>
 SoapModel::descriptor_index_map(const SpeciesRegistry &old_reg,
                                 const SpeciesRegistry &new_reg) const {
-  const int S_old = static_cast<int>(potfit::ntypes(old_reg));
-  const int S_new = static_cast<int>(potfit::ntypes(new_reg));
+  const int S_old = static_cast<int>(forcesmith::ntypes(old_reg));
+  const int S_new = static_cast<int>(forcesmith::ntypes(new_reg));
   const int nm = n_max;
   const int lm = l_max;
   const auto old_of_new = old_slot_of_new(old_reg, new_reg);
@@ -487,4 +487,4 @@ SoapModel::descriptor_index_map(const SpeciesRegistry &old_reg,
   return map;
 }
 
-} // namespace potfit
+} // namespace forcesmith

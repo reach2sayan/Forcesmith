@@ -1,12 +1,12 @@
-#include "potfit/io/potential_reader.hpp"
+#include "forcesmith/io/potential_reader.hpp"
 
 #include <boost/leaf/handle_errors.hpp>
 #include <gtest/gtest.h>
 #include <cmath>
 
 namespace leaf = boost::leaf;
-using namespace potfit;
-using namespace potfit::io;
+using namespace forcesmith;
+using namespace forcesmith::io;
 
 // ── Helper ────────────────────────────────────────────────────────────────────
 

@@ -2,8 +2,8 @@
 ################################################################
 #
 # extxyz2force:
-#   convert extended-XYZ ab-initio data into potfit reference
-#   configurations (JSON for the C++23 potfit port).
+#   convert extended-XYZ ab-initio data into forcesmith reference
+#   configurations (JSON for the C++23 forcesmith port).
 #
 #   Companion to tools/vasp2force.py: same output contract, a
 #   different input format.  Where vasp2force parses VASP OUTCAR
@@ -32,7 +32,7 @@
 #
 #   NOTE on stress: the extended-XYZ `virial` (9 components, eV)
 #   is the cell virial W.  We map sigma = W / V in eV/A^3 -- the
-#   SAME unit the C++ potfit engine uses internally for calc_stress
+#   SAME unit the C++ forcesmith engine uses internally for calc_stress
 #   (virial/volume, no GPa conversion) -- and emit [xx, yy, zz, xy,
 #   yz, zx].  The sign convention has been verified consistent with
 #   the engine on a hydrostatic UNEP frame (positive diagonal under
@@ -134,7 +134,7 @@ def column_index(cols, name):
 
 def virial_to_stress(virial9, volume):
     """Convert a 9-component cell virial (eV) at given volume (A^3) to the
-    potfit stress order [xx, yy, zz, xy, yz, zx] in eV/A^3 -- the unit the
+    forcesmith stress order [xx, yy, zz, xy, yz, zx] in eV/A^3 -- the unit the
     C++ engine compares against (calc_stress = virial / volume)."""
     v = [float(x) for x in virial9]
     # row-major 3x3
@@ -183,7 +183,7 @@ def read_frames(filename):
 
 
 def build_config(natoms, comment, atom_lines, args):
-    """Convert one extxyz frame to a potfit JSON config dict, or None."""
+    """Convert one extxyz frame to a forcesmith JSON config dict, or None."""
     props = parse_comment(comment)
 
     if "Lattice" not in props and "lattice" not in props:
@@ -256,8 +256,8 @@ def build_config(natoms, comment, atom_lines, args):
 
 def parse_command_line():
     parser = argparse.ArgumentParser(
-        description="Convert extended-XYZ ab-initio data into potfit "
-                    "reference configurations (JSON for the C++ potfit port).")
+        description="Convert extended-XYZ ab-initio data into forcesmith "
+                    "reference configurations (JSON for the C++ forcesmith port).")
     parser.add_argument("file", type=str,
                         help="extended-XYZ file (plain or .gz)")
     parser.add_argument("-o", "--output", type=str, default=None,

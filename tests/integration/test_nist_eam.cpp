@@ -15,9 +15,9 @@
 //            criterion is prediction quality on a held-out config, not
 //            raw parameter values, to be gauge-ambiguity agnostic.
 
-#include "potfit/force/eam_force.hpp"
-#include "potfit/io/force_model_reader.hpp"
-#include "potfit/optimization/optimizer.hpp"
+#include "forcesmith/force/eam_force.hpp"
+#include "forcesmith/io/force_model_reader.hpp"
+#include "forcesmith/optimization/optimizer.hpp"
 
 #include <boost/leaf/handle_errors.hpp>
 #include <gtest/gtest.h>
@@ -27,8 +27,8 @@
 #include <vector>
 
 namespace leaf = boost::leaf;
-using namespace potfit;
-using namespace potfit::io;
+using namespace forcesmith;
+using namespace forcesmith::io;
 
 // ── Analytic EAM JSON strings ─────────────────────────────────────────────────
 

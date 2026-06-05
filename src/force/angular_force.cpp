@@ -1,11 +1,11 @@
-#include "potfit/force/angular_force.hpp"
-#include "potfit/core/neighbor_list.hpp"
-#include "potfit/events/signals.hpp"
+#include "forcesmith/force/angular_force.hpp"
+#include "forcesmith/core/neighbor_list.hpp"
+#include "forcesmith/events/signals.hpp"
 
 #include <cmath>
 #include <numeric>
 
-namespace potfit {
+namespace forcesmith {
 
 std::size_t AngularForceCalculator::param_count() const {
   auto count_params = [](const auto &range) {
@@ -140,7 +140,7 @@ void AngularForceCalculator::eval_forces(Configuration &cfg) const {
         const double df2 = rad_k.deriv(r2);
 
         const double c = d1.dot(d2) * inv_r1 * inv_r2;
-        // g indexed by the central atom's type (matches potfit force_ang.c).
+        // g indexed by the central atom's type (matches forcesmith force_ang.c).
         const double g = angular[ai.type].eval(c);
         const double dg = angular[ai.type].deriv(c);
 
@@ -178,4 +178,4 @@ void AngularForceCalculator::eval_forces(Configuration &cfg) const {
       events::ForceEvalStats{conf_index, force_rms(cfg), cfg});
 }
 
-} // namespace potfit
+} // namespace forcesmith

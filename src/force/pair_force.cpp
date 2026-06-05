@@ -1,7 +1,7 @@
-#include "potfit/force/pair_force.hpp"
+#include "forcesmith/force/pair_force.hpp"
 
-#include "potfit/core/neighbor_list.hpp"
-#include "potfit/events/signals.hpp"
+#include "forcesmith/core/neighbor_list.hpp"
+#include "forcesmith/events/signals.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -11,7 +11,7 @@
 #include <optional>
 #include <utility>
 
-namespace potfit {
+namespace forcesmith {
 
 std::optional<PairBond>
 PairForceCalculator::make_pair_bond(Atom &ai, const NeighborEntry &nb,
@@ -145,4 +145,4 @@ make_pair_force_calculator(std::vector<Potential> potentials) {
   return calc;
 }
 
-} // namespace potfit
+} // namespace forcesmith

@@ -1,8 +1,8 @@
-#include "potfit/force/smoothness.hpp"
+#include "forcesmith/force/smoothness.hpp"
 
-#include "potfit/force/force_calculator_concept.hpp" // *_smoothness_range helpers
+#include "forcesmith/force/force_calculator_concept.hpp" // *_smoothness_range helpers
 
-namespace potfit {
+namespace forcesmith {
 
 // EAM: pair + density + embedding tables.
 std::size_t model_smoothness_count(const EAMForceCalculator &m) {
@@ -54,4 +54,4 @@ void model_write_smoothness(const AngularForceCalculator &m,
   write_smoothness_range(m.angular, dst, off, weight);
 }
 
-} // namespace potfit
+} // namespace forcesmith

@@ -1,7 +1,7 @@
-#include "potfit/io/force_model_reader.hpp"
-#include "potfit/io/factory.hpp"
-#include "potfit/io/json_util.hpp"
-#include "potfit/io/potential_reader.hpp"
+#include "forcesmith/io/force_model_reader.hpp"
+#include "forcesmith/io/factory.hpp"
+#include "forcesmith/io/json_util.hpp"
+#include "forcesmith/io/potential_reader.hpp"
 
 #include <boost/leaf/error.hpp>
 #include <nlohmann/json.hpp>
@@ -12,7 +12,7 @@
 #include <utility>
 #include <vector>
 
-namespace potfit::io {
+namespace forcesmith::io {
 
 using json = nlohmann::json;
 namespace leaf = boost::leaf;
@@ -336,7 +336,7 @@ leaf::result<ForceCalculator> build_tersoff(json &j, std::size_t ntypes) {
     tp.h = p.at("h").get<double>();
     tp.R = p.at("R").get<double>();
     tp.S = p.at("S").get<double>();
-    // Optional bond-order mixing weight (potfit's omega). Absent → 1.0,
+    // Optional bond-order mixing weight (forcesmith's omega). Absent → 1.0,
     // fixed (diagonal/same-type pairs); present → free for fitting.
     if (p.contains("omega"))
       tp.omega = Param{p.at("omega").get<double>(), false};
@@ -580,8 +580,8 @@ leaf::result<ForceCalculator> build_ml(json &j, std::size_t ntypes) {
 }
 
 // Error policy for the force-model factory: an unknown "model" string maps to
-// potfit's existing "unsupported model" message. (The generic PotfitFactory
-// lives in potfit/io/factory.hpp.)
+// forcesmith's existing "unsupported model" message. (The generic ForcesmithFactory
+// lives in forcesmith/io/factory.hpp.)
 template <class IdentifierType, class AbstractProduct>
 struct UnsupportedModelError {
   static leaf::result<AbstractProduct> OnUnknownType(const IdentifierType &id) {
@@ -592,7 +592,7 @@ struct UnsupportedModelError {
 
 // The concrete force-model factory: "model" string → per-model builder.
 using ModelFactory =
-    PotfitFactory<ForceCalculator, std::string,
+    ForcesmithFactory<ForceCalculator, std::string,
                   leaf::result<ForceCalculator> (*)(json &, std::size_t),
                   UnsupportedModelError>;
 
@@ -638,4 +638,4 @@ leaf::result<ForceCalculator> parse_force_model(std::string_view input) {
   });
 }
 
-} // namespace potfit::io
+} // namespace forcesmith::io

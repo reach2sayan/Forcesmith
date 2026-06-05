@@ -1,8 +1,8 @@
-#include "potfit/io/loaders.hpp"
+#include "forcesmith/io/loaders.hpp"
 
-#include "potfit/io/config_reader.hpp" // ParseError
-#include "potfit/io/force_model_reader.hpp"
-#include "potfit/io/json_util.hpp"
+#include "forcesmith/io/config_reader.hpp" // ParseError
+#include "forcesmith/io/force_model_reader.hpp"
+#include "forcesmith/io/json_util.hpp"
 
 #include <boost/leaf/error.hpp>
 #include <nlohmann/json.hpp>
@@ -11,7 +11,7 @@
 #include <iterator>
 #include <string>
 
-namespace potfit::io {
+namespace forcesmith::io {
 
 namespace leaf = boost::leaf;
 
@@ -28,7 +28,7 @@ read_file(const std::filesystem::path &path) {
 } // namespace
 
 leaf::result<void> load_configs(const std::filesystem::path &path,
-                                PotFit &session) {
+                                Forcesmith &session) {
   BOOST_LEAF_AUTO(text, read_file(path));
 
   return catch_json([&]() -> leaf::result<void> {
@@ -47,10 +47,10 @@ leaf::result<void> load_configs(const std::filesystem::path &path,
 }
 
 leaf::result<void> load_model(const std::filesystem::path &path,
-                              PotFit &session) {
+                              Forcesmith &session) {
   BOOST_LEAF_AUTO(text, read_file(path));
   BOOST_LEAF_AUTO(model, parse_force_model(text));
   return session.seed_force_model(std::move(model));
 }
 
-} // namespace potfit::io
+} // namespace forcesmith::io

@@ -6,13 +6,13 @@ endif ()
 find_package(Boost 1.83 CONFIG REQUIRED COMPONENTS serialization program_options)
 
 find_package(TBB CONFIG REQUIRED)
-option(POTFIT_USE_MKL "Use system Intel MKL as Eigen's BLAS/LAPACK backend" ON)
+option(FORCESMITH_USE_MKL "Use system Intel MKL as Eigen's BLAS/LAPACK backend" ON)
 
-add_library(potfit_eigen INTERFACE)
-add_library(potfit::eigen ALIAS potfit_eigen)
-target_link_libraries(potfit_eigen INTERFACE Eigen3::Eigen)
+add_library(forcesmith_eigen INTERFACE)
+add_library(forcesmith::eigen ALIAS forcesmith_eigen)
+target_link_libraries(forcesmith_eigen INTERFACE Eigen3::Eigen)
 
-if (POTFIT_USE_MKL)
+if (FORCESMITH_USE_MKL)
     find_package(PkgConfig QUIET)
     if (PkgConfig_FOUND)
         # IMPORTED_TARGET → PkgConfig::MKL carries the include dir (/usr/include/mkl)
@@ -48,14 +48,14 @@ if (POTFIT_USE_MKL)
     endif ()
 endif ()
 
-if (POTFIT_USE_MKL AND MKL_FOUND)
-    target_link_libraries(potfit_eigen INTERFACE PkgConfig::MKL)
-    target_compile_definitions(potfit_eigen INTERFACE EIGEN_USE_MKL_ALL)
+if (FORCESMITH_USE_MKL AND MKL_FOUND)
+    target_link_libraries(forcesmith_eigen INTERFACE PkgConfig::MKL)
+    target_compile_definitions(forcesmith_eigen INTERFACE EIGEN_USE_MKL_ALL)
     message(STATUS "Eigen backend: system Intel MKL (lp64, ${MKL_THREADING_LAYER}) via pkg-config")
-elseif (POTFIT_USE_MKL)
+elseif (FORCESMITH_USE_MKL)
     message(STATUS "Eigen backend: built-in kernels (system MKL pkg-config 'mkl-dynamic-lp64-{tbb,seq}' not found)")
 else ()
-    message(STATUS "Eigen backend: built-in kernels (POTFIT_USE_MKL=OFF)")
+    message(STATUS "Eigen backend: built-in kernels (FORCESMITH_USE_MKL=OFF)")
 endif ()
 
 include(FetchContent)
@@ -116,7 +116,7 @@ target_include_directories(spdlog SYSTEM INTERFACE "${spdlog_SOURCE_DIR}/include
 
 # IPOPT + MUMPS built from source into the build tree (no system install needed).
 # Defines the INTERFACE IMPORTED target IPOPT::ipopt and the ExternalProject
-# target IpoptProject (depended on by potfit_engine so the libs exist before link).
+# target IpoptProject (depended on by forcesmith_engine so the libs exist before link).
 include(FetchIPOPT)
 # $ORIGIN-relative RPATH so the CLI/test binaries find libipopt/libcoinmumps in the
 # build tree at runtime, regardless of where the build tree lives on disk.

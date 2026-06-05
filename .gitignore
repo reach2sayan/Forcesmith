@@ -28,8 +28,8 @@ _deps/
 *.exp
 
 # ── Executables ───────────────────────────────────────────────────────────────
-/potfit
-/potfit_tests
+/forcesmith
+/forcesmith_tests
 *.exe
 *.out
 

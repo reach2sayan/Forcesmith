@@ -1,7 +1,7 @@
 // ML-potential fitting driver for the converted UNEP DFT dataset — the ML
 // parallel of tests/unep/fit_eam_api.cpp. Built as the single `ml_fit` binary.
 //
-// It builds, in memory through the public PotFit API, a descriptor + an energy
+// It builds, in memory through the public Forcesmith API, a descriptor + an energy
 // head, seeds it as the force model, and runs a forces-first fit against
 // data/unep/<el>_dft_unep.json (real DFT data from UNEP-v1, Zenodo 11533864).
 // Descriptor and element are runtime flags (the head is a linear map):
@@ -14,14 +14,14 @@
 // grows quickly with config count and neighbours. Keep --max-configs small; this
 // is a correctness/sanity driver, not a production trainer.
 
-#include "potfit/api/potfit.hpp"
-#include "potfit/force/force_calculator.hpp"
-#include "potfit/io/config_reader.hpp" // io::ParseError
-#include "potfit/io/logging.hpp"
-#include "potfit/optimization/ipopt_solver.hpp"
-#include "potfit/optimization/solver.hpp"
-#include "potfit/potentials/soap.hpp"
-#include "potfit/potentials/acsf.hpp"
+#include "forcesmith/api/forcesmith.hpp"
+#include "forcesmith/force/force_calculator.hpp"
+#include "forcesmith/io/config_reader.hpp" // io::ParseError
+#include "forcesmith/io/logging.hpp"
+#include "forcesmith/optimization/ipopt_solver.hpp"
+#include "forcesmith/optimization/solver.hpp"
+#include "forcesmith/potentials/soap.hpp"
+#include "forcesmith/potentials/acsf.hpp"
 
 #include <boost/leaf/handle_errors.hpp>
 #include <boost/program_options.hpp>
@@ -46,14 +46,14 @@
 #include <variant>
 #include <vector>
 
-#ifndef POTFIT_ML_ELEMENT
-#define POTFIT_ML_ELEMENT "Cu"
+#ifndef FORCESMITH_ML_ELEMENT
+#define FORCESMITH_ML_ELEMENT "Cu"
 #endif
 
 namespace leaf = boost::leaf;
 namespace po = boost::program_options;
 using json = nlohmann::json;
-using namespace potfit;
+using namespace forcesmith;
 
 // BOOST_LEAF_CHECK expands to a GNU statement-expression ({ ... }); silence the
 // pedantic complaint about that Boost idiom for this translation unit.
@@ -66,7 +66,7 @@ using namespace potfit;
 namespace {
 
 struct Args {
-  std::string element = POTFIT_ML_ELEMENT; // compile-time default; --element overrides
+  std::string element = FORCESMITH_ML_ELEMENT; // compile-time default; --element overrides
   std::string descriptor = "soap"; // descriptor: "soap" | "symfunc"
   std::string head = "linear";     // energy head: "linear" (only option)
   std::vector<double> g2_eta = {0.05, 0.2, 0.5, 1.0, 2.0, 4.0}; // symfunc G2 widths
@@ -162,7 +162,7 @@ double nearest_neighbour_distance(const json &configs) {
   return dmin;
 }
 
-leaf::result<void> add_configs(PotFit &s, const json &configs) {
+leaf::result<void> add_configs(Forcesmith &s, const json &configs) {
   for (const auto &rec : configs) {
     BOOST_LEAF_AUTO(cfg, Configuration::from_text(rec.dump()));
     s.add_configuration(std::move(cfg));
@@ -170,7 +170,7 @@ leaf::result<void> add_configs(PotFit &s, const json &configs) {
   return {};
 }
 
-void apply_options(PotFit &s, const Args &a) {
+void apply_options(Forcesmith &s, const Args &a) {
   OptimizerOptions &o = s.options();
   o.energy_weight = a.eweight;
   o.stress_weight = a.stress_weight;
@@ -190,7 +190,7 @@ void apply_options(PotFit &s, const Args &a) {
   }
 }
 
-leaf::result<double> force_rmse(PotFit &s) {
+leaf::result<double> force_rmse(Forcesmith &s) {
   BOOST_LEAF_AUTO(configs, s.configurations());
   if (configs.empty()) {
     return std::numeric_limits<double>::quiet_NaN();
@@ -308,7 +308,7 @@ leaf::result<Result> fit_element(const Args &a) {
   }
   res.rcut = a.rcut > 0.0 ? a.rcut : std::min(6.0, 2.4 * res.dmin);
 
-  PotFit s;
+  Forcesmith s;
   BOOST_LEAF_CHECK(add_configs(s, configs));
   ForceCalculator model = build_model(a, res.rcut);
   res.descriptor_size = std::visit(
@@ -443,9 +443,9 @@ int main(int argc, char *argv[]) {
   // Per-iteration logging to console + a per-(element,descriptor,head) rotating
   // file, so parallel runs don't clobber each other's log. The guards must
   // outlive fit_element()'s optimize() call.
-  potfit::log::init("ml_fit_" + a.element + "_" + a.descriptor + "_" + a.head +
+  forcesmith::log::init("ml_fit_" + a.element + "_" + a.descriptor + "_" + a.head +
                     ".log");
-  auto log_sinks = potfit::log::connect_signals();
+  auto log_sinks = forcesmith::log::connect_signals();
 
   int ret = 0;
   leaf::try_handle_all(

@@ -1,13 +1,13 @@
-#include "potfit/force/stiweb_force.hpp"
-#include "potfit/core/neighbor_list.hpp"
-#include "potfit/events/signals.hpp"
+#include "forcesmith/force/stiweb_force.hpp"
+#include "forcesmith/core/neighbor_list.hpp"
+#include "forcesmith/events/signals.hpp"
 
 #include <cmath>
 #include <numeric>
 #include <optional>
 #include <utility>
 
-namespace potfit {
+namespace forcesmith {
 namespace {
 
 auto sw_fields(SWParams &p) {
@@ -20,7 +20,7 @@ auto sw_fields(const SWParams &p) {
 }
 
 // SW 2-body: v2(r) = (A·r^{−p} − B·r^{−q}) exp(δ/(r − a1)), r < a1
-// Matches potfit stiweb_2_value. Returns {v2, dv2/dr}; both zero for r ≥ a1.
+// Matches forcesmith stiweb_2_value. Returns {v2, dv2/dr}; both zero for r ≥ a1.
 std::pair<double, double> v2_dv2(double r, const SWParams &p) noexcept {
   if (r >= p.a1) {
     return {0.0, 0.0};
@@ -41,7 +41,7 @@ std::pair<double, double> v2_dv2(double r, const SWParams &p) noexcept {
 }
 
 // SW 3-body radial: h(r) = exp(γ/(r − a2)), r < a2
-// Matches potfit stiweb_3_value. Returns {h, dh/dr}; both zero for r ≥ a2.
+// Matches forcesmith stiweb_3_value. Returns {h, dh/dr}; both zero for r ≥ a2.
 std::pair<double, double> h_dh(double r, const SWParams &p) noexcept {
   if (r >= p.a2) {
     return {0.0, 0.0};
@@ -329,4 +329,4 @@ void StiwebForceCalculator::eval_forces(Configuration &cfg) const {
       events::ForceEvalStats{conf_index, force_rms(cfg), cfg});
 }
 
-} // namespace potfit
+} // namespace forcesmith

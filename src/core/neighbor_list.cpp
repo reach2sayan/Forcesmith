@@ -1,12 +1,12 @@
-#include "potfit/core/neighbor_list.hpp"
-#include "potfit/core/potential_base.hpp"
+#include "forcesmith/core/neighbor_list.hpp"
+#include "forcesmith/core/potential_base.hpp"
 
 #include <algorithm>
 #include <cmath>
 #include <variant>
 #include <vector>
 
-namespace potfit {
+namespace forcesmith {
 
 namespace {
 
@@ -31,7 +31,7 @@ void add_neighbor(Configuration &cfg, const PotentialPair *pots, std::size_t i,
 }
 
 // Periodic build: replicate the cell out to ceil(rcut / box_height) image
-// shells per lattice direction (matching potfit's config.c), so that for cells
+// shells per lattice direction (matching forcesmith's config.c), so that for cells
 // smaller than the cutoff every periodic neighbour — including an atom's own
 // images — is found. Each ordered pair is stored on the owning atom; the
 // equal-and-opposite mirror entry supplies the reaction on the partner, and the
@@ -108,4 +108,4 @@ void build_neighbor_list(Configuration &cfg, double rcut,
   build_impl(cfg, rcut, &pots);
 }
 
-} // namespace potfit
+} // namespace forcesmith

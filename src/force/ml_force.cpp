@@ -1,10 +1,10 @@
-#include "potfit/force/ml_force.hpp"
+#include "forcesmith/force/ml_force.hpp"
 
 #include <algorithm>
 #include <ranges>
 #include <span>
 
-namespace potfit {
+namespace forcesmith {
 
 // ---- LinearHead
 // --------------------------------------------------------------
@@ -96,4 +96,4 @@ LinearHead LinearHead::zero_like(Eigen::Index n) const {
   return out; // default bias{0.0, true}
 }
 
-} // namespace potfit
+} // namespace forcesmith

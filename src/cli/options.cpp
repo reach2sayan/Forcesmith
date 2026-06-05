@@ -1,14 +1,14 @@
-#include "potfit/cli/options.hpp"
+#include "forcesmith/cli/options.hpp"
 
 #include <boost/program_options.hpp>
 #include <iostream>
 
 namespace po = boost::program_options;
 
-namespace potfit::cli {
+namespace forcesmith::cli {
 
 ParseResult parse(int argc, char *argv[]) {
-  po::options_description desc("potfit — interatomic potential fitter");
+  po::options_description desc("forcesmith — interatomic potential fitter");
   desc.add_options()("help,h", "show this message")(
       "config,c", po::value<std::string>()->required(),
       "atomic configuration file")("startpot,s",
@@ -53,9 +53,9 @@ ParseResult parse(int argc, char *argv[]) {
     if (vm.count("help") || argc == 1) {
       std::cout << desc << "\n"
                 << "subcommand:\n"
-                << "  potfit init --model <type> --out <file> [...]   "
+                << "  forcesmith init --model <type> --out <file> [...]   "
                    "scaffold a fresh startpot\n"
-                << "  (run 'potfit init --help' for its options)\n";
+                << "  (run 'forcesmith init --help' for its options)\n";
       return {ParseOutcome::ExitOk, {}};
     }
     po::notify(vm);
@@ -91,4 +91,4 @@ ParseResult parse(int argc, char *argv[]) {
   return {ParseOutcome::Run, std::move(o)};
 }
 
-} // namespace potfit::cli
+} // namespace forcesmith::cli

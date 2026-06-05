@@ -1,10 +1,10 @@
-#include "potfit/potentials/spline.hpp"
+#include "forcesmith/potentials/spline.hpp"
 
 #include <gtest/gtest.h>
 #include <cmath>
 #include <ranges>
 
-using namespace potfit;
+using namespace forcesmith;
 
 // makima reproduces linear functions exactly (all differences are equal, weights degenerate to average = slope).
 
@@ -48,7 +48,7 @@ TEST(SplinePotential, DerivConsistentWithEval) {
 }
 
 // Out of range, eval extrapolates linearly with the boundary slope (matching
-// potfit's splint), not clamping. Boundary slope here is (3-5)/(2-1) = -2.
+// forcesmith's splint), not clamping. Boundary slope here is (3-5)/(2-1) = -2.
 TEST(SplinePotential, BoundaryExtrapolateBelow) {
     SplinePotential sp({1.0, 2.0, 3.0}, {5.0, 3.0, 1.0});
     EXPECT_NEAR(sp.eval(0.0), 7.0, 1e-15);   // 5 + (-2)(0-1)

@@ -1,6 +1,6 @@
-#include "potfit/force/force_calculator.hpp"
-#include "potfit/optimization/optimizer.hpp"
-#include "potfit/potentials/acsf.hpp"
+#include "forcesmith/force/force_calculator.hpp"
+#include "forcesmith/optimization/optimizer.hpp"
+#include "forcesmith/potentials/acsf.hpp"
 
 #include <gtest/gtest.h>
 
@@ -9,7 +9,7 @@
 #include <variant>
 #include <vector>
 
-using namespace potfit;
+using namespace forcesmith;
 
 namespace {
 

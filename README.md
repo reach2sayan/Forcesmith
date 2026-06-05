@@ -1,9 +1,9 @@
-# Potfit
+# Forcesmith
 
 A modern **C++23** reimplementation of [potfit](https://www.potfit.net/), the
 open-source force-matching tool for constructing interatomic potentials. Given a
 set of reference configurations (atomic positions, forces, energies, and
-optionally stresses — typically from DFT), Potfit optimises a potential's
+optionally stresses — typically from DFT), Forcesmith optimises a potential's
 parameters so the model reproduces the reference data.
 
 Supported potential families:
@@ -24,9 +24,9 @@ or a direction-set line search).
 
 ## Design
 
-Potfit is built as a static engine library (`potfit_engine`), a first-class
-shared API library (`libpotfit`, the public `potfit::PotFit` facade), and a thin
-CLI (`potfit`) that is just another client of that API. Polymorphic surfaces
+Forcesmith is built as a static engine library (`forcesmith_engine`), a first-class
+shared API library (`libforcesmith`, the public `forcesmith::Forcesmith` facade), and a thin
+CLI (`forcesmith`) that is just another client of that API. Polymorphic surfaces
 (potentials, solvers) use Sean-Parent-style **value-semantic type erasure**, so
 new potentials and solvers can be supplied by a library client without touching
 the engine — see [`docs/extension.md`](docs/extension.md).
@@ -49,20 +49,20 @@ cmake --build build
 
 Targets produced:
 
-- `potfit` — the CLI binary (target name `potfit_cli`, output `potfit`)
-- `libpotfit.so` — the shared programmatic API library
-- `potfit_tests` / `potfit_integration_tests` — GoogleTest suites (run via `ctest`)
+- `forcesmith` — the CLI binary (target name `forcesmith_cli`, output `forcesmith`)
+- `libforcesmith.so` — the shared programmatic API library
+- `forcesmith_tests` / `forcesmith_integration_tests` — GoogleTest suites (run via `ctest`)
 
 Optional fit drivers (each a single binary; pick the element at runtime with
 `--element`):
 
-- `-DPOTFIT_BUILD_UNEP_FITS=ON` → `unep_fit` (UNEP EAM fit, e.g. `unep_fit --element Cu`)
-- `-DPOTFIT_BUILD_ML_FITS=ON` → `ml_fit` (ML fit, e.g. `ml_fit --element Cu --descriptor soap|symfunc --head nn|linear`)
+- `-DFORCESMITH_BUILD_UNEP_FITS=ON` → `unep_fit` (UNEP EAM fit, e.g. `unep_fit --element Cu`)
+- `-DFORCESMITH_BUILD_ML_FITS=ON` → `ml_fit` (ML fit, e.g. `ml_fit --element Cu --descriptor soap|symfunc --head nn|linear`)
 
 ## Command-line usage
 
 ```
-potfit --config configs.json --startpot start.json --endpot fitted.json [options]
+forcesmith --config configs.json --startpot start.json --endpot fitted.json [options]
 ```
 
 | Flag                       | Default  | Meaning                                                        |
@@ -89,20 +89,20 @@ potfit --config configs.json --startpot start.json --endpot fitted.json [options
 Fit an EAM potential with Levenberg–Marquardt:
 
 ```sh
-potfit -c cu_training.json -s cu_eam_start.json -e cu_eam_fit.json -a lm --maxiter 1000
+forcesmith -c cu_training.json -s cu_eam_start.json -e cu_eam_fit.json -a lm --maxiter 1000
 ```
 
 Evaluate a potential against the reference configs without fitting:
 
 ```sh
-potfit -c cu_training.json -s cu_eam_fit.json --evaluate cu_report.json
+forcesmith -c cu_training.json -s cu_eam_fit.json --evaluate cu_report.json
 ```
 
 Global optimisation with differential evolution, then refine:
 
 ```sh
-potfit -c train.json -s start.json -e de_fit.json -a de --de-gen 2000 --seed 42
-potfit -c train.json -s de_fit.json -e final.json -a lm
+forcesmith -c train.json -s start.json -e de_fit.json -a de --de-gen 2000 --seed 42
+forcesmith -c train.json -s de_fit.json -e final.json -a lm
 ```
 
 ## File formats
@@ -157,21 +157,21 @@ density/embedding:
 }
 ```
 
-See `include/potfit/io/force_model_reader.hpp` for the required sub-tables of
+See `include/forcesmith/io/force_model_reader.hpp` for the required sub-tables of
 each model, and `data/` for complete worked examples.
 
 ## Programmatic API
 
-The CLI is a thin client of `potfit::PotFit`; the same fit can be built entirely
+The CLI is a thin client of `forcesmith::Forcesmith`; the same fit can be built entirely
 in memory. Every fallible call returns `boost::leaf::result<T>`.
 
 ```cpp
-#include "potfit/api/potfit.hpp"
-#include "potfit/potentials/analytic_potential.hpp"
+#include "forcesmith/api/forcesmith.hpp"
+#include "forcesmith/potentials/analytic_potential.hpp"
 
-potfit::PotFit session;
+forcesmith::Forcesmith session;
 
-std::size_t cfg = session.add_configuration(potfit::PeriodicBC(box));
+std::size_t cfg = session.add_configuration(forcesmith::PeriodicBC(box));
 BOOST_LEAF_CHECK(session.add_atom(cfg, "Cu", {0.0, 0.0, 0.0}));
 session.set_ref_energy(cfg, -13.83);
 // Per-atom reference forces are set by config name + atom index (or by Atom&):
@@ -179,7 +179,7 @@ session.set_ref_force("config-0", /*atom*/ 0, {fx, fy, fz});
 
 // Place a potential — any value satisfying the potential contract.
 session.set_pair_potential("Cu", "Cu",
-    potfit::Potential{potfit::Morse(0.34, 1.36, 2.87, 2.0, 6.0)});
+    forcesmith::Potential{forcesmith::Morse(0.34, 1.36, 2.87, 2.0, 6.0)});
 
 session.options().energy_weight = 1.0;
 BOOST_LEAF_CHECK(session.optimize());
@@ -187,7 +187,7 @@ BOOST_LEAF_CHECK(session.write("cu_fit.json", "native"));
 ```
 
 A custom solver is injected the same way potentials are
-(`session.set_solver(potfit::Solver{MySolver{...}})`). Both extension points are
+(`session.set_solver(forcesmith::Solver{MySolver{...}})`). Both extension points are
 documented in [`docs/extension.md`](docs/extension.md).
 
 ## License

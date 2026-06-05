@@ -1,5 +1,5 @@
-#include "potfit/optimization/line_search.hpp"
-#include "potfit/optimization/solver.hpp"
+#include "forcesmith/optimization/line_search.hpp"
+#include "forcesmith/optimization/solver.hpp"
 
 #include <boost/math/tools/minima.hpp>
 #include <gtest/gtest.h>
@@ -31,7 +31,7 @@ TEST(LineSearch, LinminQuadraticResidual) {
         return r;
     };
 
-    double alpha = potfit::linmin(x, dir, F, {});
+    double alpha = forcesmith::linmin(x, dir, F, {});
 
     EXPECT_NEAR(alpha, 5.0, 1e-6);
     EXPECT_NEAR(x[0],  5.0, 1e-6);
@@ -55,7 +55,7 @@ TEST(LineSearch, LinminMovesSteadily) {
     VectorXd dir = -F(x);
     dir.normalize();
 
-    potfit::linmin(x, dir, F, {});
+    forcesmith::linmin(x, dir, F, {});
 
     EXPECT_LT(0.5 * F(x).squaredNorm(), before);
 }
@@ -68,7 +68,7 @@ TEST(LineSearch, LinminNoStepIfAtMinimum) {
 
     auto F = [](const VectorXd &) { return VectorXd::Zero(1); };
 
-    double alpha = potfit::linmin(x, dir, F, {});
+    double alpha = forcesmith::linmin(x, dir, F, {});
 
     EXPECT_NEAR(x[0], alpha, 1e-6);
     EXPECT_NEAR(0.5 * F(x).squaredNorm(), 0.0, 1e-14);
@@ -88,7 +88,7 @@ TEST(LineSearchSolver, ConvergesCoupledQuadratic) {
     VectorXd x(2);
     x << 0.0, 0.0;
 
-    potfit::LineSearchSolver solver{200, 1e-9};
+    forcesmith::LineSearchSolver solver{200, 1e-9};
     const VectorXd unbounded =
         VectorXd::Constant(2, std::numeric_limits<double>::infinity());
     solver.minimize(x, F, {}, 2, -unbounded, unbounded);

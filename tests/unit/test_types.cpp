@@ -1,11 +1,11 @@
-#include "potfit/core/atom.hpp"
-#include "potfit/core/species.hpp"
-#include "potfit/core/types.hpp"
+#include "forcesmith/core/atom.hpp"
+#include "forcesmith/core/species.hpp"
+#include "forcesmith/core/types.hpp"
 
 #include <boost/leaf/handle_errors.hpp>
 #include <gtest/gtest.h>
 
-using namespace potfit;
+using namespace forcesmith;
 
 TEST(Types, Vec3Zero) {
     Vec3 v = Vec3::Zero();

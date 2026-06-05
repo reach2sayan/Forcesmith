@@ -1,6 +1,6 @@
-#include "potfit/optimization/solver.hpp"
+#include "forcesmith/optimization/solver.hpp"
 
-#include "potfit/optimization/line_search.hpp"
+#include "forcesmith/optimization/line_search.hpp"
 
 #include <boost/math/optimization/differential_evolution.hpp>
 #include <Eigen/Cholesky>
@@ -39,7 +39,7 @@ const int kThreadingHygiene = [] {
 }();
 } // namespace
 
-namespace potfit {
+namespace forcesmith {
 
 namespace {
 
@@ -53,7 +53,7 @@ struct FunctorAdapter {
   ResidualFn fn;
   int n_inputs;
   int n_values;
-  JacobianFn jac; // optional; when set, df delegates to it (PotfitFunctor::df)
+  JacobianFn jac; // optional; when set, df delegates to it (ForcesmithFunctor::df)
 
   int operator()(const Eigen::VectorXd &x, Eigen::VectorXd &fvec) const {
     fvec = std::invoke(fn, x);
@@ -291,4 +291,4 @@ Solver make_default_solver(int max_iter, double xtol, double ftol) {
   return Solver(EigenLMSolver{max_iter, xtol, ftol});
 }
 
-} // namespace potfit
+} // namespace forcesmith

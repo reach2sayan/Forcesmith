@@ -1,4 +1,4 @@
-#include "potfit/optimization/ipopt_solver.hpp"
+#include "forcesmith/optimization/ipopt_solver.hpp"
 
 #include <IpIpoptApplication.hpp>
 #include <IpTNLP.hpp>
@@ -7,7 +7,7 @@
 #include <functional>
 #include <ranges>
 
-namespace potfit {
+namespace forcesmith {
 
 namespace {
 
@@ -17,9 +17,9 @@ constexpr double kIpoptInf = 2e19;
 // TNLP for the unconstrained least-squares problem φ(x) = ½‖F(x)‖².
 // Holds the optimizer's residual/Jacobian maps and the live parameter vector
 // (used both as the start point and as the sink for the final solution).
-class PotfitTNLP final : public Ipopt::TNLP {
+class ForcesmithTNLP final : public Ipopt::TNLP {
 public:
-  PotfitTNLP(Eigen::VectorXd &x, ResidualFn f, JacobianFn jac, int n_vals,
+  ForcesmithTNLP(Eigen::VectorXd &x, ResidualFn f, JacobianFn jac, int n_vals,
              const Eigen::VectorXd &lower, const Eigen::VectorXd &upper)
       : x_(x), f_(std::move(f)), jac_(std::move(jac)),
         n_(static_cast<int>(x.size())), n_vals_(n_vals), lower_(lower),
@@ -141,8 +141,8 @@ private:
 int IpoptSolver::minimize(Eigen::VectorXd &x, ResidualFn f, JacobianFn jac,
                           int n_vals, const Eigen::VectorXd &lower,
                           const Eigen::VectorXd &upper) const {
-  Ipopt::SmartPtr<PotfitTNLP> tnlp =
-      new PotfitTNLP(x, std::move(f), std::move(jac), n_vals, lower, upper);
+  Ipopt::SmartPtr<ForcesmithTNLP> tnlp =
+      new ForcesmithTNLP(x, std::move(f), std::move(jac), n_vals, lower, upper);
 
   Ipopt::SmartPtr<Ipopt::IpoptApplication> app = IpoptApplicationFactory();
   app->Options()->SetNumericValue("tol", tol);
@@ -174,4 +174,4 @@ int IpoptSolver::minimize(Eigen::VectorXd &x, ResidualFn f, JacobianFn jac,
   }
 }
 
-} // namespace potfit
+} // namespace forcesmith

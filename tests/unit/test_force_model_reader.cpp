@@ -1,6 +1,6 @@
-#include "potfit/io/force_model_reader.hpp"
-#include "potfit/io/write_model.hpp"
-#include "potfit/potentials/acsf.hpp"
+#include "forcesmith/io/force_model_reader.hpp"
+#include "forcesmith/io/write_model.hpp"
+#include "forcesmith/potentials/acsf.hpp"
 
 #include <boost/leaf/handle_errors.hpp>
 #include <gtest/gtest.h>
@@ -14,8 +14,8 @@
 #include <vector>
 
 namespace leaf = boost::leaf;
-using namespace potfit;
-using namespace potfit::io;
+using namespace forcesmith;
+using namespace forcesmith::io;
 
 // BOOST_LEAF_CHECK expands to a GNU statement-expression ({ ... }); silence the
 // pedantic complaint about that Boost idiom for this translation unit.
@@ -187,7 +187,7 @@ TEST(ForceModelReader, Tersoff_Si_SingleType) {
 // ── stiweb model ──────────────────────────────────────────────────────────────
 
 TEST(ForceModelReader, StiWeb_Si_SingleType) {
-    // potfit Stillinger-Weber parameterization: per-pair 2-/3-body params plus
+    // forcesmith Stillinger-Weber parameterization: per-pair 2-/3-body params plus
     // a per-triplet lambda array (ntypes·paircol = 1 entry for one type).
     auto r = run(R"({
       "model": "stiweb",
@@ -407,7 +407,7 @@ struct TmpModel {
         auto ns = static_cast<long long>(
             std::chrono::steady_clock::now().time_since_epoch().count());
         path = std::filesystem::temp_directory_path() /
-               ("potfit_fm_" + std::string(tag) + "_" + std::to_string(ns) + ".json");
+               ("forcesmith_fm_" + std::string(tag) + "_" + std::to_string(ns) + ".json");
     }
     ~TmpModel() { std::error_code ec; std::filesystem::remove(path, ec); }
 };

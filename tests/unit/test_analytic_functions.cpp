@@ -1,9 +1,9 @@
-#include "potfit/potentials/analytic_potential.hpp"
+#include "forcesmith/potentials/analytic_potential.hpp"
 
 #include <gtest/gtest.h>
 #include <cmath>
 
-using namespace potfit;
+using namespace forcesmith;
 
 // ── FD helper ─────────────────────────────────────────────────────────────────
 // Checks that deriv(r) ≈ (eval(r+h) - eval(r-h)) / (2h) within 1e-6 relative

@@ -2,7 +2,7 @@
 ################################################################
 #
 # vasp2force:
-#   convert VASP OUTCAR data into potfit reference configurations
+#   convert VASP OUTCAR data into forcesmith reference configurations
 #
 #   This is a port of the original potfit C-version tool
 #   (reference/potfit-c/util/vasp2force) for the C++23 port.
@@ -375,7 +375,7 @@ class SmartFormatter(argparse.HelpFormatter):
 # parse command line arguments
 def parse_command_line():
     parser = argparse.ArgumentParser(
-        description='Converts VASP OUTCAR data into potfit reference configurations (JSON for the C++ potfit port).',
+        description='Converts VASP OUTCAR data into forcesmith reference configurations (JSON for the C++ forcesmith port).',
         formatter_class=SmartFormatter)
     parser.add_argument('-c', type=str, required=False,
                         help='R|list of indices for chemical elements to validate\n'

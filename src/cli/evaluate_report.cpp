@@ -1,6 +1,6 @@
-#include "potfit/cli/evaluate_report.hpp"
+#include "forcesmith/cli/evaluate_report.hpp"
 
-#include "potfit/io/config_reader.hpp" // ParseError
+#include "forcesmith/io/config_reader.hpp" // ParseError
 
 #include <boost/leaf/error.hpp>
 #include <boost/leaf/handle_errors.hpp>
@@ -12,9 +12,9 @@
 
 namespace leaf = boost::leaf;
 
-namespace potfit::cli {
+namespace forcesmith::cli {
 
-leaf::result<void> write_evaluate_report(potfit::PotFit &session,
+leaf::result<void> write_evaluate_report(forcesmith::Forcesmith &session,
                                          const CliOptions &o) {
   const std::string ev_path = *o.evaluate;
   const double ew = o.energy_weight;
@@ -25,11 +25,11 @@ leaf::result<void> write_evaluate_report(potfit::PotFit &session,
   std::ofstream out(ev_path);
   if (!out) {
     return leaf::new_error(
-        potfit::io::ParseError{"cannot open evaluate output: " + ev_path, 0});
+        forcesmith::io::ParseError{"cannot open evaluate output: " + ev_path, 0});
   }
   out << std::setprecision(17);
 
-  auto stress6 = [](const potfit::SymTens &s, std::ostream &oo) {
+  auto stress6 = [](const forcesmith::SymTens &s, std::ostream &oo) {
     oo << s(0, 0) << ", " << s(1, 1) << ", " << s(2, 2) << ", " << s(0, 1)
        << ", " << s(1, 2) << ", " << s(0, 2);
   };
@@ -39,7 +39,7 @@ leaf::result<void> write_evaluate_report(potfit::PotFit &session,
       << ",\n  \"nconf\": " << configs.size() << ",\n  \"configs\": [\n";
 
   for (std::size_t i = 0; i < configs.size(); ++i) {
-    const potfit::Configuration &cfg = configs[i];
+    const forcesmith::Configuration &cfg = configs[i];
     BOOST_LEAF_AUTO(r, session.evaluate(i));
 
     double csq = 0.0;
@@ -67,7 +67,7 @@ leaf::result<void> write_evaluate_report(potfit::PotFit &session,
     const double de = ew * (r.energy - cfg.ref.energy);
     csq += de * de;
     if (sw > 0.0) {
-      const potfit::SymTens ds = r.stress - cfg.ref.stress;
+      const forcesmith::SymTens ds = r.stress - cfg.ref.stress;
       const double comps[6] = {ds(0, 0), ds(1, 1), ds(2, 2),
                                ds(0, 1), ds(1, 2), ds(0, 2)};
       for (double c : comps) {
@@ -90,4 +90,4 @@ leaf::result<void> write_evaluate_report(potfit::PotFit &session,
   return {};
 }
 
-} // namespace potfit::cli
+} // namespace forcesmith::cli

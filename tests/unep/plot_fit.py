@@ -15,7 +15,7 @@ This script plots both. It writes two figures under ``tests/unep/plots/``:
   <el>_parity.png     — a 2×2 observed-vs-predicted grid: rows {analytic,
                         tabular} × cols {energy, stress}, each with its RMSE.
 
-Energy and stress are evaluated by running ``potfit --evaluate`` for each fit
+Energy and stress are evaluated by running ``forcesmith --evaluate`` for each fit
 against the element's UNEP configs.
 
 Notes:
@@ -60,14 +60,14 @@ def section_curve(section):
     return x, y
 
 
-def evaluate(potfit, config, pot):
+def evaluate(forcesmith, config, pot):
     """Run --evaluate and return the parsed report dict."""
     with tempfile.NamedTemporaryFile("r", suffix=".json", delete=False) as tf:
         report = tf.name
-    cmd = [str(potfit), "-c", str(config), "-s", str(pot), "--evaluate", report]
+    cmd = [str(forcesmith), "-c", str(config), "-s", str(pot), "--evaluate", report]
     proc = subprocess.run(cmd, capture_output=True, text=True)
     if proc.returncode != 0:
-        sys.exit(f"potfit --evaluate failed for {pot}:\n{proc.stdout}\n{proc.stderr}")
+        sys.exit(f"forcesmith --evaluate failed for {pot}:\n{proc.stdout}\n{proc.stderr}")
     data = load(report)
     Path(report).unlink(missing_ok=True)
     return data
@@ -172,7 +172,7 @@ def main(argv=None):
     p.add_argument("--element", required=True)
     p.add_argument("--data-dir", default="data/unep")
     p.add_argument("--out-dir", default="tests/unep")
-    p.add_argument("--potfit", default="build/release/potfit")
+    p.add_argument("--forcesmith", default="build/release/forcesmith")
     args = p.parse_args(argv)
 
     el = args.element.lower()
@@ -183,9 +183,9 @@ def main(argv=None):
         sys.exit(f"ERROR: no tabular fit at {tab_path}. Run fit_eam.py "
                  f"--elements {args.element} first.")
     config = Path(args.data_dir) / f"{el}_dft_unep.json"
-    potfit = Path(args.potfit)
-    if not potfit.exists():
-        sys.exit(f"ERROR: potfit binary not found at {potfit}.")
+    forcesmith = Path(args.forcesmith)
+    if not forcesmith.exists():
+        sys.exit(f"ERROR: forcesmith binary not found at {forcesmith}.")
 
     tabular = load(tab_path)
     analytic = load(ana_path) if ana_path.exists() else None
@@ -197,8 +197,8 @@ def main(argv=None):
 
     plot_functions(args.element, analytic, tabular, fn_png)
 
-    report_tabular = evaluate(potfit, config, tab_path)
-    report_analytic = (evaluate(potfit, config, ana_path)
+    report_tabular = evaluate(forcesmith, config, tab_path)
+    report_analytic = (evaluate(forcesmith, config, ana_path)
                        if analytic is not None else report_tabular)
     plot_parity(args.element, report_analytic, report_tabular, par_png)
 

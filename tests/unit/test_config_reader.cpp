@@ -1,11 +1,11 @@
-#include "potfit/io/config_reader.hpp"
+#include "forcesmith/io/config_reader.hpp"
 
 #include <boost/leaf/handle_errors.hpp>
 #include <gtest/gtest.h>
 
 namespace leaf = boost::leaf;
-using namespace potfit;
-using namespace potfit::io;
+using namespace forcesmith;
+using namespace forcesmith::io;
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 

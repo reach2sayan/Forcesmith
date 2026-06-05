@@ -1,21 +1,21 @@
-#include "potfit/io/config_reader.hpp"
-#include "potfit/io/force_model_reader.hpp"
-#include "potfit/io/potential_reader.hpp"
-#include "potfit/core/neighbor_list.hpp"
-#include "potfit/force/eam_force.hpp"
-#include "potfit/force/pair_force.hpp"
-#include "potfit/force/stiweb_force.hpp"
-#include "potfit/force/tersoff_force.hpp"
-#include "potfit/force/potential_table.hpp"
-#include "potfit/optimization/optimizer.hpp"
+#include "forcesmith/io/config_reader.hpp"
+#include "forcesmith/io/force_model_reader.hpp"
+#include "forcesmith/io/potential_reader.hpp"
+#include "forcesmith/core/neighbor_list.hpp"
+#include "forcesmith/force/eam_force.hpp"
+#include "forcesmith/force/pair_force.hpp"
+#include "forcesmith/force/stiweb_force.hpp"
+#include "forcesmith/force/tersoff_force.hpp"
+#include "forcesmith/force/potential_table.hpp"
+#include "forcesmith/optimization/optimizer.hpp"
 
 #include <boost/leaf/handle_errors.hpp>
 #include <gtest/gtest.h>
 #include <cmath>
 
 namespace leaf = boost::leaf;
-using namespace potfit;
-using namespace potfit::io;
+using namespace forcesmith;
+using namespace forcesmith::io;
 
 // ── Helper: build a minimal 2-atom Configuration ─────────────────────────────
 
@@ -248,7 +248,7 @@ TEST(Integration, StiwebSi_TetAngleMinimizesEnergy) {
     double e_tet = 0.0, e_90 = 0.0;
     leaf::try_handle_all(
         [&]() -> leaf::result<void> {
-            // potfit SW form: textbook Si params converted to
+            // forcesmith SW form: textbook Si params converted to
             //   A' = A·B·σ^p, B' = A·σ^q, delta = σ, a1 = a·σ,
             //   gamma' = γ·σ, a2 = a·σ;  lambda per-triplet.
             BOOST_LEAF_AUTO(fm, parse_force_model(R"({

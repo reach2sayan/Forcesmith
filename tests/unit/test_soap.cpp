@@ -1,5 +1,5 @@
-#include "potfit/core/neighbor_list.hpp"
-#include "potfit/potentials/soap.hpp"
+#include "forcesmith/core/neighbor_list.hpp"
+#include "forcesmith/potentials/soap.hpp"
 
 #include <gtest/gtest.h>
 
@@ -8,7 +8,7 @@
 
 #include <cmath>
 
-using namespace potfit;
+using namespace forcesmith;
 
 namespace {
 

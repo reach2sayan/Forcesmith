@@ -4,13 +4,13 @@
 // reindexed, while a newly-added element gets a fresh zero head (to be re-fit).
 // See MLBase::remap and the per-descriptor descriptor_index_map hooks.
 
-#include "potfit/api/potfit.hpp"
-#include "potfit/core/species.hpp"
-#include "potfit/force/ml_force.hpp"
-#include "potfit/io/config_reader.hpp" // io::ParseError
-#include "potfit/potentials/acsf.hpp"
-#include "potfit/potentials/lmbtr.hpp"
-#include "potfit/potentials/soap.hpp"
+#include "forcesmith/api/forcesmith.hpp"
+#include "forcesmith/core/species.hpp"
+#include "forcesmith/force/ml_force.hpp"
+#include "forcesmith/io/config_reader.hpp" // io::ParseError
+#include "forcesmith/potentials/acsf.hpp"
+#include "forcesmith/potentials/lmbtr.hpp"
+#include "forcesmith/potentials/soap.hpp"
 
 #include <boost/leaf/handle_errors.hpp>
 #include <gtest/gtest.h>
@@ -23,7 +23,7 @@
 #include <vector>
 
 namespace leaf = boost::leaf;
-using namespace potfit;
+using namespace forcesmith;
 
 namespace {
 
@@ -251,9 +251,9 @@ TEST(MlRerank, SoapAddElement) {
 }
 
 // ── End-to-end: seed an ML model, add an element, evaluate triggers the re-rank
-// through PotFit::ensure_frozen, and the model stays evaluable. ───────────────
+// through Forcesmith::ensure_frozen, and the model stays evaluable. ───────────────
 TEST(MlRerank, EndToEndSeedThenAddElement) {
-  PotFit s;
+  Forcesmith s;
   double e_before = 0.0;
   double e_after = 0.0;
   std::size_t ntypes_after = 0;

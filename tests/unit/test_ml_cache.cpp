@@ -6,8 +6,8 @@
 // relies on the one-time FD gradient fill. These guard that the cache is a pure
 // speedup, not a behaviour change, before the optimizer ever depends on it.
 
-#include "potfit/potentials/soap.hpp"
-#include "potfit/potentials/acsf.hpp"
+#include "forcesmith/potentials/soap.hpp"
+#include "forcesmith/potentials/acsf.hpp"
 
 #include <gtest/gtest.h>
 
@@ -15,7 +15,7 @@
 #include <span>
 #include <vector>
 
-using namespace potfit;
+using namespace forcesmith;
 
 namespace {
 

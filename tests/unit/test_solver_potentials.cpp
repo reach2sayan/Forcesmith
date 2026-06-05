@@ -7,11 +7,11 @@
 // point MUST reduce the weighted residual. (Pair × {LM, Ipopt} already lives in
 // test_optimizer.cpp; SymmetryFunction × LM in test_ml_fit.cpp.)
 
-#include "potfit/force/force_calculator.hpp"
-#include "potfit/optimization/ipopt_solver.hpp"
-#include "potfit/optimization/optimizer.hpp"
-#include "potfit/optimization/potfit_functor.hpp"
-#include "potfit/potentials/analytic_potential.hpp"
+#include "forcesmith/force/force_calculator.hpp"
+#include "forcesmith/optimization/ipopt_solver.hpp"
+#include "forcesmith/optimization/optimizer.hpp"
+#include "forcesmith/optimization/forcesmith_functor.hpp"
+#include "forcesmith/potentials/analytic_potential.hpp"
 
 #include <gtest/gtest.h>
 
@@ -20,7 +20,7 @@
 #include <variant>
 #include <vector>
 
-using namespace potfit;
+using namespace forcesmith;
 
 namespace {
 
@@ -65,7 +65,7 @@ Configuration make_cluster() {
 
 double eval_residual(std::vector<Configuration> &configs, ForceCalculator &model,
                      double energy_weight) {
-  PotfitFunctor functor(configs, model, energy_weight);
+  ForcesmithFunctor functor(configs, model, energy_weight);
   Eigen::VectorXd x(functor.inputs());
   std::visit([&](const auto &m) { m.gather_params(x, std::size_t{0}); }, model);
 
