@@ -1,7 +1,6 @@
 #pragma once
 
 #include "potfit/optimization/solver.hpp"
-
 #include <Eigen/Core>
 
 namespace potfit {
@@ -15,9 +14,7 @@ namespace potfit {
 // Jacobian J comes from the supplied JacobianFn (the optimizer's parallel,
 // finite-difference df); if none is supplied, minimize falls back to a local
 // central-difference Jacobian.
-//
-// Header intentionally free of Ipopt headers so clients (app.cpp, tests) don't
-// pull in <IpTNLP.hpp>; all Ipopt machinery lives in ipopt_solver.cpp.
+
 struct IpoptSolver {
   int max_iter = 500;
   double tol = 1e-7;            // Ipopt "tol" (optimality tolerance)
@@ -27,7 +24,7 @@ struct IpoptSolver {
   int minimize(Eigen::VectorXd &x, ResidualFn f, JacobianFn jac, int n_vals,
                const Eigen::VectorXd &lower,
                const Eigen::VectorXd &upper) const;
-  bool honors_bounds() const { return true; }
+  constexpr bool honors_bounds() const { return true; }
 };
 
 static_assert(CSolver<IpoptSolver>);

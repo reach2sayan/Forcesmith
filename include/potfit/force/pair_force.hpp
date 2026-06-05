@@ -8,7 +8,6 @@
 
 namespace potfit {
 
-// ── 2-body pipeline ─────────────────────────────────────────────────────────
 struct PairBond {
   Atom *ai;                  // central atom
   const Potential *pot;      // i–j pair potential φ
@@ -35,8 +34,7 @@ struct PairForceCalculator : WithGlobals {
   void finalize_globals();
 
 private:
-  // ── per-bond pipeline stages (see eval_forces) ────────────────────────────
-  // Stage 1 — geometry + cutoff gate. The neighbor list is built with the
+  // Stage 1 — geometry + cutoff gate. The neighbour list is built with the
   // global max_cutoff(); gate each contribution on this potential's own range
   // [rmin, rmax). Empty for coincident atoms or out-of-range separations.
   static std::optional<PairBond>

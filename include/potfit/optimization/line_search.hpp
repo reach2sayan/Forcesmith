@@ -24,9 +24,6 @@ struct linmin_fn {
       const LinSearchOptions &opts = {}) const;
 
 private:
-  // Golden-ratio bracketing of the 1D minimum of g(α), α ≥ 0. Stateless, so
-  // static; kept private so it travels with the niebloid rather than as a loose
-  // TU-local helper.
   static std::pair<double, double>
   bracket_minimum(const std::function<double(double)> &g, double initial_step,
                   double max_step, int max_iter);

@@ -19,10 +19,12 @@ namespace potfit {
 
 // Defaults: a calculator contributes no curvature residuals. Calculators with
 // no tabulated potentials (Tersoff/Stiweb) bind here through std::visit.
-template <typename M> constexpr std::size_t model_smoothness_count(const M &) { return 0; }
+template <typename M> constexpr std::size_t model_smoothness_count(const M &) {
+  return 0;
+}
 template <typename M>
-constexpr void model_write_smoothness(const M &, Eigen::VectorXd &, std::size_t /*off*/,
-                            double /*weight*/) {}
+constexpr void model_write_smoothness(const M &, Eigen::VectorXd &,
+                                      std::size_t /*off*/, double /*weight*/) {}
 
 // Concrete overloads for the table-backed calculators (defined in
 // smoothness.cpp). These MUST be declared here so the std::visit dispatch in

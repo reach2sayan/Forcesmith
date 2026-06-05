@@ -24,8 +24,6 @@
 
 namespace potfit {
 
-// One scaffolding default: the parameter's JSON key plus its start value and
-// box constraints, ready to emit as {"value","min","max"}.
 struct AnalyticParamDef {
   std::string_view name;
   double value;

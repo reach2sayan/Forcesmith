@@ -1,8 +1,8 @@
 #pragma once
 
 #include "potfit/io/config_reader.hpp" // for io::ParseError
-#include <boost/leaf/result.hpp>
 #include <boost/container/flat_map.hpp>
+#include <boost/leaf/result.hpp>
 #include <string>
 #include <utility>
 
@@ -22,6 +22,7 @@ template <class AbstractProduct, class IdentifierType, class ProductCreator,
               DefaultFactoryError>
 class PotfitFactory : FactoryErrorPolicy<IdentifierType, AbstractProduct> {
 public:
+  using FactoryErrorPolicy<IdentifierType, AbstractProduct>::OnUnknownType;
   bool Register(IdentifierType id, ProductCreator creator) {
     return associations_.try_emplace(std::move(id), std::move(creator)).second;
   }
@@ -38,7 +39,7 @@ public:
     if (auto it = associations_.find(id); it != associations_.end()) {
       return it->second(std::forward<Args>(args)...);
     }
-    return this->OnUnknownType(id);
+    return OnUnknownType(id);
   }
 
 private:

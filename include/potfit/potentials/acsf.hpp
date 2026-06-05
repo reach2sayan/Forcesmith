@@ -48,11 +48,11 @@ struct AcsfLayout {
   AcsfLayout(std::size_t S, std::size_t nG1, std::size_t nG2, std::size_t nG3,
              std::size_t nG4, std::size_t nG5) {
     const std::size_t P = S * (S + 1) / 2;
-    d_.add(nG1, S); // Family::G1
-    d_.add(nG2, S); // Family::G2
-    d_.add(nG3, S); // Family::G3
-    d_.add(nG4, P); // Family::G4
-    d_.add(nG5, P); // Family::G5
+    d_.add(nG1, S); // SymmetryFunctionFamily::G1
+    d_.add(nG2, S); // SymmetryFunctionFamily::G2
+    d_.add(nG3, S); // SymmetryFunctionFamily::G3
+    d_.add(nG4, P); // SymmetryFunctionFamily::G4
+    d_.add(nG5, P); // SymmetryFunctionFamily::G5
   }
 
   [[nodiscard]] constexpr Eigen::Index size() const { return d_.size(); }

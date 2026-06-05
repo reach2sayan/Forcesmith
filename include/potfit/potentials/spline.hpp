@@ -15,7 +15,9 @@ public:
   SplinePotential(std::vector<double> x, std::vector<double> y);
   double eval(double r) const;
   double deriv(double r) const;
-  constexpr std::pair<double, double> span() const { return {x_.front(), x_.back()}; }
+  constexpr std::pair<double, double> span() const {
+    return {x_.front(), x_.back()};
+  }
 
   constexpr void set_fixed(std::size_t i, bool f) { fixed_[i] = f; }
   constexpr bool is_fixed(std::size_t i) const { return fixed_[i]; }

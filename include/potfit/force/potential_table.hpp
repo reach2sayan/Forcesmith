@@ -113,12 +113,16 @@ public:
   //   for (auto [ti, tj] : mat.indices()) use(mat[ti, tj]);
   constexpr auto indices() const { return upper_triangle(ntypes_); }
 
-  auto begin() { return data_.begin(); }
-  auto end() { return data_.end(); }
-  auto begin() const { return data_.begin(); }
-  auto end() const { return data_.end(); }
-  auto cbegin() const { return data_.cbegin(); }
-  auto cend() const { return data_.cend(); }
+  using iterator = TypeArrayIterator<T>;
+  using const_iterator = TypeArrayIterator<const T>;
+  iterator begin() noexcept { return iterator(data_.data()); }
+  iterator end() noexcept { return iterator(data_.data() + data_.size()); }
+  const_iterator begin() const noexcept { return const_iterator(data_.data()); }
+  const_iterator end() const noexcept {
+    return const_iterator(data_.data() + data_.size());
+  }
+  const_iterator cbegin() const noexcept { return begin(); }
+  const_iterator cend() const noexcept { return end(); }
   template <typename A, typename B>
     requires requires(A a, B b) {
       a.type;

@@ -12,10 +12,10 @@
 namespace potfit {
 
 // CRTP base for analytic potentials: holds the parameter array + range and
-// generates the optimizer param-plumbing (param_count/gather/scatter/set_param).
-// Each Derived supplies the maths directly — eval(double) and deriv(double) —
-// defined inline below so the compiler inlines them at the Potential/SmoothCutoff
-// call sites.
+// generates the optimizer param-plumbing
+// (param_count/gather/scatter/set_param). Each Derived supplies the maths
+// directly — eval(double) and deriv(double) — defined inline below so the
+// compiler inlines them at the Potential/SmoothCutoff call sites.
 template <typename Derived, std::size_t N> struct AnalyticParams {
   static constexpr std::size_t num_params = N;
 
@@ -24,7 +24,7 @@ protected:
   double rmin, rmax;
 
   constexpr AnalyticParams(std::array<double, N> vals, double lo,
-                         double hi) noexcept
+                           double hi) noexcept
       : rmin(lo), rmax(hi) {
     std::ranges::transform(vals, params.begin(),
                            [](auto v) { return Param{v}; });
@@ -132,7 +132,7 @@ constexpr FORCE_INLINE double apot_cutoff_deriv(double r, double r0,
 
 } // namespace detail
 
-// ── Lennard-Jones: V(r) = 4ε[(σ/r)^12 − (σ/r)^6] ───────────────────────────
+// Lennard-Jones: V(r) = 4ε[(σ/r)^12 − (σ/r)^6]
 // params: {epsilon, sigma}
 struct LennardJones : AnalyticParams<LennardJones, 2> {
   constexpr LennardJones(double epsilon, double sigma, double lo, double hi)
@@ -149,7 +149,7 @@ struct LennardJones : AnalyticParams<LennardJones, 2> {
   }
 };
 
-// ── Morse: V(r) = D_e[(1−e^{−a(r−r_e)})^2 − 1] ─────────────────────────────
+// Morse: V(r) = D_e[(1−e^{−a(r−r_e)})^2 − 1]
 // params: {D_e, a, r_e}
 struct Morse : AnalyticParams<Morse, 3> {
   constexpr Morse(double De, double a, double re, double lo, double hi)
