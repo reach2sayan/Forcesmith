@@ -1,8 +1,10 @@
 #include "forcesmith/potentials/spline.hpp"
 
+#include <Eigen/Core>
 #include <gtest/gtest.h>
 #include <cmath>
 #include <ranges>
+#include <vector>
 
 using namespace forcesmith;
 
@@ -90,4 +92,107 @@ TEST(SplinePotential, ConstructFromKnots) {
     EXPECT_DOUBLE_EQ(lo, 1.0);
     EXPECT_DOUBLE_EQ(hi, 3.0);
     EXPECT_NEAR(pp.eval(2.0), 0.0, 1e-10);
+}
+
+// ── Fit-time evaluation cache (prepare_site / eval_at / deriv_at) ────────────
+
+// The cached path must reproduce eval/deriv across interior, both boundaries,
+// and exactly-at-knot for a cubic (n >= 4) spline.
+TEST(SplinePotentialCache, EvalAtMatchesEvalCubic) {
+    SplinePotential sp({0.0, 1.0, 2.0, 3.0, 4.0, 5.0},
+                       {2.0, 0.5, 3.0, 1.0, 4.0, 2.5});
+    for (double r : {-0.3, 0.0, 0.4, 1.0, 2.7, 3.9999, 5.0, 5.6}) {
+        const int s = sp.prepare_site(r);
+        ASSERT_GE(s, 0);
+        EXPECT_NEAR(sp.eval_at(s), sp.eval(r), 1e-11) << "eval at r=" << r;
+        EXPECT_NEAR(sp.deriv_at(s), sp.deriv(r), 1e-11) << "deriv at r=" << r;
+    }
+}
+
+// Same for the n < 4 piecewise-linear fallback.
+TEST(SplinePotentialCache, EvalAtMatchesEvalLinearFallback) {
+    SplinePotential sp({1.0, 2.0, 3.0}, {5.0, 3.0, 1.0}); // n=3
+    for (double r : {0.0, 1.5, 2.5, 4.0}) {
+        const int s = sp.prepare_site(r);
+        ASSERT_GE(s, 0);
+        EXPECT_NEAR(sp.eval_at(s), sp.eval(r), 1e-12) << "eval at r=" << r;
+        EXPECT_NEAR(sp.deriv_at(s), sp.deriv(r), 1e-12) << "deriv at r=" << r;
+    }
+}
+
+// A site is geometry-only: after scatter_params changes the knot VALUES (same
+// x-grid), a previously-prepared site still tracks eval/deriv — proving the
+// cache survives the per-iteration parameter updates of a fit.
+TEST(SplinePotentialCache, SurvivesScatterParams) {
+    SplinePotential sp({0.0, 1.0, 2.0, 3.0, 4.0, 5.0},
+                       {2.0, 0.5, 3.0, 1.0, 4.0, 2.5});
+    const std::vector<double> rs = {0.4, 2.7, 3.5};
+    std::vector<int> sites;
+    for (double r : rs) {
+        sites.push_back(sp.prepare_site(r));
+    }
+    Eigen::VectorXd y(6);
+    y << 1.0, -2.0, 0.5, 3.5, -1.0, 2.0; // new values, same knots
+    sp.scatter_params(y, 0);
+    for (std::size_t k = 0; k < rs.size(); ++k) {
+        EXPECT_NEAR(sp.eval_at(sites[k]), sp.eval(rs[k]), 1e-11) << "r=" << rs[k];
+        EXPECT_NEAR(sp.deriv_at(sites[k]), sp.deriv(rs[k]), 1e-11) << "r=" << rs[k];
+    }
+}
+
+// Repeated prepare_site for the same distance returns the same cached index.
+TEST(SplinePotentialCache, MemoizesByDistance) {
+    SplinePotential sp({0.0, 1.0, 2.0, 3.0, 4.0},
+                       {0.0, 1.0, 4.0, 9.0, 16.0});
+    EXPECT_EQ(sp.prepare_site(2.3), sp.prepare_site(2.3));
+    EXPECT_NE(sp.prepare_site(2.3), sp.prepare_site(1.1));
+}
+
+// ── Fused eval_and_deriv / eval_and_deriv_at ─────────────────────────────────
+// The fused calls must be BIT-IDENTICAL to the two separate calls — the force
+// loops rely on this so a fit's residuals are unchanged. Exact == (not a
+// tolerance): same operations in the same order must yield the same bits.
+
+// Cached fused path vs eval_at/deriv_at, for a cubic (n >= 4) spline. Covers
+// interior, exactly-at-knot, and both extrapolation boundaries.
+TEST(SplinePotentialCache, EvalAndDerivAtMatchesSeparateCubic) {
+    SplinePotential sp({0.0, 1.0, 2.0, 3.0, 4.0, 5.0},
+                       {2.0, 0.5, 3.0, 1.0, 4.0, 2.5});
+    for (double r : {-0.3, 0.0, 0.4, 1.0, 2.7, 3.9999, 5.0, 5.6}) {
+        const int s = sp.prepare_site(r);
+        ASSERT_GE(s, 0);
+        const auto [v, d] = sp.eval_and_deriv_at(s);
+        EXPECT_EQ(v, sp.eval_at(s)) << "value at r=" << r;
+        EXPECT_EQ(d, sp.deriv_at(s)) << "deriv at r=" << r;
+    }
+}
+
+// Same for the n < 4 piecewise-linear fallback (the Linear EvalSite branch).
+TEST(SplinePotentialCache, EvalAndDerivAtMatchesSeparateLinear) {
+    SplinePotential sp({1.0, 2.0, 3.0}, {5.0, 3.0, 1.0}); // n=3
+    for (double r : {0.0, 1.5, 2.5, 4.0}) {
+        const int s = sp.prepare_site(r);
+        ASSERT_GE(s, 0);
+        const auto [v, d] = sp.eval_and_deriv_at(s);
+        EXPECT_EQ(v, sp.eval_at(s)) << "value at r=" << r;
+        EXPECT_EQ(d, sp.deriv_at(s)) << "deriv at r=" << r;
+    }
+}
+
+// Uncached fused path vs eval(r)/deriv(r) — the shared interval search must not
+// change the result. Cubic and linear, including both extrapolation boundaries.
+TEST(SplinePotential, EvalAndDerivMatchesSeparate) {
+    SplinePotential cubic({0.0, 1.0, 2.0, 3.0, 4.0, 5.0},
+                          {2.0, 0.5, 3.0, 1.0, 4.0, 2.5});
+    for (double r : {-0.3, 0.0, 0.4, 1.0, 2.7, 3.9999, 5.0, 5.6}) {
+        const auto [v, d] = cubic.eval_and_deriv(r);
+        EXPECT_EQ(v, cubic.eval(r)) << "value at r=" << r;
+        EXPECT_EQ(d, cubic.deriv(r)) << "deriv at r=" << r;
+    }
+    SplinePotential linear({1.0, 2.0, 3.0}, {5.0, 3.0, 1.0}); // n=3
+    for (double r : {0.0, 1.5, 2.5, 4.0}) {
+        const auto [v, d] = linear.eval_and_deriv(r);
+        EXPECT_EQ(v, linear.eval(r)) << "value at r=" << r;
+        EXPECT_EQ(d, linear.deriv(r)) << "deriv at r=" << r;
+    }
 }

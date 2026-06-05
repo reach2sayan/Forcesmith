@@ -7,6 +7,7 @@
 #include <Eigen/Core>
 #include <algorithm>
 #include <numeric>
+#include <span>
 
 namespace forcesmith {
 
@@ -22,6 +23,14 @@ struct EAMForceCalculator : ForceCalculatorBase<EAMForceCalculator>, WithGlobals
   PotentialArray embedding;
 
   void eval_forces(Configuration &cfg) const;
+
+  // Fit-time setup (single-threaded): build each config's neighbour list and
+  // prime the spline-evaluation-cache hints on every bond, so the per-bond hot
+  // loop in eval_forces does cached O(1) eval_at/deriv_at instead of a spline
+  // binary search. Invoked once by ForcesmithFunctor before the parallel
+  // residual/Jacobian region (detected via `requires`). Optional: eval_forces
+  // stays correct without it (hints default to -1 → direct eval/deriv).
+  void prepare(std::span<Configuration> configs) const;
 
   std::size_t param_count() const;
   void gather_params(Eigen::VectorXd &dst, std::size_t off) const;

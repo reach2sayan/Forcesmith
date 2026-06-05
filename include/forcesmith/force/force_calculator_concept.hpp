@@ -5,6 +5,7 @@
 #include <Eigen/Core>
 #include <concepts>
 #include <cstdint>
+#include <utility>
 #include <vector>
 
 namespace forcesmith {
@@ -63,6 +64,33 @@ inline constexpr double kDummyWeight = 100.0;
 template <typename Pot> bool in_range(const Pot &p, double r) {
   const auto [rmin, rmax] = p.span();
   return r >= rmin && r <= rmax;
+}
+
+// Cached + cutoff-gated radial-table evaluation for the force hot loops.
+// A primed bond (site.cacheable()) was already cutoff-checked in the
+// calculator's prepare() pass, so it evaluates straight through the spline cache
+// with NO in_range/span() virtual call; an unprimed bond (none — rescale, tests,
+// or out-of-range-at-prime) falls back to the in_range gate + direct eval,
+// yielding 0 outside the table's own cutoff. Templated so it instantiates only
+// where the full Potential type is visible.
+template <typename Pot> double eval_gated(const Pot &p, SiteId site, double r) {
+  return site.cacheable() ? p.eval_at(site)
+                          : (in_range(p, r) ? p.eval(r) : 0.0);
+}
+template <typename Pot>
+double deriv_gated(const Pot &p, SiteId site, double r) {
+  return site.cacheable() ? p.deriv_at(site)
+                          : (in_range(p, r) ? p.deriv(r) : 0.0);
+}
+// Fused value+derivative variant: one dispatch returns both. Mirrors the
+// gating of eval_gated/deriv_gated — primed bonds skip the in_range check.
+template <typename Pot>
+std::pair<double, double> eval_deriv_gated(const Pot &p, SiteId site,
+                                           double r) {
+  if (site.cacheable()) {
+    return p.eval_and_deriv_at(site);
+  }
+  return in_range(p, r) ? p.eval_and_deriv(r) : std::pair{0.0, 0.0};
 }
 
 template <typename Range>

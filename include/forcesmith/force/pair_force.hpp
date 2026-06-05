@@ -3,7 +3,9 @@
 #include "forcesmith/force/force_calculator_concept.hpp"
 #include "forcesmith/force/potential_table.hpp"
 #include <Eigen/Core>
+#include <cstdint>
 #include <optional>
+#include <span>
 #include <vector>
 
 namespace forcesmith {
@@ -15,6 +17,7 @@ struct PairBond {
   double r, inv_r;           // |d| and 1/|d|
   double phi = 0.0;          // pair energy φ(r)
   Vec3 force = Vec3::Zero(); // force on i
+  SiteId site{};             // φ cache handle (NeighborEntry::sites[kSitePhi])
 };
 
 struct PairForceCalculator : WithGlobals {
@@ -23,6 +26,11 @@ struct PairForceCalculator : WithGlobals {
   PotentialPair pair;
 
   void eval_forces(Configuration &cfg) const;
+
+  // Fit-time setup (single-threaded): see EAMForceCalculator::prepare. Primes
+  // the φ spline-cache hint on every bond. Optional — eval_forces falls back to
+  // a direct eval/deriv(r) when a bond was not primed.
+  void prepare(std::span<Configuration> configs) const;
 
   std::size_t param_count() const;
   void gather_params(Eigen::VectorXd &dst, std::size_t off) const;

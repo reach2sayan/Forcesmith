@@ -58,3 +58,4 @@ data/
 *.sh
 *.txt
 __pycache__/
+*.data

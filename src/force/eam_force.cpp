@@ -143,9 +143,7 @@ void EAMForceCalculator::eval_forces(Configuration &cfg) const {
     for (const auto &nb : ai.neighbors) {
       const double r = nb.dist.norm();
       const auto &g = density[*nb.neighbor];
-      if (in_range(g, r)) {
-        ai.rho += g.eval(r);
-      }
+      ai.rho += eval_gated(g, nb.sites[kSiteGj], r); // 0 when out of range
     }
   }
 
@@ -165,8 +163,9 @@ void EAMForceCalculator::eval_forces(Configuration &cfg) const {
       cfg.calc_limit += kDummyWeight * 10.0 * d * d;
       ai.rho = rho_begin;
     }
-    cfg.calc_energy += embedding[ai].eval(ai.rho);
-    ai.gradF = embedding[ai].deriv(ai.rho);
+    const auto [emb_F, emb_dF] = embedding[ai].eval_and_deriv(ai.rho);
+    cfg.calc_energy += emb_F;
+    ai.gradF = emb_dF;
   }
 
   // ── Pass 2: pair + embedding-gradient forces ─────────────────────────────
@@ -192,10 +191,9 @@ void EAMForceCalculator::eval_forces(Configuration &cfg) const {
       const auto &phi_pot = pair[ai, aj];
       const auto &g_j = density[aj];
       const auto &g_i = density[ai];
-      const double phi = in_range(phi_pot, r) ? phi_pot.eval(r) : 0.0;
-      const double dphi = in_range(phi_pot, r) ? phi_pot.deriv(r) : 0.0;
-      const double drho_j = in_range(g_j, r) ? g_j.deriv(r) : 0.0;
-      const double drho_i = in_range(g_i, r) ? g_i.deriv(r) : 0.0;
+      const auto [phi, dphi] = eval_deriv_gated(phi_pot, nb.sites[kSitePhi], r);
+      const double drho_j = deriv_gated(g_j, nb.sites[kSiteGj], r);
+      const double drho_i = deriv_gated(g_i, nb.sites[kSiteGi], r);
 
       const double fscale =
           (dphi + ai.gradF * drho_j + aj.gradF * drho_i) * inv_r;
@@ -212,6 +210,29 @@ void EAMForceCalculator::eval_forces(Configuration &cfg) const {
   cfg.calc_stress /= bc_volume(cfg.bc); // virial → stress (per unit volume)
   events::on_force_eval(
       events::ForceEvalStats{conf_index, force_rms(cfg), cfg});
+}
+
+void EAMForceCalculator::prepare(std::span<Configuration> configs) const {
+  // Single-threaded: build each list and prime the spline-cache hints for the
+  // three radial-table roles a bond drives (φ, g_j, g_i). The bond distances are
+  // frozen for the rest of the fit, so every later eval_forces reuses these
+  // hints (the neighbour-list cache keeps the primed entries alive).
+  for (Configuration &cfg : configs) {
+    build_neighbor_list(cfg, max_cutoff());
+    for (Atom &ai : cfg.atoms) {
+      const auto &g_i = density[ai];
+      for (NeighborEntry &nb : ai.neighbors) {
+        const Atom &aj = *nb.neighbor;
+        const double r = nb.dist.norm();
+        const auto &phi_pot = pair[ai, aj];
+        const auto &g_j = density[aj];
+        nb.sites[kSitePhi] =
+            in_range(phi_pot, r) ? phi_pot.prepare_site(r) : SiteId{};
+        nb.sites[kSiteGj] = in_range(g_j, r) ? g_j.prepare_site(r) : SiteId{};
+        nb.sites[kSiteGi] = in_range(g_i, r) ? g_i.prepare_site(r) : SiteId{};
+      }
+    }
+  }
 }
 
 } // namespace forcesmith

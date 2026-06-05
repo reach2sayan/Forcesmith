@@ -2,13 +2,16 @@
 
 #include "forcesmith/core/boundary_conditions.hpp"
 #include "forcesmith/core/serialization.hpp"
+#include "forcesmith/core/site_id.hpp"
 #include "forcesmith/core/species.hpp"
 #include "forcesmith/core/types.hpp"
 
+#include <array>
 #include <boost/leaf/result.hpp>
 #include <boost/serialization/string.hpp>
 #include <boost/serialization/vector.hpp>
 #include <cmath>
+#include <cstdint>
 #include <filesystem>
 #include <functional>
 #include <numeric>
@@ -22,10 +25,30 @@ struct Atom;
 struct Configuration;
 class Potential;
 
+// Radial-table roles a single bond can drive; indices into NeighborEntry::sites
+// (the spline-evaluation-cache hints). EAM uses the first three, the pair
+// calculator only kSitePhi, ADP all five.
+enum NeighborSiteRole : std::size_t {
+  kSitePhi = 0, // pair        φ(r)
+  kSiteGi,      // density     g_{t(i)}(r)
+  kSiteGj,      // density     g_{t(j)}(r)
+  kSiteDipole,  // ADP dipole  u(r)
+  kSiteQuad,    // ADP quad    w(r)
+  kNeighborSiteCount
+};
+
 struct NeighborEntry : Serializable<NeighborEntry> {
   const Atom *neighbor = nullptr; // non-owning; restored by build_neighbor_list
   const Potential *pot = nullptr; // non-owning; resolved at build time
   Vec3 dist = Vec3::Zero();
+
+  // Fit-time spline-evaluation-cache handles, one per radial-table role above:
+  // the SiteId returned by Potential::prepare_site(r), or a default (none) when
+  // unset / uncacheable (caller falls back to eval/deriv(r)). Transient — same
+  // contract as `neighbor`/`pot`: populated by a ForceCalculator prepare()
+  // pass, reset on every neighbor-list rebuild (fresh entries default to none),
+  // never serialized.
+  std::array<SiteId, kNeighborSiteCount> sites = {};
 };
 
 struct Atom : Serializable<Atom> {
@@ -39,9 +62,9 @@ struct Atom : Serializable<Atom> {
   Vec3 calc_force = Vec3::Zero(); // written by ForceCalculator
   std::vector<NeighborEntry> neighbors;
 
-  // Owning configuration. Transient: stamped by build_neighbor_list at freeze,
+  // Owning configuration. Transient: stamped by build_neighbour_list at freeze,
   // NOT serialized — invalidated by any structural edit (which re-freezes and
-  // re-stamps). Same contract as NeighborEntry::neighbor.
+  // re-stamps). Same contract as NeighborEntry::neighbour.
   const Configuration *parent = nullptr;
 
   // EAM/ADP scratch fields — zeroed before each force evaluation, not
@@ -75,6 +98,18 @@ struct Configuration : Serializable<Configuration> {
   SymTens calc_stress = SymTens::Zero();
   double calc_limit = 0.0; // F(ρ) out-of-range penalty (RESCALE-style)
 
+  // Neighbor-list cache key. Transient (NOT serialized): mirrors the
+  // NeighborEntry pointer contract. build_neighbor_list reuses the existing
+  // list when (rcut, pots, geometry) are unchanged — during a fit the geometry
+  // is fixed and only potential parameters vary, so the list need only be built
+  // once per configuration. nl_valid is reset implicitly because a copied or
+  // freshly-loaded Configuration carries a stale Atom::parent (see
+  // neighbor_list).
+  bool nl_valid = false;
+  double nl_rcut = -1.0;
+  const void *nl_pots = nullptr;
+  std::size_t nl_sig = 0;
+
   [[nodiscard]] static boost::leaf::result<Configuration>
   from_text(std::string_view json_record);
   [[nodiscard]] static boost::leaf::result<Configuration>
@@ -96,7 +131,7 @@ template <> struct Serializer<NeighborEntry> {
   template <class Archive>
   static void apply(Archive &ar, NeighborEntry &e, unsigned int) {
     // Pointers are transient — only geometry is persisted.
-    // Call build_neighbor_list after deserialization to restore them.
+    // Call build_neighbour_list after deserialization to restore them.
     ar & e.dist(0) & e.dist(1) & e.dist(2);
   }
 };

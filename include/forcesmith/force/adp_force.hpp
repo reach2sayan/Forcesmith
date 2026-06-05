@@ -21,7 +21,10 @@
 
 #include <Eigen/Core>
 #include <algorithm>
+#include <array>
+#include <cstdint>
 #include <optional>
+#include <span>
 
 namespace forcesmith {
 
@@ -32,6 +35,9 @@ struct PairForce {
   double r, inv_r;           // |d| and 1/|d|
   double phi = 0.0;          // pair energy φ(r) (filled by the EAM stage)
   Vec3 force = Vec3::Zero(); // running F_i
+  // Spline-cache handles copied from the bond (NeighborEntry::sites), consumed
+  // by the add_*_force stages. Default (none) when unset (direct eval/deriv).
+  std::array<SiteId, kNeighborSiteCount> sites = {};
 };
 
 // Potential tables for ntypes element types (paircol = ntypes*(ntypes+1)/2):
@@ -48,6 +54,12 @@ struct ADPForceCalculator : ForceCalculatorBase<ADPForceCalculator>, NoGlobals {
   PotentialPair quadrupole;
 
   void eval_forces(Configuration &cfg) const;
+
+  // Fit-time setup (single-threaded): see EAMForceCalculator::prepare. Primes
+  // the spline-cache hints for all five radial-table roles a bond drives
+  // (φ, g_j, g_i, dipole, quadrupole). Optional fast path; eval_forces falls
+  // back to direct eval/deriv(r) for unprimed bonds.
+  void prepare(std::span<Configuration> configs) const;
 
   std::size_t param_count() const;
   void gather_params(Eigen::VectorXd &dst, std::size_t off) const;

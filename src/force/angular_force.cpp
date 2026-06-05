@@ -70,8 +70,7 @@ void AngularForceCalculator::eval_forces(Configuration &cfg) const {
       if (!in_range(phi_pot, r)) {
         continue;
       }
-      const double phi = phi_pot.eval(r);
-      const double dphi = phi_pot.deriv(r);
+      const auto [phi, dphi] = phi_pot.eval_and_deriv(r);
       const Vec3 fvec = (dphi / r) * nb.dist;
       ai.calc_force += fvec;
       cfg.calc_energy += 0.5 * phi;
@@ -120,8 +119,7 @@ void AngularForceCalculator::eval_forces(Configuration &cfg) const {
       if (!in_range(rad_j, r1)) {
         continue;
       }
-      const double f1 = rad_j.eval(r1);
-      const double df1 = rad_j.deriv(r1);
+      const auto [f1, df1] = rad_j.eval_and_deriv(r1);
 
       for (std::size_t kk = jj + 1; kk < nn; ++kk) {
         const auto &nb_k = nbs[kk];
@@ -136,13 +134,11 @@ void AngularForceCalculator::eval_forces(Configuration &cfg) const {
         if (!in_range(rad_k, r2)) {
           continue;
         }
-        const double f2 = rad_k.eval(r2);
-        const double df2 = rad_k.deriv(r2);
+        const auto [f2, df2] = rad_k.eval_and_deriv(r2);
 
         const double c = d1.dot(d2) * inv_r1 * inv_r2;
         // g indexed by the central atom's type (matches forcesmith force_ang.c).
-        const double g = angular[ai.type].eval(c);
-        const double dg = angular[ai.type].deriv(c);
+        const auto [g, dg] = angular[ai.type].eval_and_deriv(c);
 
         cfg.calc_energy += f1 * f2 * g;
 

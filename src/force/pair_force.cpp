@@ -24,12 +24,14 @@ PairForceCalculator::make_pair_bond(Atom &ai, const NeighborEntry &nb,
   if (r < rmin || r >= rmax) {
     return std::nullopt;
   }
-  return PairBond{&ai, &pot, nb.dist, r, 1.0 / r};
+  PairBond pb{&ai, &pot, nb.dist, r, 1.0 / r};
+  pb.site = nb.sites[kSitePhi]; // φ cache handle (none if not primed)
+  return pb;
 }
 
 PairBond PairForceCalculator::add_pair_force(PairBond &&pb) {
-  pb.phi = pb.pot->eval(pb.r);
-  const double dphi = pb.pot->deriv(pb.r);
+  const auto [phi, dphi] = eval_deriv_cached(*pb.pot, pb.site, pb.r);
+  pb.phi = phi;
   pb.force = (dphi * pb.inv_r) * pb.d;
   return std::move(pb);
 }
@@ -71,7 +73,8 @@ void PairForceCalculator::scatter_params(const Eigen::VectorXd &src,
   broadcast_globals();
 }
 
-void PairForceCalculator::gather_bounds(Eigen::VectorXd &lo, Eigen::VectorXd &hi,
+void PairForceCalculator::gather_bounds(Eigen::VectorXd &lo,
+                                        Eigen::VectorXd &hi,
                                         std::size_t off) const {
   gather_bounds_range(pair, lo, hi, off);
   std::ranges::for_each(globals, [&](const auto &g) {
@@ -131,6 +134,20 @@ void PairForceCalculator::eval_forces(Configuration &cfg) const {
   cfg.calc_stress /= bc_volume(cfg.bc); // virial → stress (per unit volume)
   events::on_force_eval(
       events::ForceEvalStats{conf_index, force_rms(cfg), cfg});
+}
+
+void PairForceCalculator::prepare(std::span<Configuration> configs) const {
+  for (Configuration &cfg : configs) {
+    build_neighbor_list(cfg, max_cutoff());
+    for (Atom &ai : cfg.atoms) {
+      for (NeighborEntry &nb : ai.neighbors) {
+        const double r = nb.dist.norm();
+        const auto &phi_pot = pair[ai, *nb.neighbor];
+        nb.sites[kSitePhi] =
+            in_range(phi_pot, r) ? phi_pot.prepare_site(r) : SiteId{};
+      }
+    }
+  }
 }
 
 PairForceCalculator

@@ -27,7 +27,9 @@ ADPForceCalculator::make_pair_force(const Atom &ai, const NeighborEntry &nb) {
   if (r < 1e-14) {
     return std::nullopt;
   }
-  return PairForce{&ai, nb.neighbor, d, r, 1.0 / r};
+  PairForce pf{&ai, nb.neighbor, d, r, 1.0 / r};
+  pf.sites = nb.sites; // carry the spline-cache hints into the force stages
+  return pf;
 }
 
 PairForce ADPForceCalculator::add_eam_force(PairForce &&pf) const {
@@ -37,10 +39,10 @@ PairForce ADPForceCalculator::add_eam_force(PairForce &&pf) const {
   const auto &phi_pot = pair[ai, aj];
   const auto &g_j = density[aj];
   const auto &g_i = density[ai];
-  pf.phi = in_range(phi_pot, pf.r) ? phi_pot.eval(pf.r) : 0.0;
-  const double dphi = in_range(phi_pot, pf.r) ? phi_pot.deriv(pf.r) : 0.0;
-  const double drho_j = in_range(g_j, pf.r) ? g_j.deriv(pf.r) : 0.0;
-  const double drho_i = in_range(g_i, pf.r) ? g_i.deriv(pf.r) : 0.0;
+  const auto [phi, dphi] = eval_deriv_gated(phi_pot, pf.sites[kSitePhi], pf.r);
+  pf.phi = phi;
+  const double drho_j = deriv_gated(g_j, pf.sites[kSiteGj], pf.r);
+  const double drho_i = deriv_gated(g_i, pf.sites[kSiteGi], pf.r);
   pf.force += (dphi + ai.gradF * drho_j + aj.gradF * drho_i) * pf.inv_r * pf.d;
   return std::move(pf);
 }
@@ -49,8 +51,7 @@ PairForce ADPForceCalculator::add_dipole_force(PairForce &&pf) const {
   const Atom &ai = *pf.ai;
   const Atom &aj = *pf.aj;
   const auto &dip = dipole[ai, aj];
-  const double u = in_range(dip, pf.r) ? dip.eval(pf.r) : 0.0;
-  const double du = in_range(dip, pf.r) ? dip.deriv(pf.r) : 0.0;
+  const auto [u, du] = eval_deriv_gated(dip, pf.sites[kSiteDipole], pf.r);
   const double dot_i = ai.mu.dot(pf.d);
   const double dot_j = aj.mu.dot(pf.d);
   pf.force += (du * pf.inv_r * (dot_i - dot_j)) * pf.d + u * (ai.mu - aj.mu);
@@ -61,8 +62,7 @@ PairForce ADPForceCalculator::add_quadrupole_force(PairForce &&pf) const {
   const Atom &ai = *pf.ai;
   const Atom &aj = *pf.aj;
   const auto &quad = quadrupole[ai, aj];
-  const double w = in_range(quad, pf.r) ? quad.eval(pf.r) : 0.0;
-  const double dw = in_range(quad, pf.r) ? quad.deriv(pf.r) : 0.0;
+  const auto [w, dw] = eval_deriv_gated(quad, pf.sites[kSiteQuad], pf.r);
   const double nu = quad_nu(ai.lambda, pf.d) + quad_nu(aj.lambda, pf.d);
   const Vec3 xi = quad_xi(ai.lambda, pf.d) + quad_xi(aj.lambda, pf.d);
   pf.force += (dw * pf.inv_r * nu) * pf.d + 2.0 * w * xi;
@@ -161,15 +161,11 @@ void ADPForceCalculator::eval_forces(Configuration &cfg) const {
       const auto &g = density[aj];
       const auto &dip = dipole[ai, aj];
       const auto &quad = quadrupole[ai, aj];
-      if (in_range(g, r)) {
-        rho += g.eval(r);
-      }
-      if (in_range(dip, r)) {
-        mu += dip.eval(r) * nb.dist;
-      }
-      if (in_range(quad, r)) {
-        lambda += quad.eval(r) * (nb.dist * nb.dist.transpose());
-      }
+      // eval_gated returns 0 outside each table's own cutoff (the += then no-ops).
+      rho += eval_gated(g, nb.sites[kSiteGj], r);
+      mu += eval_gated(dip, nb.sites[kSiteDipole], r) * nb.dist;
+      lambda +=
+          eval_gated(quad, nb.sites[kSiteQuad], r) * (nb.dist * nb.dist.transpose());
     }
 
     ai.rho += rho;
@@ -196,9 +192,10 @@ void ADPForceCalculator::eval_forces(Configuration &cfg) const {
           ai.rho = rho_begin;
         }
 
-        ai.gradF = emb.deriv(ai.rho);
+        const auto [emb_F, emb_dF] = emb.eval_and_deriv(ai.rho);
+        ai.gradF = emb_dF;
 
-        double e = emb.eval(ai.rho);
+        double e = emb_F;
         e += 0.5 * ai.mu.squaredNorm();
 
         const double tr_lam = ai.lambda.trace();
@@ -230,6 +227,31 @@ void ADPForceCalculator::eval_forces(Configuration &cfg) const {
   cfg.calc_stress /= bc_volume(cfg.bc); // virial → stress (per unit volume)
   events::on_force_eval(
       events::ForceEvalStats{conf_index, force_rms(cfg), cfg});
+}
+
+void ADPForceCalculator::prepare(std::span<Configuration> configs) const {
+  // Single-threaded: prime the spline-cache hints for all five radial-table
+  // roles a bond drives (φ, g_j, g_i, dipole u, quadrupole w).
+  for (Configuration &cfg : configs) {
+    build_neighbor_list(cfg, max_cutoff());
+    for (Atom &ai : cfg.atoms) {
+      const auto &g_i = density[ai];
+      for (NeighborEntry &nb : ai.neighbors) {
+        const Atom &aj = *nb.neighbor;
+        const double r = nb.dist.norm();
+        const auto &phi_pot = pair[ai, aj];
+        const auto &g_j = density[aj];
+        const auto &dip = dipole[ai, aj];
+        const auto &quad = quadrupole[ai, aj];
+        nb.sites[kSitePhi] =
+            in_range(phi_pot, r) ? phi_pot.prepare_site(r) : SiteId{};
+        nb.sites[kSiteGj] = in_range(g_j, r) ? g_j.prepare_site(r) : SiteId{};
+        nb.sites[kSiteGi] = in_range(g_i, r) ? g_i.prepare_site(r) : SiteId{};
+        nb.sites[kSiteDipole] = in_range(dip, r) ? dip.prepare_site(r) : SiteId{};
+        nb.sites[kSiteQuad] = in_range(quad, r) ? quad.prepare_site(r) : SiteId{};
+      }
+    }
+  }
 }
 
 } // namespace forcesmith

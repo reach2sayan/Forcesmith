@@ -1,6 +1,7 @@
 #pragma once
 
 #include "forcesmith/core/erased.hpp"
+#include "forcesmith/core/site_id.hpp"
 #include "forcesmith/potentials/curvature.hpp"
 #include <Eigen/Core>
 #include <boost/leaf/result.hpp>
@@ -23,6 +24,11 @@ struct PotentialConcept {
   virtual ~PotentialConcept() = default;
   virtual double eval(double r) const = 0;
   virtual double deriv(double r) const = 0;
+  virtual int prepare_site(double r) const = 0;
+  virtual double eval_at(int site) const = 0;
+  virtual double deriv_at(int site) const = 0;
+  virtual std::pair<double, double> eval_and_deriv(double r) const = 0;
+  virtual std::pair<double, double> eval_and_deriv_at(int site) const = 0;
   virtual std::pair<double, double> span() const = 0;
   virtual std::size_t param_count() const = 0;
   virtual void gather_params(Eigen::VectorXd &x, std::size_t off) const = 0;
@@ -45,6 +51,49 @@ class Potential : private detail::ErasedValue<detail::PotentialConcept> {
     constexpr explicit Model(T t) : impl_(std::move(t)) {}
     constexpr double eval(double r) const override { return impl_.eval(r); }
     constexpr double deriv(double r) const override { return impl_.deriv(r); }
+    // Fit-time evaluation cache. Spline potentials memoize the geometry-fixed
+    // part of an evaluation; analytic (non-cacheable) potentials return the -1
+    // sentinel from prepare_site, signalling the caller to use eval/deriv(r)
+    // directly — so eval_at/deriv_at are never reached for them.
+    int prepare_site(double r) const override {
+      if constexpr (requires(const T &t, double rr) { t.prepare_site(rr); }) {
+        return impl_.prepare_site(r);
+      } else {
+        return -1;
+      }
+    }
+    double eval_at(int site) const override {
+      if constexpr (requires(const T &t, int s) { t.eval_at(s); }) {
+        return impl_.eval_at(site);
+      } else {
+        return 0.0; // unreachable: prepare_site returned -1 for this type
+      }
+    }
+    double deriv_at(int site) const override {
+      if constexpr (requires(const T &t, int s) { t.deriv_at(s); }) {
+        return impl_.deriv_at(site);
+      } else {
+        return 0.0; // unreachable: prepare_site returned -1 for this type
+      }
+    }
+    // Fused value+derivative. Cacheable (spline) types fuse the cached site
+    // lookup; everything else (analytic) falls back to the two separate calls
+    // so the pair() result is unchanged.
+    std::pair<double, double> eval_and_deriv(double r) const override {
+      if constexpr (requires(const T &t, double rr) { t.eval_and_deriv(rr); }) {
+        return impl_.eval_and_deriv(r);
+      } else {
+        return {impl_.eval(r), impl_.deriv(r)};
+      }
+    }
+    std::pair<double, double> eval_and_deriv_at(int site) const override {
+      if constexpr (requires(const T &t, int s) { t.eval_and_deriv_at(s); }) {
+        return impl_.eval_and_deriv_at(site);
+      } else {
+        return {0.0,
+                0.0}; // unreachable: prepare_site returned -1 for this type
+      }
+    }
     constexpr std::pair<double, double> span() const override {
       return impl_.span();
     }
@@ -68,8 +117,9 @@ class Potential : private detail::ErasedValue<detail::PotentialConcept> {
       } else {
         // Type carries no bound metadata → all free params unbounded.
         const std::size_t n = static_cast<std::size_t>(impl_.param_count());
-        lo.segment(off, n).setConstant(-std::numeric_limits<double>::infinity());
-        hi.segment(off, n).setConstant( std::numeric_limits<double>::infinity());
+        lo.segment(off, n).setConstant(
+            -std::numeric_limits<double>::infinity());
+        hi.segment(off, n).setConstant(std::numeric_limits<double>::infinity());
       }
     }
     constexpr void set_param(std::size_t i, double v) override {
@@ -120,6 +170,28 @@ public:
 
   constexpr double eval(double r) const { return self_->eval(r); }
   constexpr double deriv(double r) const { return self_->deriv(r); }
+  // Public fit-cache API is typed: prepare_site hands back an opaque SiteId
+  // (cacheable() for spline potentials, "none" for analytic ones — the caller
+  // then uses eval/deriv(r)), and the eval/deriv_at family consume it. The raw
+  // int index stays an implementation detail of the erased Model<>/concrete
+  // potential (SiteId::index()). prepare_site mutates an internal site table —
+  // call it single-threaded (e.g. ForceCalculator prepare()); the eval/deriv_at
+  // family are read-only and safe in the parallel Jacobian.
+  constexpr SiteId prepare_site(double r) const {
+    return SiteId{self_->prepare_site(r)};
+  }
+  constexpr double eval_at(SiteId site) const {
+    return self_->eval_at(site.index());
+  }
+  constexpr double deriv_at(SiteId site) const {
+    return self_->deriv_at(site.index());
+  }
+  constexpr std::pair<double, double> eval_and_deriv(double r) const {
+    return self_->eval_and_deriv(r);
+  }
+  constexpr std::pair<double, double> eval_and_deriv_at(SiteId site) const {
+    return self_->eval_and_deriv_at(site.index());
+  }
   constexpr std::pair<double, double> span() const { return self_->span(); }
   constexpr std::size_t param_count() const { return self_->param_count(); }
   constexpr void gather_params(Eigen::VectorXd &x, std::size_t off) const {
@@ -156,5 +228,22 @@ public:
   [[nodiscard]] static boost::leaf::result<Potential>
   from_file(const std::filesystem::path &path);
 };
+
+// Spline-cache dispatch used by the force calculators in their per-bond hot
+// loops: when a bond was primed by prepare() (site >= 0) evaluate via the
+// cached site — no binary search; otherwise (rescale/tests that never call
+// prepare()) fall back to a direct evaluation at r.
+inline double eval_cached(const Potential &p, SiteId site, double r) {
+  return site.cacheable() ? p.eval_at(site) : p.eval(r);
+}
+inline double deriv_cached(const Potential &p, SiteId site, double r) {
+  return site.cacheable() ? p.deriv_at(site) : p.deriv(r);
+}
+// Fused value+derivative variant of the above: one dispatch returns both,
+// reusing the cached site (or the single interval search on the fallback path).
+inline std::pair<double, double> eval_deriv_cached(const Potential &p,
+                                                   SiteId site, double r) {
+  return site.cacheable() ? p.eval_and_deriv_at(site) : p.eval_and_deriv(r);
+}
 
 } // namespace forcesmith

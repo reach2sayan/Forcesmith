@@ -9,6 +9,21 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 include(Dependencies)
 
+# ── Link-time optimization (LTO/IPO) ─────────────────────────────────────────
+# Enable interprocedural optimization for optimized builds only; LTO would just
+# slow Debug compiles down without buying anything. Probe support first so a
+# toolchain without working IPO degrades gracefully instead of hard-failing.
+include(CheckIPOSupported)
+check_ipo_supported(RESULT FORCESMITH_IPO_SUPPORTED OUTPUT FORCESMITH_IPO_ERROR)
+if (FORCESMITH_IPO_SUPPORTED)
+    set(CMAKE_INTERPROCEDURAL_OPTIMIZATION_RELEASE ON)
+    set(CMAKE_INTERPROCEDURAL_OPTIMIZATION_RELWITHDEBINFO ON)
+    set(CMAKE_INTERPROCEDURAL_OPTIMIZATION_MINSIZEREL ON)
+    message(STATUS "LTO/IPO enabled for optimized builds")
+else ()
+    message(STATUS "LTO/IPO not supported: ${FORCESMITH_IPO_ERROR}")
+endif ()
+
 add_library(forcesmith_warnings INTERFACE)
 target_compile_options(forcesmith_warnings INTERFACE
         -Wall -Wextra -Wpedantic -Wshadow -Wnon-virtual-dtor
@@ -71,6 +86,17 @@ target_link_libraries(forcesmith_engine PRIVATE forcesmith_warnings spdlog)
 # Ipopt+MUMPS are built by the IpoptProject ExternalProject; ensure they exist
 # before the engine compiles/links the TU that includes the Ipopt headers.
 add_dependencies(forcesmith_engine IpoptProject)
+
+# Cross-check the spline evaluation cache (eval_at/deriv_at and the hand-rolled
+# makima slopes) against boost makima at every call via BOOST_ASSERT. PUBLIC so
+# the macro reaches every TU that includes spline.hpp (it toggles a member of
+# SplinePotential — the layout must agree across the library and the tests).
+# Slow; intended for debug/CI verification, OFF in release.
+option(FORCESMITH_SPLINE_VERIFY
+        "Assert the spline eval cache matches boost makima (slow; debug only)" OFF)
+if (FORCESMITH_SPLINE_VERIFY)
+    target_compile_definitions(forcesmith_engine PUBLIC FORCESMITH_SPLINE_VERIFY)
+endif ()
 # Its objects get archived into the shared `forcesmith` lib, so they need -fPIC.
 set_target_properties(forcesmith_engine PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
