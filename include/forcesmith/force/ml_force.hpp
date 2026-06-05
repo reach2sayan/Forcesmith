@@ -438,15 +438,16 @@ private:
     return work;
   }
 
-  // Stage 1 — build each config's neighbour list, size its cache row, record the
-  // cell volume.
+  // Stage 1 — build each config's neighbour list (in parallel via the shared
+  // helper; disjoint per config), then size its cache row and record the cell
+  // volume in a cheap serial pass.
   CacheData step_allocate_cache(std::span<Configuration> configs) const {
     CacheData data;
     data.rows.resize(configs.size());
     data.volume.resize(configs.size());
+    build_all_neighbor_lists(configs, max_cutoff());
     for (auto [cfg, row, vol] :
          std::views::zip(configs, data.rows, data.volume)) {
-      build_neighbor_list(cfg, max_cutoff());
       row.resize(cfg.atoms.size());
       vol = bc_volume(cfg.bc);
     }

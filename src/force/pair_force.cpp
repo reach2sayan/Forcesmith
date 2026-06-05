@@ -137,8 +137,11 @@ void PairForceCalculator::eval_forces(Configuration &cfg) const {
 }
 
 void PairForceCalculator::prepare(std::span<Configuration> configs) const {
+  // Phase 1 — build every neighbour list in parallel (disjoint per config).
+  build_all_neighbor_lists(configs, max_cutoff());
+  // Phase 2 — single-threaded priming: prepare_site mutates shared spline
+  // objects, so it stays serial.
   for (Configuration &cfg : configs) {
-    build_neighbor_list(cfg, max_cutoff());
     for (Atom &ai : cfg.atoms) {
       for (NeighborEntry &nb : ai.neighbors) {
         const double r = nb.dist.norm();

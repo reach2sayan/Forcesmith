@@ -261,12 +261,14 @@ void EAMForceCalculator::eval_forces(Configuration &cfg) const {
 }
 
 void EAMForceCalculator::prepare(std::span<Configuration> configs) const {
-  // Single-threaded: build each list and prime the spline-cache hints for the
-  // three radial-table roles a bond drives (φ, g_j, g_i). The bond distances
-  // are frozen for the rest of the fit, so every later eval_forces reuses these
-  // hints (the neighbour-list cache keeps the primed entries alive).
+  // Phase 1 — build every neighbour list in parallel (disjoint per config).
+  build_all_neighbor_lists(configs, max_cutoff());
+  // Phase 2 — single-threaded: prime the spline-cache hints for the three
+  // radial-table roles a bond drives (φ, g_j, g_i). prepare_site mutates shared
+  // spline objects, so it stays serial. The bond distances are frozen for the
+  // rest of the fit, so every later eval_forces reuses these hints (the
+  // neighbour-list cache keeps the primed entries alive).
   for (Configuration &cfg : configs) {
-    build_neighbor_list(cfg, max_cutoff());
     for (Atom &ai : cfg.atoms) {
       const auto &g_i = density[ai];
       for (NeighborEntry &nb : ai.neighbors) {

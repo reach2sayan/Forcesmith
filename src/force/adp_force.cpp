@@ -230,10 +230,12 @@ void ADPForceCalculator::eval_forces(Configuration &cfg) const {
 }
 
 void ADPForceCalculator::prepare(std::span<Configuration> configs) const {
-  // Single-threaded: prime the spline-cache hints for all five radial-table
-  // roles a bond drives (φ, g_j, g_i, dipole u, quadrupole w).
+  // Phase 1 — build every neighbour list in parallel (disjoint per config).
+  build_all_neighbor_lists(configs, max_cutoff());
+  // Phase 2 — single-threaded: prime the spline-cache hints for all five
+  // radial-table roles a bond drives (φ, g_j, g_i, dipole u, quadrupole w).
+  // prepare_site mutates shared spline objects, so it stays serial.
   for (Configuration &cfg : configs) {
-    build_neighbor_list(cfg, max_cutoff());
     for (Atom &ai : cfg.atoms) {
       const auto &g_i = density[ai];
       for (NeighborEntry &nb : ai.neighbors) {

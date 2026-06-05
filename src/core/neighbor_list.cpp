@@ -5,6 +5,8 @@
 
 #include <algorithm>
 #include <cmath>
+#include <execution>
+#include <span>
 #include <variant>
 #include <vector>
 
@@ -148,6 +150,14 @@ void build_neighbor_list(Configuration &cfg, double rcut) {
 void build_neighbor_list(Configuration &cfg, double rcut,
                          const PotentialPair &pots) {
   build_impl(cfg, rcut, &pots);
+}
+
+void build_all_neighbor_lists(std::span<Configuration> configs, double rcut) {
+  // Distinct configs are disjoint memory (each build_impl writes only its own
+  // atoms + nl_* cache), so this fan-out is race-free and bit-identical to the
+  // serial sweep it replaces. Runs in the surrounding shared_arena().
+  std::for_each(std::execution::par, configs.begin(), configs.end(),
+                [rcut](Configuration &cfg) { build_impl(cfg, rcut, nullptr); });
 }
 
 } // namespace forcesmith
