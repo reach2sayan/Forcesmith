@@ -63,11 +63,6 @@ struct Atom : Serializable<Atom> {
 struct Configuration : Serializable<Configuration> {
   std::vector<Atom> atoms;
   BoundaryConditions bc = PeriodicBC(Mat3::Identity());
-
-  // Unique, human-facing identifier. Empty on load → auto-filled "config-<order>"
-  // at freeze (see PotFit::ensure_frozen). The config_index holds a
-  // std::string_view into this owned string, so it is IMMUTABLE after freeze:
-  // reassigning it could reallocate the buffer and dangle every view.
   std::string name;
 
   struct Reference {
@@ -78,17 +73,8 @@ struct Configuration : Serializable<Configuration> {
   double weight = 1.0; // fitting weight (not a target — stays flat)
   double calc_energy = 0.0;
   SymTens calc_stress = SymTens::Zero();
-  double calc_limit =
-      0.0; // accumulated F(ρ) out-of-range penalty (RESCALE-style)
+  double calc_limit = 0.0; // F(ρ) out-of-range penalty (RESCALE-style)
 
-  // ── parsing factories (the object owns its parsing) ───────────────────────
-  // Build ONE configuration from a single JSON record (the same shape as one
-  // element of the config-file array): {X,Y,Z, E, [W], [S], atoms:[…]}. Atoms
-  // carry their Species by identity (symbol/Z from the static catalog); the
-  // compact table slot (Species::index) is assigned later by PotFit at
-  // freeze, so no registry is needed here. Defined in src/io/config_reader.cpp
-  // (keeps nlohmann out of this core header). Leaf-returning, not a throwing
-  // ctor — see feedback_error_handling.
   [[nodiscard]] static boost::leaf::result<Configuration>
   from_text(std::string_view json_record);
   [[nodiscard]] static boost::leaf::result<Configuration>
@@ -118,8 +104,6 @@ template <> struct Serializer<NeighborEntry> {
 template <> struct Serializer<Atom> {
   template <class Archive>
   static void apply(Archive &ar, Atom &a, unsigned int) {
-    // Species::symbol is a string_view into static storage — persist Z + slot
-    // and re-derive symbol/mass from the catalog on load.
     std::size_t Z = a.type.Z;
     std::size_t idx = a.type.index;
     ar & Z & idx;

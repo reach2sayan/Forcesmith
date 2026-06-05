@@ -233,7 +233,8 @@ species_of(const SpeciesRegistry &r, std::string_view symbol) {
 // since both registries are Z-sorted, this captures exactly how slots shifted.
 // Used by ML model re-rank (MLBase::remap and the descriptor_index_map hooks).
 [[nodiscard]] inline std::vector<std::optional<std::size_t>>
-old_slot_of_new(const SpeciesRegistry &old_reg, const SpeciesRegistry &new_reg) {
+old_slot_of_new(const SpeciesRegistry &old_reg,
+                const SpeciesRegistry &new_reg) {
   std::vector<std::optional<std::size_t>> m(ntypes(new_reg));
   for (std::size_t t = 0; t < ntypes(new_reg); ++t) {
     if (auto s = species_of(old_reg, species_at(new_reg, t).symbol)) {

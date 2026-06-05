@@ -6,8 +6,7 @@
 #include <utility>
 
 namespace potfit {
-struct Configuration; // fwd-decl: enrich ForceEvalStats without pulling in
-                      // atom.hpp
+struct Configuration;
 }
 
 namespace potfit::events {
@@ -21,7 +20,6 @@ struct IterationStats {
 struct ForceEvalStats {
   std::uint64_t conf_index = 0;
   double rms_force = 0.0;
-  // The configuration just evaluated
   const Configuration &cfg;
 };
 

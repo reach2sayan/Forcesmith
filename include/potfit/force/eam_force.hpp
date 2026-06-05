@@ -29,10 +29,6 @@ struct EAMForceCalculator : ForceCalculatorBase<EAMForceCalculator>, WithGlobals
   void gather_bounds(Eigen::VectorXd &lo, Eigen::VectorXd &hi,
                      std::size_t off) const;
   double max_cutoff() const;
-
-  // Write each global's value into every potential slot it is linked to. Called
-  // at the end of scatter_params (and once after parsing) so the linked, fixed
-  // slots always hold the current shared value before eval_forces runs.
   void broadcast_globals();
 
   // One-time setup after `globals` is populated: mark every linked slot fixed

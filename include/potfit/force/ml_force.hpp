@@ -696,13 +696,15 @@ private:
     constexpr double h = 1e-4;
     for (auto [nb, gn] : std::views::zip(atom.neighbors, d.grad_neigh)) {
       DescriptorGrad g(S, 3);
-      for (int cdim = 0; cdim < 3; ++cdim) {
-        const double x0 = nb.dist[cdim];
-        nb.dist[cdim] = x0 + h;
+      for (auto &&[cdim, nbdist] :
+           nb.dist | std::views::take(3) |
+               std::views::enumerate) { // int cdim = 0; cdim < 3; ++cdim) {
+        const double x0 = nbdist;
+        nbdist = x0 + h;
         const Eigen::VectorXd dp = self().get_descriptor(atom).values;
-        nb.dist[cdim] = x0 - h;
+        nbdist = x0 - h;
         const Eigen::VectorXd dm = self().get_descriptor(atom).values;
-        nb.dist[cdim] = x0;
+        nbdist = x0;
         g.col(cdim) = (dp - dm) / (2.0 * h);
       }
       gn = g;
@@ -813,14 +815,12 @@ private:
         continue;
       }
       const double n = static_cast<double>(count[t]);
-      Eigen::VectorXd mu = sum[t] / n;
-      const Eigen::VectorXd var = (sumsq[t] / n) - mu.cwiseProduct(mu);
-      Eigen::VectorXd iv(S);
-      for (Eigen::Index k = 0; k < S; ++k) {
-        iv[k] = var[k] > eps ? 1.0 / std::sqrt(var[k]) : 0.0;
-      }
+      const Eigen::VectorXd mu  = sum[t] / n;
+      const Eigen::VectorXd var = (sumsq[t] / n) - mu.array().square().matrix();
+
       mean.emplace_back(std::move(mu));
-      inv_std.emplace_back(std::move(iv));
+      inv_std.push_back(
+          (var.array() > eps).select(var.array().rsqrt(), 0.0).matrix());
     }
     mean_ = std::move(mean);
     inv_std_ = std::move(inv_std);

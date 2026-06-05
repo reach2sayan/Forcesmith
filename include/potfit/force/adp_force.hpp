@@ -63,7 +63,6 @@ private:
   // xi(M, d) = M d - tr(M)/3 × d
   static Vec3 quad_xi(const SymTens &M, const Vec3 &d);
 
-  // ── per-bond force pipeline stages (see eval_forces) ──────────────────────
   // Each stage adds one physical contribution to PairForce::force (the force on
   // atom i) and passes the pair on. An empty std::optional means the two atoms
   // are coincident and contribute nothing, so the chain's .transform

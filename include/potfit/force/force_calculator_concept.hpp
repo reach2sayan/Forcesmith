@@ -29,14 +29,6 @@ struct GlobalParam {
   std::vector<Link> links;
 };
 
-// ── Globals mixins ──────────────────────────────────────────────────────────
-// A uniform globals interface so callers (e.g. PotFit materialization) never
-// branch on whether a model supports global parameters. Calculators that do
-// (pair, EAM) inherit WithGlobals for the storage + set_globals; those that do
-// not (ADP, angular, tersoff, stiweb) inherit NoGlobals, which makes every
-// globals operation a no-op. finalize_globals()/broadcast_globals() stay defined
-// by the WithGlobals-using calculators themselves, since they touch that
-// calculator's own potential tables.
 struct NoGlobals {
   constexpr void set_globals(const std::vector<GlobalParam> &) noexcept {}
   constexpr void finalize_globals() noexcept {}
@@ -60,14 +52,14 @@ struct WithGlobals {
 inline constexpr double kDummyWeight = 100.0;
 
 // True iff r lies in the radial table p's own cutoff range [rmin, rmax]. The
-// neighbor list is built with the global max_cutoff() over all tables, so a
-// table with a shorter cutoff would otherwise be fed neighbors past its last
+// neighbour list is built with the global max_cutoff() over all tables, so a
+// table with a shorter cutoff would otherwise be fed neighbours past its last
 // knot — where spline potentials linearly *extrapolate* (nonzero) instead of
 // vanishing. Gate every radial table eval/deriv on this. Do NOT use it for the
 // EAM/ADP embedding F(ρ) (argument ρ legitimately falls outside the table,
 // where it is clamped instead) nor for the angular g(cosθ) table (cosθ ∈ [-1,1]
 // is always within the table's own domain). The upper bound is inclusive to
-// match C potfit's `r <= end[col]` and the inclusive neighbor-list cutoff.
+// match C potfit's `r <= end[col]` and the inclusive neighbour-list cutoff.
 template <typename Pot> bool in_range(const Pot &p, double r) {
   const auto [rmin, rmax] = p.span();
   return r >= rmin && r <= rmax;

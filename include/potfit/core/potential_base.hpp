@@ -68,10 +68,8 @@ class Potential : private detail::ErasedValue<detail::PotentialConcept> {
       } else {
         // Type carries no bound metadata → all free params unbounded.
         const std::size_t n = static_cast<std::size_t>(impl_.param_count());
-        for (std::size_t k = 0; k < n; ++k) {
-          lo[off + k] = -std::numeric_limits<double>::infinity();
-          hi[off + k] = std::numeric_limits<double>::infinity();
-        }
+        lo.segment(off, n).setConstant(-std::numeric_limits<double>::infinity());
+        hi.segment(off, n).setConstant( std::numeric_limits<double>::infinity());
       }
     }
     constexpr void set_param(std::size_t i, double v) override {

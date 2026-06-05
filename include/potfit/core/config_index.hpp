@@ -1,5 +1,6 @@
 #pragma once
 
+#include "potfit/core/types.hpp"
 #include "potfit/core/atom.hpp"
 
 #include <boost/multi_index/global_fun.hpp>
@@ -14,21 +15,6 @@
 #include <string_view>
 #include <vector>
 
-// Auxiliary grouping/ordering index over Configuration objects.
-//
-// The owning store remains `std::vector<Configuration>` — this container holds
-// non-owning handles (ConfigRef) so the optimizer's contiguous-span /
-// pointer-arithmetic / row_offset machinery
-// (src/optimization/potfit_functor.cpp) stays untouched. Only IMMUTABLE
-// properties are indexed: the set of distinct atom types present
-// ("composition"), reference `energy`, and `weight`. The
-// recomputed-every-evaluation fields (calc_energy, calc_stress) are
-// deliberately NOT keys — sort on demand if needed.
-//
-// INVARIANT: the std::vector<Configuration> this index is built from must not
-// be resized, reordered, or moved after build_config_index(). It is built once
-// after load and thereafter only mutated element-wise — the same invariant the
-// optimizer's `&cfg - configs.data()` already relies on.
 namespace potfit::config_index {
 
 // Sorted, distinct atom-type ids present in a configuration.
@@ -60,7 +46,6 @@ private:
   std::string_view name_;       // view into cfg->name (owned); unique key
 };
 
-// Sorted, de-duplicated list of the distinct atom types in `c`.
 [[nodiscard]] inline CompositionKey composition_of(const Configuration &c) {
   CompositionKey types;
   types.reserve(c.atoms.size());
@@ -97,9 +82,6 @@ struct by_name {};
 namespace bmi = boost::multi_index;
 
 namespace detail {
-// const_mem_fun cannot key on a reference-returning accessor, so the
-// vector-valued composition key is extracted via global_fun (which does
-// support const-reference returns) to avoid copying the key on every compare.
 [[nodiscard]] inline const CompositionKey &ref_composition(const ConfigRef &r) {
   return r.composition();
 }
@@ -108,7 +90,6 @@ namespace detail {
 using ConfigIndex = bmi::multi_index_container<
     ConfigRef,
     bmi::indexed_by<
-        // canonical load order — O(1) indexed access, residual block id
         bmi::random_access<bmi::tag<detail::by_order>>,
         // group by element set
         bmi::ordered_non_unique<
@@ -130,7 +111,7 @@ using ConfigIndex = bmi::multi_index_container<
 
 // Build the index from the owning configuration store. `order` is the position
 // in `configs`, which equals the residual block id used by the optimizer.
-[[nodiscard]] inline ConfigIndex
+[[nodiscard]] FORCE_INLINE ConfigIndex
 build_config_index(std::span<const Configuration> configs) {
   ConfigIndex idx;
   auto &ordered = idx.get<detail::by_order>();
@@ -143,26 +124,21 @@ build_config_index(std::span<const Configuration> configs) {
 }
 
 namespace detail {
-// Gather matching handles into a plain vector and restore canonical order, so
-// callers get a contiguous, deterministic subset (never iterate a node-based
-// index under std::execution::par).
 template <class It>
 [[nodiscard]] std::vector<Configuration *> gather(It first, It last) {
   std::vector<ConfigRef> refs(first, last);
-  std::ranges::sort(refs, [](const ConfigRef &a, const ConfigRef &b) {
-    return a.order() < b.order();
-  });
-  std::vector<Configuration *> out;
-  out.reserve(refs.size());
-  for (const ConfigRef &r : refs) {
-    out.push_back(const_cast<Configuration *>(r.cfg()));
-  }
+  std::ranges::sort(refs, {}, &ConfigRef::order);
+  auto out_view = refs | std::views::transform([](const ConfigRef &r) {
+                    return const_cast<Configuration *>(r.cfg());
+                  });
+
+  std::vector<Configuration *> out(out_view.begin(), out_view.end());
   return out;
 }
 } // namespace detail
 
 // All configs whose distinct-type set exactly equals `comp`.
-[[nodiscard]] inline std::vector<Configuration *>
+[[nodiscard]] FORCE_INLINE std::vector<Configuration *>
 configs_with_composition(const ConfigIndex &idx, const CompositionKey &comp) {
   const auto &by_comp = idx.get<detail::by_composition>();
   const auto [lo, hi] = by_comp.equal_range(comp);
@@ -170,7 +146,7 @@ configs_with_composition(const ConfigIndex &idx, const CompositionKey &comp) {
 }
 
 // All configs that contain at least one atom of type `type`.
-[[nodiscard]] inline std::vector<Configuration *>
+[[nodiscard]] FORCE_INLINE std::vector<Configuration *>
 configs_containing_element(const ConfigIndex &idx, std::size_t type) {
   const auto &ordered = idx.get<detail::by_order>();
   std::vector<ConfigRef> hits;
@@ -178,8 +154,7 @@ configs_containing_element(const ConfigIndex &idx, std::size_t type) {
     const bool present =
         (type < 64 && r.comp_mask() != 0)
             ? ((r.comp_mask() & (std::uint64_t{1} << type)) != 0)
-            : std::binary_search(r.composition().begin(), r.composition().end(),
-                                 type);
+            : std::ranges::binary_search(r.composition(), type);
     if (present) {
       hits.push_back(r);
     }
@@ -188,21 +163,21 @@ configs_containing_element(const ConfigIndex &idx, std::size_t type) {
 }
 
 // All configs whose reference weight lies in [lo, hi].
-[[nodiscard]] inline std::vector<Configuration *>
+[[nodiscard]] FORCE_INLINE std::vector<Configuration *>
 configs_in_weight_band(const ConfigIndex &idx, double lo, double hi) {
   const auto &by_w = idx.get<detail::by_weight>();
   return detail::gather(by_w.lower_bound(lo), by_w.upper_bound(hi));
 }
 
 // All configs whose reference energy lies in [lo, hi].
-[[nodiscard]] inline std::vector<Configuration *>
+[[nodiscard]] FORCE_INLINE std::vector<Configuration *>
 configs_in_energy_band(const ConfigIndex &idx, double lo, double hi) {
   const auto &by_e = idx.get<detail::by_energy>();
   return detail::gather(by_e.lower_bound(lo), by_e.upper_bound(hi));
 }
 
 // The config with the given unique name, or nullptr if none matches.
-[[nodiscard]] inline Configuration *config_by_name(const ConfigIndex &idx,
+[[nodiscard]] FORCE_INLINE Configuration *config_by_name(const ConfigIndex &idx,
                                                    std::string_view name) {
   const auto &by_name = idx.get<detail::by_name>();
   const auto it = by_name.find(name);
