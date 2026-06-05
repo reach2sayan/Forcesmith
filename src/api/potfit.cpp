@@ -113,8 +113,6 @@ PotFit::get_configuration_index(std::string_view name) {
 
 leaf::result<std::size_t>
 PotFit::get_configuration_index(const Configuration &cfg) const {
-  // Address equality (well-defined for any pointer), not a relational
-  // pointer-range check against a possibly-foreign &cfg (unspecified behavior).
   const auto it = std::ranges::find_if(
       configs_, [&](const Configuration &c) { return &c == &cfg; });
   if (it == configs_.end()) {
@@ -128,7 +126,6 @@ leaf::result<std::size_t> PotFit::get_atom_index(const Atom &atom) {
   if (atom.parent == nullptr) {
     return err("atom is not owned by this session");
   }
-  // Legal pointer subtraction: `atom` genuinely lives in parent->atoms.
   return static_cast<std::size_t>(&atom - atom.parent->atoms.data());
 }
 
@@ -219,7 +216,6 @@ leaf::result<std::size_t> PotFit::atom_count(std::size_t cfg) const {
   return configs_[cfg].atoms.size();
 }
 
-// ── reference data (no dirty) ────────────────────────────────────────────────
 leaf::result<void> PotFit::write_ref_force(std::size_t cfg, std::size_t atom,
                                            const Vec3 &f) {
   BOOST_LEAF_AUTO(c, config_at(cfg));
@@ -449,7 +445,6 @@ leaf::result<void> PotFit::seed_force_model(ForceCalculator model) {
   return {};
 }
 
-// ── build helpers ────────────────────────────────────────────────────────────
 leaf::result<SpeciesRegistry> PotFit::build_registry() const {
   std::vector<std::string_view> syms;
   auto add = [&](std::string_view s) {
@@ -482,9 +477,6 @@ leaf::result<SpeciesRegistry> PotFit::build_registry() const {
   });
   std::ranges::for_each(declared_, add);
 
-  // Elements present in the loaded configurations. A model seeded from a file
-  // (load_model) leaves the editable spec maps empty, so the config atoms are
-  // the only source of element symbols in that path.
   for (const auto &cfg : configs_) {
     for (const auto &a : cfg.atoms) {
       add(a.type.symbol);
@@ -579,8 +571,9 @@ leaf::result<void> PotFit::ensure_frozen() {
     } else if (is_ml(*seeded_)) {
       // ML re-rank: no symbol-keyed spec exists, so remap the model directly.
       if (!seeded_registry_) {
-        return err("cannot re-rank a seeded ML model: original element ordering "
-                   "unknown");
+        return err(
+            "cannot re-rank a seeded ML model: original element ordering "
+            "unknown");
       }
       BOOST_LEAF_AUTO(remapped, remap_seeded_ml(*seeded_registry_, registry_));
       model_ = std::move(remapped);

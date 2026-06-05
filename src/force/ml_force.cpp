@@ -74,8 +74,8 @@ std::vector<const Param *> LinearHead::field_ptrs() const {
   return f;
 }
 
-LinearHead
-LinearHead::remapped(const std::vector<std::optional<Eigen::Index>> &map) const {
+LinearHead LinearHead::remapped(
+    const std::vector<std::optional<Eigen::Index>> &map) const {
   LinearHead out;
   out.bias = bias; // keep bias value + fixed flag
   // New coeffs inherit the old coeffs' fixed flag; brand-new features stay 0.

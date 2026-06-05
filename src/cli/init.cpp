@@ -44,7 +44,8 @@ struct Args {
   std::string out;
   int ntypes = 1;
   double cutoff = 6.0;
-  std::string functions; // makeapot-style "N*name,…"; empty → per-region default
+  std::string
+      functions; // makeapot-style "N*name,…"; empty → per-region default
   // SOAP
   int n_max = 6;
   int l_max = 6;
@@ -97,7 +98,8 @@ std::vector<std::string> expand_functions(const std::string &spec) {
 }
 
 // One analytic potential as the JSON the reader expects: type + span + each
-// named parameter as {value,min,max}. Names/defaults come from the shared table.
+// named parameter as {value,min,max}. Names/defaults come from the shared
+// table.
 json one_analytic(const std::string &fn, double rmin, double rmax) {
   std::span<const AnalyticParamDef> defs = analytic_defaults(fn);
   if (defs.empty()) {
@@ -161,8 +163,7 @@ int write_json(const Args &a, const json &j) {
 }
 
 int scaffold_analytic(const Args &a) {
-  const auto paircol =
-      static_cast<std::size_t>(a.ntypes) * (a.ntypes + 1) / 2;
+  const auto paircol = static_cast<std::size_t>(a.ntypes) * (a.ntypes + 1) / 2;
   const std::vector<Region> regions = analytic_layout(a, paircol);
 
   std::size_t total = 0;
@@ -174,9 +175,9 @@ int scaffold_analytic(const Args &a) {
   if (!a.functions.empty()) {
     flat = expand_functions(a.functions);
     if (flat.size() != total) {
-      die("--functions has " + std::to_string(flat.size()) +
-          " functions but " + a.model + " (ntypes=" + std::to_string(a.ntypes) +
-          ") needs " + std::to_string(total));
+      die("--functions has " + std::to_string(flat.size()) + " functions but " +
+          a.model + " (ntypes=" + std::to_string(a.ntypes) + ") needs " +
+          std::to_string(total));
     }
   }
 
@@ -210,8 +211,8 @@ int scaffold_analytic(const Args &a) {
 constexpr double kHeadInitStd = 0.01;
 
 // Attach one linear head per element type, sized to the descriptor, with
-// coefficients drawn from a small zero-mean Gaussian (kHeadInitStd). The bias is
-// fixed by default (forces-first fitting leaves its Jacobian column zero);
+// coefficients drawn from a small zero-mean Gaussian (kHeadInitStd). The bias
+// is fixed by default (forces-first fitting leaves its Jacobian column zero);
 // --bias-free frees it for energy-weighted fits. A fixed --seed makes the
 // scaffolded startpot reproducible; one shared rng gives each element type a
 // distinct draw.
@@ -283,8 +284,7 @@ int scaffold_ml(const Args &a) {
 // ── bond-order: default-constructed parameter blocks + write_model ───────────
 
 int scaffold_bond_order(const Args &a) {
-  const auto paircol =
-      static_cast<std::size_t>(a.ntypes) * (a.ntypes + 1) / 2;
+  const auto paircol = static_cast<std::size_t>(a.ntypes) * (a.ntypes + 1) / 2;
   ForceCalculator model = [&] {
     if (a.model == "tersoff") {
       TersoffForceCalculator c;
@@ -331,22 +331,24 @@ int run(int argc, char *argv[]) {
       "pair | eam | adp | angular | tersoff | stiweb | acsf | soap | lmbtr")(
       "out,o", po::value(&a.out), "output startpot file")(
       "ntypes,n", po::value(&a.ntypes)->default_value(a.ntypes),
-      "number of atom types")(
-      "cutoff,c", po::value(&a.cutoff)->default_value(a.cutoff),
-      "cutoff radius (Å)")(
+      "number of atom types")("cutoff,c",
+                              po::value(&a.cutoff)->default_value(a.cutoff),
+                              "cutoff radius (Å)")(
       "functions,f", po::value(&a.functions),
       "analytic models: makeapot-style list, e.g. \"3*lj\" or "
       "\"lj,exp_decay,sqrt\" (omit for sensible per-region defaults)")(
-      "n-max", po::value(&a.n_max)->default_value(a.n_max), "soap radial basis")(
-      "l-max", po::value(&a.l_max)->default_value(a.l_max), "soap angular degree")(
+      "n-max", po::value(&a.n_max)->default_value(a.n_max),
+      "soap radial basis")("l-max", po::value(&a.l_max)->default_value(a.l_max),
+                           "soap angular degree")(
       "sigma", po::value(&a.sigma)->default_value(a.sigma),
-      "soap atomic Gaussian width")(
-      "g1", po::value(&a.g1)->default_value(a.g1), "acsf G1 channel count")(
-      "g2-eta", po::value(&a.g2_eta)->multitoken(), "acsf G2 eta widths")(
-      "g2-rs", po::value(&a.g2_rs)->multitoken(),
-      "acsf G2 rs centres (default all 0)")(
-      "k2-n", po::value(&a.k2_n)->default_value(a.k2_n), "lmbtr k2 grid points")(
-      "k3-n", po::value(&a.k3_n)->default_value(a.k3_n), "lmbtr k3 grid points")(
+      "soap atomic Gaussian width")("g1", po::value(&a.g1)->default_value(a.g1),
+                                    "acsf G1 channel count")(
+      "g2-eta", po::value(&a.g2_eta)->multitoken(),
+      "acsf G2 eta widths")("g2-rs", po::value(&a.g2_rs)->multitoken(),
+                            "acsf G2 rs centres (default all 0)")(
+      "k2-n", po::value(&a.k2_n)->default_value(a.k2_n),
+      "lmbtr k2 grid points")("k3-n", po::value(&a.k3_n)->default_value(a.k3_n),
+                              "lmbtr k3 grid points")(
       "drop-k2", po::bool_switch(&a.drop_k2), "lmbtr: disable the k2 term")(
       "drop-k3", po::bool_switch(&a.drop_k3), "lmbtr: disable the k3 term")(
       "bias-free", po::bool_switch(&a.bias_free),

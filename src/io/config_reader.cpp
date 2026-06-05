@@ -38,8 +38,10 @@ get_array_n(const json &arr, std::string_view ctx) {
     return err(std::string(ctx) + ": must be an array of " + std::to_string(N) +
                " doubles");
   std::array<double, N> out{};
-  for (std::size_t i = 0; i < N; ++i)
-    out[i] = arr[i].get<double>();
+  std::ranges::transform(arr, out.begin(),
+                         [](const auto& x) {
+                             return x.template get<double>();
+                         });
   return out;
 }
 

@@ -1,5 +1,4 @@
 #include "potfit/potentials/spline.hpp"
-#include "potfit/potentials/pair_potential.hpp"
 
 #include <gtest/gtest.h>
 #include <cmath>
@@ -85,8 +84,8 @@ TEST(SplinePotential, EvalMonotonicOnMonotonicData) {
     }
 }
 
-TEST(PairPotential, InheritsSplineInterface) {
-    PairPotential pp({1.0, 2.0, 3.0}, {2.0, 0.0, 2.0});
+TEST(SplinePotential, ConstructFromKnots) {
+    SplinePotential pp({1.0, 2.0, 3.0}, {2.0, 0.0, 2.0});
     auto [lo, hi] = pp.span();
     EXPECT_DOUBLE_EQ(lo, 1.0);
     EXPECT_DOUBLE_EQ(hi, 3.0);

@@ -118,8 +118,7 @@ FORCE_INLINE double cutoff_fc(double r, double rc) {
 // value) and descriptor_index_map() (which re-slots them on a re-rank), so the
 // two can never drift. Diagonal pairs (sa==sb) use n≤n'; off-diagonal use all
 // n,n'.
-template <class F>
-void for_each_ps_slot(int S, int nm, int lm, F &&fn) {
+template <class F> void for_each_ps_slot(int S, int nm, int lm, F &&fn) {
   Eigen::Index idx = 0;
   for (auto [sa, sb] : upper_triangle(S)) {
     for (int n = 0; n < nm; ++n) {
@@ -139,7 +138,7 @@ void for_each_ps_slot(int S, int nm, int lm, F &&fn) {
 std::size_t ps_size(int S, int nm, int lm) {
   const std::size_t s = static_cast<std::size_t>(S);
   const std::size_t n = static_cast<std::size_t>(nm);
-  const std::size_t same = s * (n * (n + 1) / 2);  // α=β: n≤n'
+  const std::size_t same = s * (n * (n + 1) / 2);      // α=β: n≤n'
   const std::size_t cross = (s * (s - 1) / 2) * n * n; // α<β: all n,n'
   return (static_cast<std::size_t>(lm) + 1) * (same + cross);
 }
@@ -148,16 +147,15 @@ std::size_t ps_size(int S, int nm, int lm) {
 // the re-rank index map to translate a within-block offset between layouts.
 std::vector<Eigen::Index> ps_pair_bases(int S, int nm, int lm) {
   std::vector<Eigen::Index> base(static_cast<std::size_t>(S) * (S + 1) / 2, -1);
-  for_each_ps_slot(S, nm, lm,
-                   [&](Eigen::Index idx, int sa, int sb, int, int, int) {
-                     const std::size_t po = pair_ordinal(
-                         static_cast<std::size_t>(sa),
-                         static_cast<std::size_t>(sb),
-                         static_cast<std::size_t>(S));
-                     if (base[po] < 0) {
-                       base[po] = idx;
-                     }
-                   });
+  for_each_ps_slot(
+      S, nm, lm, [&](Eigen::Index idx, int sa, int sb, int, int, int) {
+        const std::size_t po = pair_ordinal(static_cast<std::size_t>(sa),
+                                            static_cast<std::size_t>(sb),
+                                            static_cast<std::size_t>(S));
+        if (base[po] < 0) {
+          base[po] = idx;
+        }
+      });
   return base;
 }
 
@@ -204,7 +202,7 @@ DescriptorValue SoapModel::get_descriptor(const Atom &a) const {
   // Step 1 — expansion coefficients.
   const Eigen::VectorXcd c = compute_coefficients(a, tab, K);
 
-  // Step 2 — power spectrum + L2 normalisation. ‖p‖ is kept for step 3.
+  // Step 2 — power spectrum + L2 normalization. ‖p‖ is kept for step 3.
   DescriptorValue out;
   out.values = power_spectrum(c, wl);
   const double norm = out.values.norm();
@@ -284,14 +282,13 @@ Eigen::VectorXd SoapModel::power_spectrum(const Eigen::VectorXcd &c,
   std::vector<double> vals;
   vals.reserve(descriptor_size());
 
-  for_each_ps_slot(S, nm, lm,
-                   [&](Eigen::Index, int sa, int sb, int n, int n2, int l) {
-                     const Eigen::Index len = 2 * l + 1;
-                     const auto acc =
-                         c.segment(coeff_index(sa, n, l, -l), len)
+  for_each_ps_slot(
+      S, nm, lm, [&](Eigen::Index, int sa, int sb, int n, int n2, int l) {
+        const Eigen::Index len = 2 * l + 1;
+        const auto acc = c.segment(coeff_index(sa, n, l, -l), len)
                              .dot(c.segment(coeff_index(sb, n2, l, -l), len));
-                     vals.push_back(wl[l] * acc.real());
-                   });
+        vals.push_back(wl[l] * acc.real());
+      });
   return Eigen::Map<Eigen::VectorXd>(vals.data(),
                                      static_cast<Eigen::Index>(vals.size()));
 }
@@ -305,10 +302,10 @@ void SoapModel::position_gradient(const Atom &a, const Eigen::VectorXcd &c,
   const int lm = l_max;
 
   // Analytic position-gradient dD/dr
-  // Only neighbor j's term in c depends on its bond vector d_j = r_j − r_i, so
+  // Only neighbour j's term in c depends on its bond vector d_j = r_j − r_i, so
   // dc[ch_j,n,l,m]/dd_j = K[ d(f_c·I_{nl})/dr · conj(Y_lm) · û   (radial)
   //                          + f_c·I_{nl} · conj(dY_lm/dd) ]     (angular).
-  // Chain through p = w_l·Re(Σ_m conj(c_α)·c_β) and the L2-normalise Jacobian
+  // Chain through p = w_l·Re(Σ_m conj(c_α)·c_β) and the L2-normalize Jacobian
   // (I − D Dᵀ)/‖p‖. grad_neigh[j] = dD/dr_j = dD/dd_j; grad_self = −Σ_j
   // dD/dd_j.
   const Eigen::Index Sd = out.values.size();
@@ -443,7 +440,7 @@ void SoapModel::position_gradient(const Atom &a, const Eigen::VectorXcd &c,
       }
     }
 
-    // L2-normalise Jacobian: dD/dd = (dp − D (D·dp)) / ‖p‖.
+    // L2-normalize Jacobian: dD/dd = (dp − D (D·dp)) / ‖p‖.
     if (norm > 1e-12) {
       for (int k = 0; k < 3; ++k) {
         const Eigen::VectorXd col = dpc.col(k);
@@ -479,11 +476,11 @@ SoapModel::descriptor_index_map(const SpeciesRegistry &old_reg,
         if (!a_old || !c_old) {
           return; // a brand-new pair: leave nullopt (zero-filled)
         }
-        const std::size_t po_new = pair_ordinal(static_cast<std::size_t>(sa),
-                                                static_cast<std::size_t>(sb),
-                                                static_cast<std::size_t>(S_new));
-        const std::size_t po_old = pair_ordinal(*a_old, *c_old,
-                                                static_cast<std::size_t>(S_old));
+        const std::size_t po_new = pair_ordinal(
+            static_cast<std::size_t>(sa), static_cast<std::size_t>(sb),
+            static_cast<std::size_t>(S_new));
+        const std::size_t po_old =
+            pair_ordinal(*a_old, *c_old, static_cast<std::size_t>(S_old));
         const Eigen::Index off = idx - new_base[po_new];
         map[static_cast<std::size_t>(idx)] = old_base[po_old] + off;
       });

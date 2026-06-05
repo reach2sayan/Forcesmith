@@ -117,24 +117,27 @@ void ACSF::accumulate_radial(DescriptorValue &out,
 
     // G1: Σ f_c
     for (std::size_t t : std::views::iota(std::size_t{0}, g1)) {
-      scatter_radial(out, j.orig_index, L.radial(SymmetryFunctionFamily::G1, j.s, t),
-                     rhat, fc, fcp);
+      scatter_radial(out, j.orig_index,
+                     L.radial(SymmetryFunctionFamily::G1, j.s, t), rhat, fc,
+                     fcp);
     }
     // G2: Σ exp(−η(r−Rs)²) f_c
     for (auto [ti, p] : radial | std::views::enumerate) {
       const auto t = static_cast<std::size_t>(ti);
       const double dr = r - p.rs;
       const double gauss = std::exp(-p.eta * dr * dr);
-      scatter_radial(out, j.orig_index, L.radial(SymmetryFunctionFamily::G2, j.s, t),
-                     rhat, gauss * fc, gauss * (-2.0 * p.eta * dr * fc + fcp));
+      scatter_radial(out, j.orig_index,
+                     L.radial(SymmetryFunctionFamily::G2, j.s, t), rhat,
+                     gauss * fc, gauss * (-2.0 * p.eta * dr * fc + fcp));
     }
     // G3: Σ cos(κ r) f_c
     for (auto [ti, gp] : g3 | std::views::enumerate) {
       const auto t = static_cast<std::size_t>(ti);
       const double k = gp.kappa;
       const double c = std::cos(k * r), s = std::sin(k * r);
-      scatter_radial(out, j.orig_index, L.radial(SymmetryFunctionFamily::G3, j.s, t),
-                     rhat, c * fc, -k * s * fc + c * fcp);
+      scatter_radial(out, j.orig_index,
+                     L.radial(SymmetryFunctionFamily::G3, j.s, t), rhat, c * fc,
+                     -k * s * fc + c * fcp);
     }
   }
 }
@@ -217,10 +220,10 @@ ACSF::descriptor_index_map(const SpeciesRegistry &old_reg,
                            const SpeciesRegistry &new_reg) const {
   const std::size_t S_old = potfit::ntypes(old_reg);
   const std::size_t S_new = potfit::ntypes(new_reg);
-  const AcsfLayout old_L{S_old,      g1,        radial.size(),
-                         g3.size(),  g4.size(), g5.size()};
-  const AcsfLayout new_L{S_new,      g1,        radial.size(),
-                         g3.size(),  g4.size(), g5.size()};
+  const AcsfLayout old_L{S_old,     g1,        radial.size(),
+                         g3.size(), g4.size(), g5.size()};
+  const AcsfLayout new_L{S_new,     g1,        radial.size(),
+                         g3.size(), g4.size(), g5.size()};
   return remap_layout(old_L.d_, new_L.d_, old_slot_of_new(old_reg, new_reg),
                       S_old, S_new);
 }
