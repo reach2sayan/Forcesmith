@@ -168,6 +168,18 @@ public:
   Potential &operator=(const Potential &) = default;
   Potential &operator=(Potential &&) noexcept = default;
 
+  // Recover the concrete impl if this Potential holds a T, else nullptr.
+  // Mirrors std::function::target<T>() — the sanctioned escape hatch from the
+  // value-erasure for a typed fast path. dynamic_cast is self-checking, so an
+  // analytic potential yields nullptr (caller falls back to the virtual path);
+  // hoist it out of hot loops so its RTTI cost is amortized to ~once per table.
+  // Instantiated where T is complete (e.g. the force calculators), keeping the
+  // concrete potential types out of this core header.
+  template <class T> const T *target() const noexcept {
+    auto *m = dynamic_cast<const Model<T> *>(self_.get());
+    return m ? &m->impl_ : nullptr;
+  }
+
   constexpr double eval(double r) const { return self_->eval(r); }
   constexpr double deriv(double r) const { return self_->deriv(r); }
   // Public fit-cache API is typed: prepare_site hands back an opaque SiteId

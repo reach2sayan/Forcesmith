@@ -151,6 +151,17 @@ public:
   using value_type = T;
   using size_type = std::size_t;
 
+  TypeArray() = default;
+  // Build directly from an [first, last) iterator range — e.g. the result of a
+  // std::views::transform over another per-type table — so callers can write
+  // `TypeArray<U> t(view.begin(), view.end());`. The iterator's reference type
+  // need only be convertible to T (vector handles the conversion).
+  template <std::input_iterator It, std::sentinel_for<It> S>
+  TypeArray(It first, S last) {
+    for (; first != last; ++first)
+      data_.push_back(*first);
+  }
+
   constexpr void reserve(std::size_t ntypes) { data_.reserve(ntypes); }
   template <typename U> constexpr void emplace_back(U &&u) {
     data_.emplace_back(std::forward<U>(u));

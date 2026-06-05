@@ -1,13 +1,45 @@
 #include "forcesmith/force/eam_force.hpp"
 #include "forcesmith/core/neighbor_list.hpp"
 #include "forcesmith/events/signals.hpp"
+#include "forcesmith/potentials/spline.hpp"
 
 #include <algorithm>
 #include <cmath>
 #include <iterator>
 #include <numeric>
+#include <ranges>
 
 namespace forcesmith {
+
+namespace {
+// Spline-aware fast paths for the per-bond radial-table evaluations, mirroring
+// the generic eval_gated/deriv_gated/eval_deriv_gated
+// (force_calculator_concept.hpp). The caller hoists the concrete
+// `const SplinePotential*` for each table once (via Potential::target<>), so a
+// primed (cacheable) bond on a spline table evaluates through a direct,
+// inlinable non-virtual call — no vtable, no spill across a call. `sp ==
+// nullptr` (an analytic table) or an unprimed bond falls back to the erased
+// Potential, reproducing the generic helpers exactly.
+FORCE_INLINE double eval_gated(const SplinePotential *sp, const Potential &p,
+                               SiteId site, double r) {
+  if (site.cacheable())
+    return sp ? sp->eval_at(site.index()) : p.eval_at(site);
+  return in_range(p, r) ? p.eval(r) : 0.0;
+}
+FORCE_INLINE double deriv_gated(const SplinePotential *sp, const Potential &p,
+                                SiteId site, double r) {
+  if (site.cacheable())
+    return sp ? sp->deriv_at(site.index()) : p.deriv_at(site);
+  return in_range(p, r) ? p.deriv(r) : 0.0;
+}
+FORCE_INLINE std::pair<double, double>
+eval_deriv_gated(const SplinePotential *sp, const Potential &p, SiteId site,
+                 double r) {
+  if (site.cacheable())
+    return sp ? sp->eval_and_deriv_at(site.index()) : p.eval_and_deriv_at(site);
+  return in_range(p, r) ? p.eval_and_deriv(r) : std::pair{0.0, 0.0};
+}
+} // namespace
 
 // Count the free globals (each is exactly one optimizer slot when not fixed).
 static std::size_t free_globals(const std::vector<GlobalParam> &globals) {
@@ -137,20 +169,34 @@ void EAMForceCalculator::eval_forces(Configuration &cfg) const {
     atom.gradF = 0.0;
   }
 
+  TypeArray<const SplinePotential *> dens_sp;
+  dens_sp.reserve(density.size());
+  std::ranges::transform(
+      density, std::back_inserter(dens_sp),
+      [](const auto &g) { return g.template target<SplinePotential>(); });
+
+  SymmetricMatrix<const SplinePotential *> pair_sp;
+  pair_sp.reserve(pair.ntypes());
+  std::ranges::transform(pair, std::back_inserter(pair_sp), [](const auto &p) {
+    return p.template target<SplinePotential>();
+  });
+
   // ── Pass 1: accumulate electron density ρ_i ─────────────────────────────
   // ρ_i = Σ_{j∈neighbors(i)} g_{t(j)}(r_ij)
   for (auto &ai : cfg.atoms) {
     for (const auto &nb : ai.neighbors) {
       const double r = nb.dist.norm();
-      const auto &g = density[*nb.neighbor];
-      ai.rho += eval_gated(g, nb.sites[kSiteGj], r); // 0 when out of range
+      const auto &aj = *nb.neighbor;
+      const auto &g = density[aj];
+      // 0 when out of range
+      ai.rho += eval_gated(dens_sp[aj], g, nb.sites[kSiteGj], r);
     }
   }
 
   // ── After pass 1: embedding energy + gradF_i = dF_i/dρ_i ────────────────
   // Out-of-range ρ is clamped to the embedding table's [begin,end] and the
-  // overshoot is punished via cfg.calc_limit (matches forcesmith's RESCALE branch,
-  // force_eam.c:334-358): F(ρ) is evaluated at the clamped ρ, never
+  // overshoot is punished via cfg.calc_limit (matches forcesmith's RESCALE
+  // branch, force_eam.c:334-358): F(ρ) is evaluated at the clamped ρ, never
   // extrapolated.
   for (auto &ai : cfg.atoms) {
     const auto [rho_begin, rho_end] = embedding[ai].span();
@@ -173,7 +219,7 @@ void EAMForceCalculator::eval_forces(Configuration &cfg) const {
   //   F_ij = [dφ_{ij}/dr + gradF_i × dg_{t(j)}/dr + gradF_j × dg_{t(i)}/dr] ×
   //   r̂_{ij}
   //
-  // Using the full neighbor list each pair (i,j) appears twice, so:
+  // Using the full neighbour list each pair (i,j) appears twice, so:
   //   - pair energy:     add 0.5 × φ per entry
   //   - embedding force: the cross-gradient term (gradF_j × ...) is
   //     self-consistent because gradF_j was computed in pass 1
@@ -181,19 +227,21 @@ void EAMForceCalculator::eval_forces(Configuration &cfg) const {
     for (const auto &nb : ai.neighbors) {
       const auto &aj = *nb.neighbor;
       const double r = nb.dist.norm();
-      if (r < 1e-14)
+      if (r < 1e-14) {
         continue;
+      }
       const double inv_r = 1.0 / r;
 
-      // Gate each radial table on its own cutoff (see in_range): the neighbor
+      // Gate each radial table on its own cutoff (see in_range): the neighbour
       // list spans the global max_cutoff(), so a shorter table would otherwise
       // extrapolate past its last knot here.
       const auto &phi_pot = pair[ai, aj];
       const auto &g_j = density[aj];
       const auto &g_i = density[ai];
-      const auto [phi, dphi] = eval_deriv_gated(phi_pot, nb.sites[kSitePhi], r);
-      const double drho_j = deriv_gated(g_j, nb.sites[kSiteGj], r);
-      const double drho_i = deriv_gated(g_i, nb.sites[kSiteGi], r);
+      const auto [phi, dphi] =
+          eval_deriv_gated(pair_sp[ai, aj], phi_pot, nb.sites[kSitePhi], r);
+      const double drho_j = deriv_gated(dens_sp[aj], g_j, nb.sites[kSiteGj], r);
+      const double drho_i = deriv_gated(dens_sp[ai], g_i, nb.sites[kSiteGi], r);
 
       const double fscale =
           (dphi + ai.gradF * drho_j + aj.gradF * drho_i) * inv_r;
@@ -214,8 +262,8 @@ void EAMForceCalculator::eval_forces(Configuration &cfg) const {
 
 void EAMForceCalculator::prepare(std::span<Configuration> configs) const {
   // Single-threaded: build each list and prime the spline-cache hints for the
-  // three radial-table roles a bond drives (φ, g_j, g_i). The bond distances are
-  // frozen for the rest of the fit, so every later eval_forces reuses these
+  // three radial-table roles a bond drives (φ, g_j, g_i). The bond distances
+  // are frozen for the rest of the fit, so every later eval_forces reuses these
   // hints (the neighbour-list cache keeps the primed entries alive).
   for (Configuration &cfg : configs) {
     build_neighbor_list(cfg, max_cutoff());

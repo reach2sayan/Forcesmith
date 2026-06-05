@@ -294,61 +294,7 @@ int SplinePotential::prepare_site(double r) const {
   return idx;
 }
 
-double SplinePotential::eval_at(int site) const {
-  const EvalSite &st = sites_[static_cast<std::size_t>(site)];
-  const std::size_t i = st.i;
-  double v;
-  if (st.kind == EvalSite::Kind::Linear) {
-    v = y_[i] + st.off * st.inv_dx * (y_[i + 1] - y_[i]);
-  } else {
-    v = st.v0 * y_[i] + st.v1 * y_[i + 1] + st.vs0 * s_[i] + st.vs1 * s_[i + 1];
-  }
-#ifdef FORCESMITH_SPLINE_VERIFY
-  const double ref = eval(st.r);
-  BOOST_ASSERT(std::abs(v - ref) <= 1e-9 * (1.0 + std::abs(ref)));
-#endif
-  return v;
-}
-
-double SplinePotential::deriv_at(int site) const {
-  const EvalSite &st = sites_[static_cast<std::size_t>(site)];
-  const std::size_t i = st.i;
-  double d;
-  if (st.kind == EvalSite::Kind::Linear) {
-    d = (y_[i + 1] - y_[i]) * st.inv_dx;
-  } else {
-    d = st.d0 * y_[i] + st.d1 * y_[i + 1] + st.ds0 * s_[i] + st.ds1 * s_[i + 1];
-  }
-#ifdef FORCESMITH_SPLINE_VERIFY
-  const double ref = deriv(st.r);
-  BOOST_ASSERT(std::abs(d - ref) <= 1e-9 * (1.0 + std::abs(ref)));
-#endif
-  return d;
-}
-
-// Fused cached eval+deriv: one EvalSite fetch and one load of the bracketing
-// knot values/slopes feed both results. Each expression is copied verbatim from
-// eval_at()/deriv_at() (including the Linear branch's multiply order) so the
-// components are bit-identical to the separate calls.
-std::pair<double, double>
-SplinePotential::eval_and_deriv_at(int site) const {
-  const EvalSite &st = sites_[static_cast<std::size_t>(site)];
-  const std::size_t i = st.i;
-  double v, d;
-  if (st.kind == EvalSite::Kind::Linear) {
-    v = y_[i] + st.off * st.inv_dx * (y_[i + 1] - y_[i]);
-    d = (y_[i + 1] - y_[i]) * st.inv_dx;
-  } else {
-    const double yi = y_[i], yi1 = y_[i + 1], si = s_[i], si1 = s_[i + 1];
-    v = st.v0 * yi + st.v1 * yi1 + st.vs0 * si + st.vs1 * si1;
-    d = st.d0 * yi + st.d1 * yi1 + st.ds0 * si + st.ds1 * si1;
-  }
-#ifdef FORCESMITH_SPLINE_VERIFY
-  const double vref = eval(st.r), dref = deriv(st.r);
-  BOOST_ASSERT(std::abs(v - vref) <= 1e-9 * (1.0 + std::abs(vref)));
-  BOOST_ASSERT(std::abs(d - dref) <= 1e-9 * (1.0 + std::abs(dref)));
-#endif
-  return {v, d};
-}
+// eval_at / deriv_at / eval_and_deriv_at are defined FORCE_INLINE in spline.hpp
+// so they fuse into the force calculators' hot neighbor loops.
 
 } // namespace forcesmith
