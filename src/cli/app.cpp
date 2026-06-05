@@ -120,7 +120,7 @@ int run(const CliOptions &o) {
     }
 
     if (o.evaluate.has_value()) {
-      return write_evaluate_report(session, o, ret);
+      return write_evaluate_report(session, o);
     }
 
     if (!o.endpot.has_value()) {

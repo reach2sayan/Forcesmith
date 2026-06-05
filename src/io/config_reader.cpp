@@ -168,8 +168,9 @@ get_array_n(const json &arr, std::string_view ctx) {
 [[nodiscard]] leaf::result<Configuration>
 parse_configuration(const json &obj, const SpeciesRegistry &registry,
                     std::string_view ctx) {
-  if (!obj.is_object())
+  if (!obj.is_object()) {
     return err(std::string(ctx) + ": each configuration must be a JSON object");
+  }
 
   Configuration cfg;
   cfg.name = obj.value("name", "");

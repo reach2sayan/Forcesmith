@@ -1,5 +1,8 @@
 #include "potfit/cli/evaluate_report.hpp"
 
+#include "potfit/io/config_reader.hpp" // ParseError
+
+#include <boost/leaf/error.hpp>
 #include <boost/leaf/handle_errors.hpp>
 #include <cstddef>
 #include <fstream>
@@ -12,7 +15,7 @@ namespace leaf = boost::leaf;
 namespace potfit::cli {
 
 leaf::result<void> write_evaluate_report(potfit::PotFit &session,
-                                         const CliOptions &o, int &exit_code) {
+                                         const CliOptions &o) {
   const std::string ev_path = *o.evaluate;
   const double ew = o.energy_weight;
   const double sw = o.stress_weight;
@@ -21,9 +24,8 @@ leaf::result<void> write_evaluate_report(potfit::PotFit &session,
 
   std::ofstream out(ev_path);
   if (!out) {
-    std::cerr << "error: cannot open evaluate output: " << ev_path << "\n";
-    exit_code = 1;
-    return {};
+    return leaf::new_error(
+        potfit::io::ParseError{"cannot open evaluate output: " + ev_path, 0});
   }
   out << std::setprecision(17);
 

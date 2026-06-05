@@ -1,8 +1,5 @@
-# ── Dependencies ──────────────────────────────────────────────────────────────
-
 find_package(Eigen3 3.4 REQUIRED NO_MODULE)
 
-# CMP0167 NEW: use Boost's own CMake config files (FindBoost module removed).
 if (POLICY CMP0167)
     cmake_policy(SET CMP0167 NEW)
 endif ()
@@ -67,11 +64,9 @@ FetchContent_Declare(boost_parser
         GIT_TAG boost-1.91.0
         GIT_SHALLOW TRUE
 )
-# Populate only (do not add_subdirectory — the parser has no CMake install rules
-# we want, and we create the INTERFACE target ourselves for SYSTEM include control).
+
 FetchContent_GetProperties(boost_parser)
 if (NOT boost_parser_POPULATED)
-    # CMP0169 OLD: allow the explicit FetchContent_Populate call used here.
     if (POLICY CMP0169)
         cmake_policy(SET CMP0169 OLD)
     endif ()
@@ -88,8 +83,6 @@ FetchContent_Declare(nlohmann_json
 )
 FetchContent_MakeAvailable(nlohmann_json)
 
-# boost::math (header-only) — system Boost 1.83 lacks differential_evolution.hpp
-# which was added in 1.84.  Fetch just the math headers at 1.87.
 FetchContent_Declare(boost_math
         GIT_REPOSITORY https://github.com/boostorg/math.git
         GIT_TAG boost-1.91.0
@@ -106,9 +99,6 @@ add_library(boost_math INTERFACE)
 target_include_directories(boost_math SYSTEM INTERFACE "${boost_math_SOURCE_DIR}/include")
 target_link_libraries(boost_math INTERFACE Boost::boost)
 
-# spdlog — header-only logging (https://github.com/gabime/spdlog). Header-only
-# mode (no SPDLOG_COMPILED_LIB): we only add its include dir, like boost_parser,
-# so its bundled fmt is confined to the TUs that include spdlog (just logging.cpp).
 FetchContent_Declare(spdlog
         GIT_REPOSITORY https://github.com/gabime/spdlog.git
         GIT_TAG v1.14.1

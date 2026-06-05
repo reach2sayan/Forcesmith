@@ -651,12 +651,18 @@ leaf::result<std::span<const Configuration>> PotFit::configurations() {
 
 leaf::result<const config_index::ConfigIndex *> PotFit::index() {
   BOOST_LEAF_CHECK(ensure_frozen());
-  return &index_.value();
+  if (!index_) {
+    return err("internal: config index not built after freeze");
+  }
+  return &*index_;
 }
 
 leaf::result<Configuration *> PotFit::config_by_name(std::string_view name) {
   BOOST_LEAF_CHECK(ensure_frozen());
-  Configuration *cfg = config_index::config_by_name(index_.value(), name);
+  if (!index_) {
+    return err("internal: config index not built after freeze");
+  }
+  Configuration *cfg = config_index::config_by_name(*index_, name);
   if (cfg == nullptr) {
     return err("no configuration named '" + std::string(name) + "'");
   }

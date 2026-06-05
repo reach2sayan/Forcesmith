@@ -11,11 +11,10 @@ namespace potfit::cli {
 // Evaluate-only mode: a single force evaluation of the (unoptimized) start
 // potential against every configuration, dumping per-config computed vs
 // reference forces / energy / stress as JSON to o.evaluate. Parity artifact vs
-// the original C potfit. Caller guarantees o.evaluate has a value. On a failure
-// to open the output file, prints to stderr and sets exit_code to 1.
+// the original C potfit. Caller guarantees o.evaluate has a value. A failure to
+// open the output file is reported as a leaf ParseError.
 boost::leaf::result<void> write_evaluate_report(potfit::PotFit &session,
-                                                const CliOptions &o,
-                                                int &exit_code);
+                                                const CliOptions &o);
 
 } // namespace potfit::cli
 
