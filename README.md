@@ -2,41 +2,48 @@
 
 A modern **C++23** reimplementation of [potfit](https://www.potfit.net/), the
 open-source force-matching tool for constructing interatomic potentials. Given a
-set of reference configurations (atomic positions, forces, energies, and
-optionally stresses — typically from DFT), Forcesmith optimises a potential's
-parameters so the model reproduces the reference data.
+set of reference configurations — atomic positions, forces, energies, and
+optionally stresses, typically from DFT — Forcesmith optimises a potential's
+parameters until the model reproduces the reference data.
 
-Supported potential families:
+## Potential families
 
-| Family       | Description                                            |
-|--------------|--------------------------------------------------------|
-| **pair**     | Two-body radial potentials φ(r)                        |
-| **eam**      | Embedded Atom Method: pair + electron density + embedding F(ρ) |
-| **adp**      | Angular-Dependent Potential: EAM + dipole/quadrupole tensors |
-| **angular**  | EAM-style with a radial modulation f(r) and angular g(cosθ) |
-| **tersoff**  | Bond-order (Tersoff / modified Tersoff)                |
-| **stiweb**   | Stillinger–Weber (2-body + 3-body)                     |
+| Family       | Description                                                       |
+|--------------|-------------------------------------------------------------------|
+| **pair**     | Two-body radial potentials φ(r)                                   |
+| **eam**      | Embedded Atom Method: pair + electron density + embedding F(ρ)    |
+| **adp**      | Angular-Dependent Potential: EAM + dipole/quadrupole tensors      |
+| **angular**  | EAM-style with a radial modulation f(r) and angular term g(cosθ)  |
+| **tersoff**  | Bond-order (Tersoff / modified Tersoff)                           |
+| **stiweb**   | Stillinger–Weber (2-body + 3-body)                                |
+| **ml**       | Machine-learned: per-atom descriptor (ACSF, SOAP, LMBTR) → energy head |
 
-Radial functions may be **analytic** (Lennard-Jones, Morse, EOPP, …) or
+Radial functions are either **analytic** (Lennard-Jones, Morse, EOPP, Born,
+Buckingham, …; see the registry in `src/io/potential_reader.cpp`) or
 **tabulated** (cubic splines over knot values). The fit is driven by one of
-several optimisers (Levenberg–Marquardt, Powell dogleg, differential evolution,
-or a direction-set line search).
+several optimisers — Levenberg–Marquardt, Powell dogleg, differential evolution,
+Ipopt (L-BFGS), or a Powell direction-set line search.
 
 ## Design
 
-Forcesmith is built as a static engine library (`forcesmith_engine`), a first-class
-shared API library (`libforcesmith`, the public `forcesmith::Forcesmith` facade), and a thin
-CLI (`forcesmith`) that is just another client of that API. Polymorphic surfaces
-(potentials, solvers) use Sean-Parent-style **value-semantic type erasure**, so
-new potentials and solvers can be supplied by a library client without touching
-the engine — see [`docs/extension.md`](docs/extension.md).
+Forcesmith is layered as three artifacts:
 
+- **`forcesmith_engine`** — a static engine library holding everything below the
+  public API (force models, neighbour lists, optimisers, I/O).
+- **`libforcesmith`** — a first-class shared library exposing the
+  `forcesmith::Forcesmith` facade; this is the product's public surface.
+- **`forcesmith`** — a thin CLI that is just another client of that API.
+
+Polymorphic surfaces (potentials, solvers) use Sean-Parent-style
+**value-semantic type erasure**, so a library client can supply new potentials
+and solvers without touching the engine — see [`docs/extension.md`](docs/extension.md).
 Errors are propagated with `boost::leaf::result<T>` rather than exceptions.
 
-### Key dependencies
+### Dependencies
 
 Eigen, Boost (parser, serialization, program_options, math, LEAF), nlohmann_json,
-and oneTBB. See `cmake/Dependencies.cmake`.
+oneTBB, Ipopt (+MUMPS, built as an ExternalProject), and spdlog. See
+`cmake/Dependencies.cmake`.
 
 ## Building
 
@@ -49,15 +56,9 @@ cmake --build build
 
 Targets produced:
 
-- `forcesmith` — the CLI binary (target name `forcesmith_cli`, output `forcesmith`)
+- `forcesmith` — the CLI binary (target `forcesmith_cli`, output `forcesmith`)
 - `libforcesmith.so` — the shared programmatic API library
 - `forcesmith_tests` / `forcesmith_integration_tests` — GoogleTest suites (run via `ctest`)
-
-Optional fit drivers (each a single binary; pick the element at runtime with
-`--element`):
-
-- `-DFORCESMITH_BUILD_UNEP_FITS=ON` → `unep_fit` (UNEP EAM fit, e.g. `unep_fit --element Cu`)
-- `-DFORCESMITH_BUILD_ML_FITS=ON` → `ml_fit` (ML fit, e.g. `ml_fit --element Cu --descriptor soap|symfunc --head nn|linear`)
 
 ## Command-line usage
 
@@ -70,14 +71,14 @@ forcesmith --config configs.json --startpot start.json --endpot fitted.json [opt
 | `--config`, `-c`           | required | atomic configuration file (reference data)                     |
 | `--startpot`, `-s`         | required | initial potential / model file                                 |
 | `--endpot`, `-e`           | —        | output potential file (required unless `--evaluate`)           |
-| `--evaluate <file>`        | —        | evaluate the start potential and write a per-config forces/energy/stress JSON report, then exit (no optimisation) |
+| `--evaluate <file>`        | —        | evaluate the start potential, write a per-config forces/energy/stress JSON report, and exit (no optimisation) |
 | `--format`, `-f`           | `native` | output format: `native` \| `lammps` \| `imd`                   |
 | `--checkpoint`, `-k`       | —        | checkpoint prefix: save after each run, resume if present      |
 | `--maxiter`                | `500`    | maximum optimiser iterations                                   |
 | `--eweight`                | `1.0`    | energy residual weight                                         |
 | `--stress-weight`          | `0.0`    | stress-tensor residual weight (0 = disabled)                   |
 | `--smooth-weight`          | `0.0`    | curvature (Tikhonov) regularisation on free knots (0 = disabled) |
-| `--algorithm`, `-a`        | `lm`     | optimiser: `lm` \| `powell` (dogleg) \| `de` \| `ls` (direction-set line search) |
+| `--algorithm`, `-a`        | `lm`     | optimiser: `lm` \| `powell` (dogleg) \| `de` \| `ls` (Powell direction-set) \| `ipopt` (L-BFGS) |
 | `--seed`                   | `0`      | RNG seed for DE (0 = `random_device`)                          |
 | `--de-F`                   | `0.65`   | DE mutation factor F ∈ (0,1)                                   |
 | `--de-CR`                  | `0.5`    | DE crossover probability CR ∈ (0,1)                            |
@@ -98,7 +99,7 @@ Evaluate a potential against the reference configs without fitting:
 forcesmith -c cu_training.json -s cu_eam_fit.json --evaluate cu_report.json
 ```
 
-Global optimisation with differential evolution, then refine:
+Global optimisation with differential evolution, then local refinement:
 
 ```sh
 forcesmith -c train.json -s start.json -e de_fit.json -a de --de-gen 2000 --seed 42
@@ -136,10 +137,9 @@ A reference stress tensor (`stress`) may also be supplied per configuration.
 
 A top-level object whose `"model"` key selects the family. Each radial sub-table
 declares a `"format"` (`analytic` or `tabulated`) and a list of `"potentials"`.
-An analytic potential names its `"type"` (see the registry in
-`src/io/potential_reader.cpp`) and its parameters by name; a tabulated one lists
-`"knots"`. Example EAM model with an analytic Morse pair term and tabulated
-density/embedding:
+An analytic potential names its `"type"` and its parameters by name; a tabulated
+one lists `"knots"`. Example EAM model with an analytic Morse pair term and
+tabulated density/embedding:
 
 ```json
 {
@@ -157,13 +157,13 @@ density/embedding:
 }
 ```
 
-See `include/forcesmith/io/force_model_reader.hpp` for the required sub-tables of
-each model, and `data/` for complete worked examples.
+See `include/forcesmith/io/force_model_reader.hpp` for each model's required
+sub-tables, and `data/` for complete worked examples.
 
 ## Programmatic API
 
-The CLI is a thin client of `forcesmith::Forcesmith`; the same fit can be built entirely
-in memory. Every fallible call returns `boost::leaf::result<T>`.
+The CLI is a thin client of `forcesmith::Forcesmith`; the same fit can be built
+entirely in memory. Every fallible call returns `boost::leaf::result<T>`.
 
 ```cpp
 #include "forcesmith/api/forcesmith.hpp"
@@ -187,8 +187,8 @@ BOOST_LEAF_CHECK(session.write("cu_fit.json", "native"));
 ```
 
 A custom solver is injected the same way potentials are
-(`session.set_solver(forcesmith::Solver{MySolver{...}})`). Both extension points are
-documented in [`docs/extension.md`](docs/extension.md).
+(`session.set_solver(forcesmith::Solver{MySolver{...}})`). Both extension points
+are documented in [`docs/extension.md`](docs/extension.md).
 
 ## License
 
