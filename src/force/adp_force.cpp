@@ -11,15 +11,6 @@
 
 namespace forcesmith {
 
-FORCE_INLINE double ADPForceCalculator::quad_nu(const SymTens &M,
-                                                const Vec3 &d) {
-  return d.dot(M * d) - d.squaredNorm() / 3.0 * M.trace();
-}
-
-FORCE_INLINE Vec3 ADPForceCalculator::quad_xi(const SymTens &M, const Vec3 &d) {
-  return M * d - (M.trace() / 3.0) * d;
-}
-
 std::optional<PairForce>
 ADPForceCalculator::make_pair_force(const Atom &ai, const NeighborEntry &nb) {
   const Vec3 &d = nb.dist;

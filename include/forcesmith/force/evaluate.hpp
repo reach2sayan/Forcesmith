@@ -11,7 +11,6 @@
 
 namespace forcesmith::force {
 
-// Result of evaluating a potential against a single configuration.
 struct EvalResult {
   double energy = 0.0;              // calc_energy
   std::vector<Vec3> forces;         // per-atom, indexed parallel to cfg.atoms

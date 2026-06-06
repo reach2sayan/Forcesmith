@@ -17,9 +17,7 @@
 //       bool            analytic_grads() const;
 //   * The head is value-erased (EnergyHead, like Potential) so swapping the
 //     descriptor→energy map never multiplies the ForceCalculator variant.
-//     Concrete heads get their optimizer param-plumbing from the HeadParams
-//     CRTP mixin.
-//
+
 // The fittable parameters are the head coefficients (one head per element
 // type); descriptor hyperparameters (η, Rs, cutoff …) are fixed.
 
@@ -48,50 +46,38 @@
 
 namespace forcesmith {
 
-// Per-neighbor descriptor gradient block: row k is dD_k/dr (a 3-vector).
+// Per-neighbour descriptor gradient block: row k is dD_k/dr (a 3-vector).
 using DescriptorGrad = Eigen::Matrix<double, Eigen::Dynamic, 3>;
-
-// One atom's descriptor evaluation.
-//   values     — D_i, length = descriptor_size
-//   grad_self  — dD_i/dr_i           (S×3)
-//   grad_neigh — dD_i/dr_j per neighbor jj, parallel to atom.neighbors (each
-//   S×3)
-// grad_self/grad_neigh are only consumed when has_grad is true; a model that
-// reports analytic_grads()==false may leave them empty and let MLBase
-// finite-difference the forces instead.
 struct DescriptorValue {
-  Eigen::VectorXd values;
+  Eigen::VectorXd values; // D_i, length = descriptor_size
   bool has_grad = false;
-  DescriptorGrad grad_self;
-  std::vector<DescriptorGrad> grad_neigh;
+
+  // only use when has_grad == true
+  DescriptorGrad grad_self;               // dD_i/dr_i (S×3)
+  std::vector<DescriptorGrad> grad_neigh; // dD_i/dr_j per neighbor jj
 };
 
 namespace detail {
 struct HeadConcept {
   virtual ~HeadConcept() = default;
   virtual double energy(const Eigen::VectorXd &D) const = 0;
+
   virtual Eigen::VectorXd grad(const Eigen::VectorXd &D) const = 0; // de/dD
-  // True if grad(D) and dgrad_dparam(D) are independent of D (a LINEAR head),
-  // so ∂E/∂D and ∂(∂E/∂D)/∂θ are one value per element type. This lets the
-  // cached force/Jacobian assembly hoist them out of the atom loop and batch
-  // every atom of a type into a single BLAS call (see CacheData::groups).
-  virtual bool constant_grad() const = 0;
-  // Analytic parameter derivatives, in gather_params() order, used to build the
-  // optimizer Jacobian without finite-differencing the residual over every
-  // weight. has_param_jacobian()==false ⇒ the functor falls back to the FD
-  // path.
-  //   param_grad(D)   = ∂E/∂θ            (length param_count())
-  //   dgrad_dparam(D) = ∂(∂E/∂D)/∂θ      (param_count() columns, one per param;
-  //                                       rows = descriptor size) — the mixed
-  //                     second derivative the force-residual columns need.
+  virtual bool
+  constant_grad() const = 0; // ∂E/∂D and ∂(∂E/∂D)/∂θ const per elem
+
   virtual bool has_param_jacobian() const = 0;
-  virtual Eigen::VectorXd param_grad(const Eigen::VectorXd &D) const = 0;
-  virtual Eigen::MatrixXd dgrad_dparam(const Eigen::VectorXd &D) const = 0;
+  virtual Eigen::VectorXd
+  param_grad(const Eigen::VectorXd &D) const = 0; // ∂E/∂θ  (1 x num_params)
+  virtual Eigen::MatrixXd dgrad_dparam(const Eigen::VectorXd &D)
+      const = 0; // ∂(∂E/∂D)/∂θ  (num_descritptor x num_params)
   virtual std::size_t param_count() const = 0;
+
   virtual void gather_params(Eigen::VectorXd &x, std::size_t off) const = 0;
   virtual void scatter_params(const Eigen::VectorXd &x, std::size_t off) = 0;
   virtual void gather_bounds(Eigen::VectorXd &lo, Eigen::VectorXd &hi,
                              std::size_t off) const = 0;
+
   // Generic (de)serialization surface so the io layer can round-trip any head
   // without knowing its concrete type (keeps nlohmann out of this header).
   //   type_tag()     — "linear" …
@@ -99,8 +85,10 @@ struct HeadConcept {
   //   all_values()   — every parameter (free AND fixed), flat
   virtual std::string type_tag() const = 0;
   virtual std::vector<int> architecture() const = 0;
+
   virtual Eigen::VectorXd all_values() const = 0;
   virtual void set_all_values(const Eigen::VectorXd &v) = 0;
+
   virtual std::unique_ptr<HeadConcept> clone() const = 0;
   // Re-rank support (species count change). remapped() re-lays-out the head to
   // map.size() descriptor features, pulling coeff k from old index map[k]
@@ -113,14 +101,6 @@ struct HeadConcept {
 };
 } // namespace detail
 
-// CRTP mixin that generates the optimizer param-plumbing for a concrete head
-// from its fittable slots. The head itself supplies the maths and its slots:
-//   double          energy(const VectorXd&) const
-//   Eigen::VectorXd grad(const VectorXd&) const                // de/dD
-//   std::array/vector<Param*>       field_ptrs()               // fittable
-//   slots std::array/vector<const Param*> field_ptrs() const
-// gather/scatter follow the Potential convention: write/read starting at `off`;
-// the caller advances by param_count().
 template <typename Derived> struct HeadParams {
   std::size_t param_count() const {
     auto f = self().field_ptrs();
@@ -259,8 +239,8 @@ class EnergyHead : private detail::ErasedValue<detail::HeadConcept> {
     std::unique_ptr<detail::HeadConcept> clone() const override {
       return std::make_unique<Model>(*this);
     }
-    std::unique_ptr<detail::HeadConcept>
-    remapped(const std::vector<std::optional<Eigen::Index>> &map) const override {
+    std::unique_ptr<detail::HeadConcept> remapped(
+        const std::vector<std::optional<Eigen::Index>> &map) const override {
       return std::make_unique<Model>(impl_.remapped(map));
     }
     std::unique_ptr<detail::HeadConcept>
@@ -324,18 +304,12 @@ public:
 
 template <typename Derived>
 struct MLBase : ForceCalculatorBase<Derived>, NoGlobals {
-  // One head per element type, indexed by atom.type.index. The descriptor (and
-  // its hyperparameters) lives in Derived.
+  // One head per element type, indexed by atom.type.index.
   TypeArray<EnergyHead> heads;
 
-  // Fit-time descriptor cache
-  // During an optimization the
-  // training geometry is FIXED — only the head params move — so the descriptor
-  // D_i and its position-gradient dD_i/dr are constant. prepare() computes them
-  // ONCE for every atom of every config; thereafter the per-iteration force
-  // evaluation is cheap head algebra over cached arrays (no neighbour rebuild,
-  // no get_descriptor, no finite-difference fallback).
-  //
+  // Fit-time descriptor cache - D_i and its dD_i/dr are constant
+  // During a fit (FIXED geometry) descriptor.prepare() precomputes per atom.
+
   // Stored POINTER-FREE: each cached atom keeps its neighbours as flat atom
   // indices (within the config) plus the bond vectors, so the cached force
   // assembly needs no live neighbour list. That is what lets the parallel
@@ -344,6 +318,7 @@ struct MLBase : ForceCalculatorBase<Derived>, NoGlobals {
   struct AtomCache {
     int type = 0;           // element slot → head index
     Eigen::VectorXd values; // D_i  (descriptor_size S)
+
     // Every position-gradient block of D_i stacked COLUMN-WISE into one
     // contiguous S×(3·(1+nbonds)) matrix: columns [0,3) are dD_i/dr_i (the
     // centre), columns [3·(k+1), 3·(k+1)+3) are dD_i/dr_j for neighbour k
@@ -361,27 +336,27 @@ struct MLBase : ForceCalculatorBase<Derived>, NoGlobals {
   // (config,type) instead of one per atom. Built only when every head reports
   // constant_grad(); otherwise `groups` stays empty and eval falls back to the
   // per-atom AtomCache path.
-  //   grad   — S × (3·nblocks): block b occupies columns [3b, 3b+3)
-  //   target — [nblocks] atom index that block b's force scatters into
-  //   bond   — [nblocks] bond vector for the virial (Zero for self blocks, so
-  //            they contribute no stress — same as the per-atom path)
   struct ForceGroup {
     int type = 0;
-    Eigen::MatrixXd grad;
-    std::vector<int> target;
-    std::vector<Vec3> bond;
+    Eigen::MatrixXd
+        grad; // S × (3·nblocks): block b occupies columns [3b, 3b+3)
+    std::vector<int> target; // [nblocks] atom of block b's forces
+    std::vector<Vec3> bond;  // [nblocks] bond vector for the virial
   };
   struct CacheData {
-    std::vector<std::vector<AtomCache>> rows;    // [config][atom] (energy/values)
-    std::vector<std::vector<ForceGroup>> groups; // [config][type] (force fast path)
-    std::vector<double> volume;                  // per-config cell volume
+    std::vector<std::vector<AtomCache>> rows; // [config][atom] (energy/values)
+    std::vector<std::vector<ForceGroup>>
+        groups;                 // [config][type] (force fast path)
+    std::vector<double> volume; // per-config cell volume
+    // M_t = ∂(∂E/∂D)/∂θ per type (linear heads): constant across atoms AND
+    // optimizer iterations, so precompute
+    std::vector<Eigen::MatrixXd> dgrad_param;
   };
-  // shared_ptr<const>: copying the model for a parallel Jacobian column copies
-  // the pointer (cheap, read-only sharing is thread-safe), never the data.
   mutable std::shared_ptr<const CacheData> cache_;
-
   void invalidate_cache() const { cache_.reset(); }
-  [[nodiscard]] bool has_cache() const { return static_cast<bool>(cache_); }
+  [[nodiscard]] constexpr bool has_cache() const {
+    return static_cast<bool>(cache_);
+  }
 
   [[nodiscard]] bool has_param_jacobian() const {
     return heads.size() > 0 &&
@@ -392,20 +367,11 @@ struct MLBase : ForceCalculatorBase<Derived>, NoGlobals {
 
   // Every head linear ⇒ enable the batched per-(config,type) cache fast path.
   [[nodiscard]] bool all_constant_grad() const {
-    return heads.size() > 0 && std::ranges::all_of(heads, [](const EnergyHead &h) {
-             return h.constant_grad();
-           });
+    return heads.size() > 0 &&
+           std::ranges::all_of(
+               heads, [](const EnergyHead &h) { return h.constant_grad(); });
   }
 
-  // ── Species re-rank ─────────────────────────────────────────────────────────
-  // Produce a copy of this model laid out for new_reg (a re-rank: an element was
-  // added or removed, so the compact slots shifted). Elements are matched by
-  // symbol via the Z-sorted registries: a retained element's head moves to its
-  // new slot and its descriptor-blocked coefficients are reindexed; a newly-added
-  // element gets a fresh zero head. The result is structurally valid but carries
-  // untrained weights for the new element(s), so the caller must RE-FIT it.
-  // Standardization is dropped (prepare() recomputes it every fit); the cache is
-  // invalidated. self() must expose descriptor_index_map(old_reg, new_reg).
   [[nodiscard]] boost::leaf::result<Derived>
   remap(const SpeciesRegistry &old_reg, const SpeciesRegistry &new_reg) const {
     Derived out = self();
@@ -425,8 +391,8 @@ struct MLBase : ForceCalculatorBase<Derived>, NoGlobals {
       if (const auto s_old = old_of_new[t]) {
         new_heads.emplace_back(heads[*s_old].remapped(idx));
       } else {
-        // heads is non-empty (a seeded model always has >=1 head); heads[0] just
-        // supplies the concrete head TYPE for the fresh zero head.
+        // heads is non-empty (a seeded model always has >=1 head); heads[0]
+        // just supplies the concrete head TYPE for the fresh zero head.
         new_heads.emplace_back(heads[0].zero_like(new_size));
       }
     }
@@ -439,35 +405,31 @@ struct MLBase : ForceCalculatorBase<Derived>, NoGlobals {
   }
 
   // Per-feature descriptor standardization
-  // Least-squares/NN conditioning collapses when descriptor features span
-  // orders of magnitude (SOAP only L2-normalizes per sample; G2 not at all), so
-  // the LM fit plateaus after one step. prepare() whitens each feature to ≈zero
-  // mean / unit variance over the training set, per element type. The affine
-  // map D' = (D−μ)/σ is folded into the cached values AND their
+  // prepare() whitens each feature to ≈zero mean / unit variance over the
+  // training set, per element type.
+  // The affine map D' = (D−μ)/σ is folded into the cached values WITH
   // position-gradients (each gradient row k scaled by 1/σ_k; μ is a constant
   // shift that drops out of the gradient), so eval_cached and the uncached
-  // force path are unchanged apart from receiving whitened inputs. μ/σ are
-  // FIXED transforms — not optimizer parameters — so they live outside
-  // gather/scatter and are written with the model. Public so the io layer can
-  // (de)serialize them and tests can assert.
+  // force path are unchanged apart from receiving whitened inputs.
+  // μ/σ are FIXED FIXED transforms
   bool standardize_features = false;
   mutable TypeArray<Eigen::VectorXd> mean_; // per type, length descriptor_size
-  mutable TypeArray<Eigen::VectorXd>
-      inv_std_; // per type, 1/σ (0 for dead feats)
+  mutable TypeArray<Eigen::VectorXd> inv_std_; // per type, 1/σ (0 for dead)
 
   [[nodiscard]] bool has_standardization() const {
     return standardize_features && inv_std_.size() > 0;
   }
 
 private:
-  // ── prepare() pipeline stages ───────────────────────────────────────────────
-  // Declared before prepare() so its (non-dependent) calls resolve here.
-  // Flat (config, atom) index list over the whole training set.
+  // ── prepare() pipeline stages
+  // ─────────────────────────────────────────────── Declared before prepare()
+  // so its (non-dependent) calls resolve here. Flat (config, atom) index list
+  // over the whole training set.
   using Worklist = std::vector<std::pair<std::size_t, std::size_t>>;
 
   // Stage 0 — the work-list: thousands of independent (config, atom) units, so
-  // one balanced parallel_for fills every core instead of stranding threads on a
-  // handful of uneven configs.
+  // one balanced parallel_for fills every core instead of stranding threads on
+  // a handful of uneven configs.
   static Worklist step_atom_worklist(std::span<Configuration> configs) {
     Worklist work;
     for (std::size_t c = 0; c < configs.size(); ++c) {
@@ -494,8 +456,9 @@ private:
     return data;
   }
 
-  // Stage 2 — force any lazy, model-internal descriptor init (e.g. SOAP's radial
-  // basis) exactly once, serially, so the parallel fill below never races on it.
+  // Stage 2 — force any lazy, model-internal descriptor init (e.g. SOAP's
+  // radial basis) exactly once, serially, so the parallel fill below never
+  // races on it.
   void step_warm_up_descriptors(std::span<Configuration> configs) const {
     for (auto &cfg : configs) {
       if (!cfg.atoms.empty()) {
@@ -505,8 +468,8 @@ private:
     }
   }
 
-  // Stage 3 — fill every atom's raw descriptor + gradients in parallel; each task
-  // touches only its own AtomCache, so the fill is race-free.
+  // Stage 3 — fill every atom's raw descriptor + gradients in parallel; each
+  // task touches only its own AtomCache, so the fill is race-free.
   CacheData step_fill_cache(std::span<Configuration> configs,
                             const Worklist &work, CacheData data) const {
     std::for_each(std::execution::par, work.begin(), work.end(),
@@ -582,8 +545,7 @@ private:
             o += cc.grad_all.cols();
             g.target.push_back(static_cast<int>(a)); // self block
             g.bond.emplace_back(Vec3::Zero());
-            for (auto [ni, nd] :
-                 std::views::zip(cc.neigh_idx, cc.neigh_dist)) {
+            for (auto [ni, nd] : std::views::zip(cc.neigh_idx, cc.neigh_dist)) {
               g.target.push_back(static_cast<int>(ni));
               g.bond.push_back(nd);
             }
@@ -592,22 +554,39 @@ private:
             cc.neigh_dist = {};
           }
         });
+
+    // Precompute the constant per-type M_t = ∂(∂E/∂D)/∂θ once (linear heads):
+    // independent of D and of the optimizer params, so the Jacobian never has
+    // to build/zero it again. S is the descriptor size (first non-empty row).
+    Eigen::Index S = 0;
+    for (const auto &row : data.rows) {
+      if (!row.empty()) {
+        S = row.front().values.size();
+        break;
+      }
+    }
+    data.dgrad_param.resize(T);
+    if (S > 0) {
+      for (std::size_t t = 0; t < T; ++t) {
+        data.dgrad_param[t] = heads[t].dgrad_dparam(Eigen::VectorXd::Zero(S));
+      }
+    }
     return data;
   }
 
 public:
   // One-time precompute over the whole training set, written as a sequence of
   // named stages. A single CacheData is threaded through the pipeline — each
-  // stage takes it by value and returns it (state-threading) — so the body reads
-  // as the pipeline it is: allocate → warm-up → fill → whiten → group → commit.
-  // See the individual step_* helpers for the rationale of each stage.
+  // stage takes it by value and returns it (state-threading) — so the body
+  // reads as the pipeline it is: allocate → warm-up → fill → whiten → group →
+  // commit. See the individual step_* helpers for the rationale of each stage.
   void prepare(std::span<Configuration> configs) const {
     const Worklist work = step_atom_worklist(configs);
 
     CacheData data = step_allocate_cache(configs); // neighbour lists + sizing
-    step_warm_up_descriptors(configs);             // serial lazy descriptor init
-    data = step_fill_cache(configs, work, std::move(data));    // parallel fill
-    data = step_whiten_cache(work, std::move(data));           // optional whiten
+    step_warm_up_descriptors(configs); // serial lazy descriptor init
+    data = step_fill_cache(configs, work, std::move(data)); // parallel fill
+    data = step_whiten_cache(work, std::move(data));        // optional whiten
     data = step_group_cache(std::move(data)); // batch linear heads per type
 
     cache_ = std::make_shared<CacheData>(std::move(data));
@@ -633,7 +612,8 @@ public:
       // at once, then scattered. contrib block b is grad_block_b^T · c_t.
       for (const ForceGroup &g : groups) {
         const EnergyHead &h = heads[static_cast<std::size_t>(g.type)];
-        const Eigen::VectorXd dEdD = h.grad(Eigen::VectorXd{}); // const for linear
+        const Eigen::VectorXd dEdD =
+            h.grad(Eigen::VectorXd{}); // const for linear
         const Eigen::VectorXd contrib = g.grad.transpose() * dEdD;
         for (std::size_t b = 0; b < g.target.size(); ++b) {
           const Vec3 cb = contrib.segment<3>(3 * static_cast<Eigen::Index>(b));
@@ -1003,7 +983,7 @@ private:
         continue;
       }
       const double n = static_cast<double>(count[t]);
-      const Eigen::VectorXd mu  = sum[t] / n;
+      const Eigen::VectorXd mu = sum[t] / n;
       const Eigen::VectorXd var = (sumsq[t] / n) - mu.array().square().matrix();
 
       mean.emplace_back(std::move(mu));

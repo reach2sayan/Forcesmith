@@ -34,9 +34,10 @@ struct TersoffParams {
   Param h = 0.0;      // angular function shift
   Param R = 2.5;      // inner cutoff (Å)
   Param S = 3.0;      // outer cutoff (Å)
-  // Bond-order mixing weight ω for the i–k pair in the ζ sum (forcesmith's omega).
-  // Defaults to 1.0 and fixed, matching forcesmith's diagonal (same-type) pairs;
-  // the reader frees it for cross-type pairs that supply an explicit value.
+  // Bond-order mixing weight ω for the i–k pair in the ζ sum (forcesmith's
+  // omega). Defaults to 1.0 and fixed, matching forcesmith's diagonal
+  // (same-type) pairs; the reader frees it for cross-type pairs that supply an
+  // explicit value.
   Param omega{1.0, true};
 };
 

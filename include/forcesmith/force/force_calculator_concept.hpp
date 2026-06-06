@@ -83,8 +83,7 @@ FORCE_INLINE double deriv_gated(const Pot &p, SiteId site, double r) {
   return site.cacheable() ? p.deriv_at(site)
                           : (in_range(p, r) ? p.deriv(r) : 0.0);
 }
-// Fused value+derivative variant: one dispatch returns both. Mirrors the
-// gating of eval_gated/deriv_gated — primed bonds skip the in_range check.
+
 template <typename Pot>
 FORCE_INLINE std::pair<double, double>
 eval_deriv_gated(const Pot &p, SiteId site, double r) {
@@ -121,8 +120,6 @@ void gather_bounds_range(const Range &range, Eigen::VectorXd &lo,
   }
 }
 
-// Total number of curvature (smoothness) residuals contributed by a range of
-// potentials, and writing those residuals — mirrors gather_range/scatter_range.
 template <typename Range>
 std::size_t smoothness_count_range(const Range &range) {
   return std::transform_reduce(

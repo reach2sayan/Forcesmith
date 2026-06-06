@@ -40,25 +40,18 @@ struct PairForce {
   std::array<SiteId, kNeighborSiteCount> sites = {};
 };
 
-// Potential tables for ntypes element types (paircol = ntypes*(ntypes+1)/2):
-//   pair       — φ_{ij}(r)  pair repulsion,         paircol entries
-//   density    — g_i(r)     electron density,        ntypes entries
-//   embedding  — F_i(ρ)     embedding energy,        ntypes entries
-//   dipole     — u_{ij}(r)  dipole coupling,         paircol entries
-//   quadrupole — w_{ij}(r)  quadrupole coupling,     paircol entries
 struct ADPForceCalculator : ForceCalculatorBase<ADPForceCalculator>, NoGlobals {
-  PotentialPair pair;
-  PotentialArray density;
-  PotentialArray embedding;
-  PotentialPair dipole;
-  PotentialPair quadrupole;
+  // num_pairs = ntypes*(ntypes+1)/2
+  PotentialPair pair; // φ_{ij}(r)  pair repulsion (1 x num_pairs)
+  PotentialArray density; // g_i(r) electron density (1 x ntypes)
+  PotentialArray embedding; // F_i(ρ) embedding energy (1 x ntypes)
+  PotentialPair dipole; // u_{ij}(r)  dipole coupling (1 x num_pairs)
+  PotentialPair quadrupole; // quadrupole coupling (1 x num_pairs)
 
   void eval_forces(Configuration &cfg) const;
 
-  // Fit-time setup (single-threaded): see EAMForceCalculator::prepare. Primes
-  // the spline-cache hints for all five radial-table roles a bond drives
-  // (φ, g_j, g_i, dipole, quadrupole). Optional fast path; eval_forces falls
-  // back to direct eval/deriv(r) for unprimed bonds.
+  // Primes the spline-cache hints for all five radial-table roles a bond drives
+  // (φ, g_j, g_i, dipole, quadrupole).
   void prepare(std::span<Configuration> configs) const;
 
   std::size_t param_count() const;
@@ -69,11 +62,14 @@ struct ADPForceCalculator : ForceCalculatorBase<ADPForceCalculator>, NoGlobals {
   double max_cutoff() const;
 
 private:
-  // Helpers for quadrupole force terms (see eval_forces for derivation refs).
   // nu(M, d) = d^T M d - r²/3 × tr(M)
-  static double quad_nu(const SymTens &M, const Vec3 &d);
+  static FORCE_INLINE double quad_nu(const SymTens &M, const Vec3 &d) {
+    return d.dot(M * d) - d.squaredNorm() / 3.0 * M.trace();
+  }
   // xi(M, d) = M d - tr(M)/3 × d
-  static Vec3 quad_xi(const SymTens &M, const Vec3 &d);
+  static FORCE_INLINE Vec3 quad_xi(const SymTens &M, const Vec3 &d) {
+    return M * d - (M.trace() / 3.0) * d;
+  }
 
   // Each stage adds one physical contribution to PairForce::force (the force on
   // atom i) and passes the pair on. An empty std::optional means the two atoms

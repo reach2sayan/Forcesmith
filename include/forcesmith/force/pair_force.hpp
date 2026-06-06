@@ -26,10 +26,6 @@ struct PairForceCalculator : WithGlobals {
   PotentialPair pair;
 
   void eval_forces(Configuration &cfg) const;
-
-  // Fit-time setup (single-threaded): see EAMForceCalculator::prepare. Primes
-  // the φ spline-cache hint on every bond. Optional — eval_forces falls back to
-  // a direct eval/deriv(r) when a bond was not primed.
   void prepare(std::span<Configuration> configs) const;
 
   std::size_t param_count() const;

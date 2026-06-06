@@ -98,13 +98,7 @@ struct Configuration : Serializable<Configuration> {
   SymTens calc_stress = SymTens::Zero();
   double calc_limit = 0.0; // F(ρ) out-of-range penalty (RESCALE-style)
 
-  // Neighbor-list cache key. Transient (NOT serialized): mirrors the
-  // NeighborEntry pointer contract. build_neighbor_list reuses the existing
-  // list when (rcut, pots, geometry) are unchanged — during a fit the geometry
-  // is fixed and only potential parameters vary, so the list need only be built
-  // once per configuration. nl_valid is reset implicitly because a copied or
-  // freshly-loaded Configuration carries a stale Atom::parent (see
-  // neighbor_list).
+  //TODO : A proper ting for a key
   bool nl_valid = false;
   double nl_rcut = -1.0;
   const void *nl_pots = nullptr;
@@ -116,8 +110,6 @@ struct Configuration : Serializable<Configuration> {
   from_file(const std::filesystem::path &path);
 };
 
-// Root-mean-square of the per-atom calculated forces over a configuration.
-// Returns 0 for an empty configuration.
 inline double force_rms(const Configuration &cfg) {
   const double sq = std::transform_reduce(
       cfg.atoms.begin(), cfg.atoms.end(), 0.0, std::plus<>{},

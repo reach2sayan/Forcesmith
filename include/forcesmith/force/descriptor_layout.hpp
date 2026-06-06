@@ -1,7 +1,6 @@
 #pragma once
 
 // Shared flat-layout machinery for local ML descriptors (ACSF, LMBTR, ...).
-//
 // A per-atom descriptor is a flat vector partitioned into contiguous *blocks*.
 // Each block channels `count` values over `nchan` channels — `nchan = ntypes`
 // for per-species blocks, `nchan = P = ntypes(ntypes+1)/2` for per-species-pair
@@ -11,21 +10,17 @@
 // wrap it (AcsfLayout, LmbtrLayout) to keep their domain vocabulary.
 
 #include "forcesmith/core/types.hpp"
-
 #include <Eigen/Core>
-
-#include <boost/container/static_vector.hpp>
-
 #include <algorithm>
+#include <boost/container/static_vector.hpp>
 #include <cstddef>
 #include <optional>
 #include <vector>
 
 namespace forcesmith {
 
-// Upper-triangle ordinal of the unordered species pair {a,b} (row-major,
-// 0 <= lo <= hi < S) — the companion lookup to upper_triangle() in
-// potential_table.hpp, matching SOAP's species-pair ordering.
+// Upper-triangle ordinal of the unordered species pair {a,b}
+// 0 <= lo <= hi < S)
 constexpr FORCE_INLINE std::size_t pair_ordinal(std::size_t a, std::size_t b,
                                                 std::size_t S) {
   const std::size_t lo = std::min(a, b);
@@ -64,16 +59,6 @@ struct DescriptorLayout {
   }
 };
 
-// Re-rank index map for any DescriptorLayout-based descriptor: for each flat
-// index of the NEW layout, the flat index of the OLD layout that feeds it, or
-// nullopt for a brand-new block (a channel/pair touching an added species).
-// `old_of_new[s]` is the OLD compact slot of the species now at NEW slot s (or
-// nullopt if that element did not exist before). old_L and new_L must hold the
-// SAME blocks in the SAME order (same descriptor config, only S differs), which
-// holds because the hyperparameters are unchanged across a re-rank. A block is
-// per-species when nchan==S and per-pair when nchan==P=S(S+1)/2 (distinct for
-// S>=2; at S==1 both collapse to the single channel and the per-species path is
-// correct either way).
 std::vector<std::optional<Eigen::Index>>
 remap_layout(const DescriptorLayout &old_L, const DescriptorLayout &new_L,
              const std::vector<std::optional<std::size_t>> &old_of_new,

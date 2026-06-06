@@ -1,6 +1,6 @@
 #pragma once
 
-// Step 19 — Stillinger-Weber (SW) two- and three-body force calculator.
+// Stillinger-Weber (SW) two- and three-body force calculator.
 // Reference: Stillinger & Weber, Phys. Rev. B 31, 5262 (1985).
 // Matches the original forcesmith parameterization (force_stiweb.c).
 //
