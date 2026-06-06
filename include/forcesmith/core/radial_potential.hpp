@@ -93,7 +93,6 @@ class RadialPotential
       }
     }
 
-    // TODO : Make eval_and_deriv for all
     std::pair<double, double> eval_and_deriv(double r) const override {
       if constexpr (requires(const T &t, double rr) { t.eval_and_deriv(rr); }) {
         return impl_.eval_and_deriv(r);
