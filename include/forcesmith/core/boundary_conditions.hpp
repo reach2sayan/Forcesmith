@@ -1,6 +1,7 @@
 #pragma once
 
 #include "forcesmith/core/types.hpp"
+#include <cmath>
 #include <variant>
 
 namespace forcesmith {
@@ -19,8 +20,17 @@ public:
   explicit PeriodicBC(const Mat3 &box) { set_box(box); }
   void set_box(const Mat3 &box) {
     box_ = box;
-    inv_box_ = box.inverse();
-    volume_ = std::abs(box.determinant());
+    const double det = box.determinant();
+    // A singular or non-finite cell has no usable inverse; keep inv_box_/volume_
+    // finite so a degenerate config can't propagate NaNs into wrap(),
+    // min_image() or the neighbour-list image-shell counts. Such input should be
+    // rejected upstream — this is only a last-resort guard.
+    if (box.allFinite() && std::isfinite(det) && det != 0.0) {
+      inv_box_ = box.inverse();
+    } else {
+      inv_box_ = Mat3::Identity();
+    }
+    volume_ = std::isfinite(det) ? std::abs(det) : 0.0;
   }
 
   [[nodiscard]] constexpr const Mat3 &box() const noexcept { return box_; }

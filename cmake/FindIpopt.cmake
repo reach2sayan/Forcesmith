@@ -5,13 +5,13 @@
 include(FindPackageHandleStandardArgs)
 
 find_package(PkgConfig QUIET)
-if(PKG_CONFIG_FOUND)
+if (PKG_CONFIG_FOUND)
     pkg_check_modules(PC_IPOPT QUIET ipopt)
-endif()
+endif ()
 
 find_path(IPOPT_INCLUDE_DIR
-    NAMES coin/IpIpoptApplication.hpp IpIpoptApplication.hpp
-    HINTS
+        NAMES coin/IpIpoptApplication.hpp IpIpoptApplication.hpp
+        HINTS
         ${IPOPT_ROOT}/include
         ${PC_IPOPT_INCLUDE_DIRS}
         /usr/include/coin
@@ -21,8 +21,8 @@ find_path(IPOPT_INCLUDE_DIR
 )
 
 find_library(IPOPT_LIBRARY
-    NAMES ipopt
-    HINTS
+        NAMES ipopt
+        HINTS
         ${IPOPT_ROOT}/lib
         ${PC_IPOPT_LIBRARY_DIRS}
         /usr/lib
@@ -31,16 +31,16 @@ find_library(IPOPT_LIBRARY
 )
 
 find_package_handle_standard_args(Ipopt
-    REQUIRED_VARS IPOPT_LIBRARY IPOPT_INCLUDE_DIR
-    VERSION_VAR PC_IPOPT_VERSION
+        REQUIRED_VARS IPOPT_LIBRARY IPOPT_INCLUDE_DIR
+        VERSION_VAR PC_IPOPT_VERSION
 )
 
-if(Ipopt_FOUND AND NOT TARGET Ipopt::Ipopt)
+if (Ipopt_FOUND AND NOT TARGET Ipopt::Ipopt)
     add_library(Ipopt::Ipopt UNKNOWN IMPORTED)
     set_target_properties(Ipopt::Ipopt PROPERTIES
-        IMPORTED_LOCATION "${IPOPT_LIBRARY}"
-        INTERFACE_INCLUDE_DIRECTORIES "${IPOPT_INCLUDE_DIR}"
+            IMPORTED_LOCATION "${IPOPT_LIBRARY}"
+            INTERFACE_INCLUDE_DIRECTORIES "${IPOPT_INCLUDE_DIR}"
     )
-endif()
+endif ()
 
 mark_as_advanced(IPOPT_INCLUDE_DIR IPOPT_LIBRARY)

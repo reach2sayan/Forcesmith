@@ -28,7 +28,8 @@ Radial functions are either **analytic** (Lennard-Jones, Morse, EOPP, Born,
 Buckingham, …; see the registry in `src/io/potential_reader.cpp`) or
 **tabulated** (cubic splines over knot values). The fit is driven by one of
 several optimisers — Levenberg–Marquardt, Powell dogleg, differential evolution,
-Ipopt (L-BFGS), or a Powell direction-set line search.
+Ipopt (L-BFGS), a Powell direction-set line search, or a closed-form linear
+least-squares solve (`lsq`, for linear ML heads).
 
 ## Building
 
@@ -67,7 +68,7 @@ forcesmith --config configs.json --startpot start.json --endpot fitted.json [opt
 | `--eweight`                | `1.0`    | energy residual weight                                         |
 | `--stress-weight`          | `0.0`    | stress-tensor residual weight (0 = disabled)                   |
 | `--smooth-weight`          | `0.0`    | curvature (Tikhonov) regularisation on free knots (0 = disabled) |
-| `--algorithm`, `-a`        | `lm`     | optimiser: `lm` \| `powell` (dogleg) \| `de` \| `ls` (Powell direction-set) \| `ipopt` (L-BFGS) |
+| `--algorithm`, `-a`        | `lm`     | optimiser: `lm` \| `powell` (dogleg) \| `de` \| `ls` (Powell direction-set) \| `ipopt` (L-BFGS) \| `lsq` (closed-form least squares; exact + low-memory for linear ML heads) |
 | `--seed`                   | `0`      | RNG seed for DE (0 = `random_device`)                          |
 | `--de-F`                   | `0.65`   | DE mutation factor F ∈ (0,1)                                   |
 | `--de-CR`                  | `0.5`    | DE crossover probability CR ∈ (0,1)                            |
@@ -93,6 +94,15 @@ Global optimisation with differential evolution, then local refinement:
 ```sh
 forcesmith -c train.json -s start.json -e de_fit.json -a de --de-gen 2000 --seed 42
 forcesmith -c train.json -s de_fit.json -e final.json -a lm
+```
+
+Fit a machine-learned potential with a linear head in one closed-form solve
+(`lsq` evaluates the residual and Jacobian once each and never materialises the
+whole-dataset descriptor cache — the memory win for large SOAP/ACSF fits):
+
+```sh
+forcesmith init -m soap --n-max 6 --l-max 6 -o soap_start.json
+forcesmith -c train.json -s soap_start.json -e soap_fit.json -a lsq
 ```
 
 ### Scaffolding a start potential — `forcesmith init`
@@ -224,24 +234,17 @@ BOOST_LEAF_CHECK(session.write("cu_fit.json", "native"));
   potential in place.
 - **A pre-built model** — `seed_force_model(ForceCalculator{...})` adopts a fully
   assembled model (this is how `io::load_model` and the checkpoint reload work).
-- **Run & inspect** — `evaluate(cfg)` for a single configuration, `optimize()`
-  for the fit, `write(path, format)` for output, and read-only accessors
-  (`configurations()`, `species()`, `model()`, `index()`).
-
-### Injecting a custom solver
-
-A custom solver is supplied the same way a potential is — wrap it in the
-type-erased `Solver` value and hand it over:
-
-```cpp
-session.set_solver(forcesmith::Solver{MySolver{ /* tuning */ }});
-BOOST_LEAF_CHECK(session.optimize());   // uses MySolver; default LM if none set
-```
+- **Run & inspect** — `evaluate(cfg)` for a single configuration, `evaluate_all()`
+  for every configuration at once (descriptors filled in parallel across cores;
+  results ordered by config index and bit-identical to looping `evaluate(i)`),
+  `optimize()` for the fit, `write(path, format)` for output, and read-only
+  accessors (`configurations()`, `species()`, `model()`, `index()`).
 
 Custom **potentials**, **solvers**, **ML energy heads**, and whole
-**force calculators** are all injected through this facade without recompiling
-the engine — the contracts are documented in [`docs/extension.md`](docs/extension.md),
-and the design behind them in [`docs/design.md`](docs/design.md).
+**force calculators** are all supplied through this facade without recompiling
+the engine. The README shows *where* they plug in; the concrete contracts and
+worked examples live in [`docs/extension.md`](docs/extension.md), and the design
+behind them in [`docs/design.md`](docs/design.md).
 
 ## License
 

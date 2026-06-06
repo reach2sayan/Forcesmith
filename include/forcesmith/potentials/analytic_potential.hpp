@@ -551,6 +551,8 @@ struct StiwWeb2 : AnalyticParams<StiwWeb2, 6> {
       return 0.0;
     const double d = r - rc;
     const double g = std::exp(delta / d);
+    if (g == 0.0)
+      return 0.0; // exp underflow near r=rc; guards 0·∞ in the (-delta/d²) term
     const double poly = A * std::pow(r, -p) - B * std::pow(r, -q);
     const double dpoly =
         -A * p * std::pow(r, -p - 1.0) + B * q * std::pow(r, -q - 1.0);

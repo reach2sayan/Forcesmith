@@ -70,11 +70,17 @@ void build_periodic(Configuration &cfg, double rcut, double rcut2,
   const Vec3 a = box.col(0), b = box.col(1), c = box.col(2);
 
   // Image shells needed per axis: ceil(rcut * |reciprocal lattice vector|),
-  // where the reciprocal vectors are the rows of the inverse box.
+  // where the reciprocal vectors are the rows of the inverse box. A degenerate
+  // box yields a non-finite inverse; guard so a NaN width can't reach the
+  // (undefined) NaN->int conversion and instead collapses to no images.
   const Mat3 &inv = pbc.inv_box();
-  const int sx = static_cast<int>(std::ceil(rcut * inv.row(0).norm()));
-  const int sy = static_cast<int>(std::ceil(rcut * inv.row(1).norm()));
-  const int sz = static_cast<int>(std::ceil(rcut * inv.row(2).norm()));
+  const auto shells = [&](int axis) -> int {
+    const double w = inv.row(axis).norm();
+    if (!std::isfinite(w) || w <= 0.0)
+      return 0;
+    return static_cast<int>(std::ceil(rcut * w));
+  };
+  const int sx = shells(0), sy = shells(1), sz = shells(2);
 
   // Wrap positions into the unit cell so the base separation is minimal and
   // the image shells above are guaranteed to cover the cutoff sphere.
@@ -126,12 +132,16 @@ void build_impl(Configuration &cfg, double rcut,
     a.neighbors.clear();
     a.parent = &cfg; // stamp owning config (transient; mirrors neighbor ptrs)
   });
-  const double rcut2 = rcut * rcut;
-
-  if (const auto *pbc = std::get_if<PeriodicBC>(&cfg.bc)) {
-    build_periodic(cfg, rcut, rcut2, pots, *pbc);
-  } else {
-    build_infinite(cfg, rcut2, pots);
+  // A non-positive or non-finite cutoff has no neighbours; skip the build so a
+  // negative rcut can't square to a positive rcut2 and silently populate the
+  // cluster path. Lists are already cleared above.
+  if (rcut > 0.0 && std::isfinite(rcut)) {
+    const double rcut2 = rcut * rcut;
+    if (const auto *pbc = std::get_if<PeriodicBC>(&cfg.bc)) {
+      build_periodic(cfg, rcut, rcut2, pots, *pbc);
+    } else {
+      build_infinite(cfg, rcut2, pots);
+    }
   }
 
   cfg.nl_key = key;

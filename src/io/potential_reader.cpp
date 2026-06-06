@@ -213,6 +213,17 @@ leaf::result<RadialPotential> make_tabulated(const json &p) {
   BOOST_LEAF_AUTO(y, knot_values(p));
 
   const std::size_t n = y.size();
+  if (n < 2) {
+    return leaf::new_error(
+        ParseError{"tabulated potential needs at least 2 knots", 0});
+  }
+  if (!(rmax > rmin)) {
+    return leaf::new_error(
+        ParseError{"tabulated potential requires rmax > rmin (got rmin=" +
+                       std::to_string(rmin) + ", rmax=" + std::to_string(rmax) +
+                       ")",
+                   0});
+  }
   const double h = (rmax - rmin) / static_cast<double>(n - 1);
   std::vector<double> x(n);
   std::size_t kcount = 0;

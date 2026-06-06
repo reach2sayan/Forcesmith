@@ -9,7 +9,7 @@ You write a plain struct that satisfies a small compile-time contract, then hand
 an instance to the API.
 
 A consequence worth stating up front: the **CLI menus are intentionally fixed**.
-`--algorithm` offers `lm | powell | de | ls | ipopt`, and a model file selects
+`--algorithm` offers `lm | powell | de | ls | ipopt | lsq`, and a model file selects
 analytic potentials by `"type"` name from a registry. These menus are *not* the
 extension mechanism. A brand-new potential, solver, or head is supplied
 **programmatically**, through `forcesmith::Forcesmith`, without recompiling the
@@ -136,6 +136,12 @@ int minimize(Eigen::VectorXd& x, ResidualFn f, JacobianFn jac, int n_vals,
   the two extra arguments. `honors_bounds()` is **optional** — add
   `bool honors_bounds() const { return true; }` to apply the box; omit it and the
   erased `Solver` defaults it to `false`.
+- `one_shot()` — **optional**. Add `bool one_shot() const { return true; }` if
+  your solver reaches the optimum in a single residual+Jacobian evaluation
+  (closed-form least squares). On a model that is linear in its parameters this
+  lets the optimiser *stream* the Jacobian per-config and skip the whole-dataset
+  descriptor cache (see `NormalEquationsSolver` / design §7). Omit it and the
+  erased `Solver` defaults it to `false`, i.e. the ordinary iterative path.
 - returns an integer status code (solver-specific; ≥0 conventionally success).
 
 Add a `static_assert` so a contract break is a compile error, exactly like the
@@ -163,8 +169,10 @@ static_assert(forcesmith::CSolver<MyGradientDescent>);
 ```
 
 The built-in solvers (`EigenLMSolver`, `EigenHybridSolver`, `BoostDESolver`,
-`LineSearchSolver`, `IpoptSolver`) are good references for handling the
-empty-Jacobian case and for carrying their own tuning fields.
+`LineSearchSolver`, `IpoptSolver`, and `NormalEquationsSolver`) are good
+references for handling the empty-Jacobian case and for carrying their own
+tuning fields — `NormalEquationsSolver` additionally shows the `one_shot()`
+opt-in and a single ridge-regularised Cholesky solve.
 
 ### Using it — API injection (the only path needed)
 

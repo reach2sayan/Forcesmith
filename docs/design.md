@@ -153,8 +153,11 @@ std::pair<double,double> eval_and_deriv(double r) const override {
 So an analytic potential need only write `eval`/`deriv`/`span` and the param
 plumbing; the spline path, the fused value+derivative path, and the
 `set_param`/`set_fixed`/`set_bounds` no-ops are all synthesised. The same idiom
-defaults the descriptor-cache fast paths on `ForceCalculator::Model<T>` and
-`honors_bounds()` on `Solver::Model<T>`.
+defaults the descriptor-cache fast paths and `has_standardization()` on
+`ForceCalculator::Model<T>`, and both `honors_bounds()` and `one_shot()` on
+`Solver::Model<T>` — each absent method resolving to the conservative default
+(`false`) so only the solvers/models that genuinely opt in pay for the
+behaviour.
 
 ### 3.4 The escape hatch — `target<T>()`
 
@@ -431,14 +434,28 @@ Key points:
   `JacobianFn` is meaningful**: it signals "no analytic/parallel Jacobian
   supplied", and a solver that needs one falls back to its own finite
   differences (`if (jac) … else …`).
-- The five built-in solvers — `EigenLMSolver`, `EigenHybridSolver` (Powell
+- The six built-in solvers — `EigenLMSolver`, `EigenHybridSolver` (Powell
   dogleg), `BoostDESolver` (differential evolution), `LineSearchSolver` (Powell
-  direction-set), and `IpoptSolver` (L-BFGS) — each satisfy the `CSolver`
-  concept and carry a `static_assert(CSolver<…>)` so a contract break is a
-  compile error.
+  direction-set), `IpoptSolver` (L-BFGS), and `NormalEquationsSolver`
+  (closed-form weighted linear least squares, the `lsq` algorithm) — each
+  satisfy the `CSolver` concept and carry a `static_assert(CSolver<…>)` so a
+  contract break is a compile error.
 - Box constraints flow as full-length `lower`/`upper` vectors aligned with the
   free-parameter vector (±∞ where unbounded). Only `honors_bounds()` solvers
   (Ipopt, DE) apply them; the gradient solvers ignore the two extra arguments.
+- **One-shot solvers and Jacobian streaming.** When a model is *linear* in its
+  parameters — every ML head a `LinearHead`, so the residual is
+  `r(θ) = r(θ₀) + J·(θ−θ₀)` with a constant Jacobian — the minimiser of ‖r‖² is a
+  single Cholesky solve of the normal equations `(JᵀJ + λI)·Δ = −Jᵀr(θ₀)`.
+  `NormalEquationsSolver` does exactly that and reports `one_shot() == true`. The
+  optimiser reads that flag (together with `model.has_param_jacobian()` and
+  `!model.has_standardization()`) and tells `ForcesmithFunctor` to **stream** the
+  Jacobian: build it one configuration at a time in `df()` rather than
+  materialising the whole-dataset descriptor cache, so memory stays
+  *O(dense Jacobian)* instead of *O(all atoms' descriptor gradients)* — the
+  enabling win for large SOAP/ACSF fits. Standardization forces the cached path
+  because its global μ/σ cannot be computed from a per-config stream; non-linear
+  models (EAM/ADP/…) keep the iterative cached path regardless of solver.
 - `make_default_solver()` is the fallback when no solver is injected.
 - Parallelism is per-configuration via oneTBB inside the functor; DE keeps its
   population evaluation serial because the parallelism already lives one level
