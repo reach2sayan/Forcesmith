@@ -6,6 +6,7 @@
 #include "forcesmith/io/write_model.hpp"
 
 #include <algorithm>
+#include <execution>
 #include <iterator>
 #include <map>
 #include <ranges>
@@ -650,6 +651,45 @@ leaf::result<force::EvalResult> Forcesmith::evaluate(std::size_t cfg) {
     return err("configuration index out of range");
   }
   return force::evaluate(model_, configs_[cfg]);
+}
+
+leaf::result<std::vector<force::EvalResult>> Forcesmith::evaluate_all() {
+  BOOST_LEAF_CHECK(ensure_frozen());
+  std::vector<force::EvalResult> out(configs_.size());
+  if (configs_.empty()) {
+    return out;
+  }
+
+  // Warm up any lazy, model-internal descriptor state (e.g. SOAP's radial
+  // basis) exactly once, serially, before the parallel fill races on it — same
+  // reason MLBase::prepare() runs step_warm_up_descriptors before its parallel
+  // fill.
+  std::size_t warm = 0;
+  while (warm < configs_.size() && configs_[warm].atoms.empty()) {
+    ++warm;
+  }
+  if (warm == configs_.size()) {
+    return out; // nothing with atoms to evaluate
+  }
+  out[warm] = force::evaluate(model_, configs_[warm]);
+
+  // Every other config is independent: force::evaluate deep-copies the config
+  // to a local scratch, so each task mutates only its own
+  // forces/stress/neighbour list and model_ is read const-only. Same
+  // std::execution::par construct the fit's step_fill_cache uses. Call
+  // force::evaluate directly (plain EvalResult) so no Boost.LEAF error objects
+  // are created inside the parallel region.
+  std::vector<std::size_t> idx;
+  idx.reserve(configs_.size());
+  for (std::size_t i = 0; i < configs_.size(); ++i) {
+    if (i != warm) {
+      idx.push_back(i);
+    }
+  }
+  std::for_each(
+      std::execution::par, idx.begin(), idx.end(),
+      [&](std::size_t i) { out[i] = force::evaluate(model_, configs_[i]); });
+  return out;
 }
 
 leaf::result<int> Forcesmith::optimize() {

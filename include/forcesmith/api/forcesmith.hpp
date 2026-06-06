@@ -49,7 +49,8 @@ namespace forcesmith {
 
 class Forcesmith {
 public:
-  using PairKey = std::pair<std::string, std::string>; // sorted (min,max) symbols
+  using PairKey =
+      std::pair<std::string, std::string>; // sorted (min,max) symbols
 
   Forcesmith() = default;
 
@@ -87,7 +88,8 @@ public:
   [[nodiscard]] boost::leaf::result<std::size_t>
   get_configuration_index(const Configuration &cfg) const;
 
-  [[nodiscard]] boost::leaf::result<std::size_t> get_atom_index(const Atom &atom);
+  [[nodiscard]] boost::leaf::result<std::size_t>
+  get_atom_index(const Atom &atom);
 
   boost::leaf::result<std::size_t>
   add_atom(std::size_t cfg, std::string_view element, const Vec3 &pos);
@@ -102,8 +104,8 @@ public:
   atom_count(std::size_t cfg) const;
 
   boost::leaf::result<void> set_ref_force(const Atom &atom, const Vec3 &f);
-  boost::leaf::result<void> set_ref_force(std::string_view cfg, std::size_t atom,
-                                          const Vec3 &f);
+  boost::leaf::result<void> set_ref_force(std::string_view cfg,
+                                          std::size_t atom, const Vec3 &f);
 
   boost::leaf::result<void> set_ref_energy(std::size_t cfg, double e);
   boost::leaf::result<void> set_ref_energy(std::string_view cfg, double e);
@@ -119,21 +121,23 @@ public:
   boost::leaf::result<void> set_weight(std::string_view cfg, double w);
   boost::leaf::result<void> set_weight(const Configuration &cfg, double w);
 
-  // ── species (optional; lets an element with a potential but no atoms slot) ──
+  // ── species (optional; lets an element with a potential but no atoms slot)
+  // ──
   boost::leaf::result<void> declare_element(std::string_view sym);
 
-  boost::leaf::result<void> set_pair_potential(std::string_view a,
-                                               std::string_view b, RadialPotential p);
+  boost::leaf::result<void>
+  set_pair_potential(std::string_view a, std::string_view b, RadialPotential p);
   boost::leaf::result<void> set_density(std::string_view a, RadialPotential p);
-  boost::leaf::result<void> set_embedding(std::string_view a, RadialPotential p);
+  boost::leaf::result<void> set_embedding(std::string_view a,
+                                          RadialPotential p);
   void set_global(GlobalParam g);
 
   // ── extra tables for the richer model families ────────────────────────────
   // ADP: dipole u_{ij}(r) and quadrupole w_{ij}(r), per element pair.
   boost::leaf::result<void> set_dipole(std::string_view a, std::string_view b,
                                        RadialPotential p);
-  boost::leaf::result<void> set_quadrupole(std::string_view a,
-                                           std::string_view b, RadialPotential p);
+  boost::leaf::result<void>
+  set_quadrupole(std::string_view a, std::string_view b, RadialPotential p);
   // Angular: radial modulation f_{ij}(r) per pair, angular g_i(cosθ) per type.
   boost::leaf::result<void> set_radial(std::string_view a, std::string_view b,
                                        RadialPotential p);
@@ -142,9 +146,10 @@ public:
   boost::leaf::result<void> set_tersoff_params(std::string_view a,
                                                std::string_view b,
                                                TersoffParams params);
-  boost::leaf::result<void> set_stiweb_params(std::string_view a,
-                                              std::string_view b, SWParams params);
-  // Stiweb 3-body strength λ for a central type and an unordered neighbour pair.
+  boost::leaf::result<void>
+  set_stiweb_params(std::string_view a, std::string_view b, SWParams params);
+  // Stiweb 3-body strength λ for a central type and an unordered neighbour
+  // pair.
   boost::leaf::result<void> set_stiweb_lambda(std::string_view central,
                                               std::string_view a,
                                               std::string_view b, Param value);
@@ -155,9 +160,10 @@ public:
                                            std::string_view b, std::size_t i,
                                            double v);
 
-  // ── seed a fully-built force model (used by io::load_model / checkpoint) ────
-  // Stores the model and captures the current element ordering so it can be
-  // decomposed back to symbol-keyed potentials if a later edit re-ranks slots.
+  // ── seed a fully-built force model (used by io::load_model / checkpoint)
+  // ──── Stores the model and captures the current element ordering so it can
+  // be decomposed back to symbol-keyed potentials if a later edit re-ranks
+  // slots.
   boost::leaf::result<void> seed_force_model(ForceCalculator model);
 
   OptimizerOptions &options() { return opts_; }
@@ -170,6 +176,10 @@ public:
   void set_solver(Solver s) { solver_.emplace(std::move(s)); }
 
   boost::leaf::result<force::EvalResult> evaluate(std::size_t cfg);
+  // Evaluate every configuration, filling descriptors in parallel across cores
+  // (mirrors prepare()'s warm-up-then-parallel pattern). Results are ordered by
+  // config index and bit-identical to looping evaluate(i) serially.
+  boost::leaf::result<std::vector<force::EvalResult>> evaluate_all();
   boost::leaf::result<int> optimize();
   boost::leaf::result<void> write(const std::filesystem::path &path,
                                   std::string_view format = "native");
@@ -193,8 +203,8 @@ private:
   boost::leaf::result<void>
   decompose_seeded_into_spec(const SpeciesRegistry &model_reg); // pair / EAM
   // Re-rank a seeded ML model (ACSF/SOAP/LMBTR) directly: remap heads + reindex
-  // descriptor blocks for the new element ordering (see MLBase::remap). ML state
-  // has no symbol-keyed spec representation, so this replaces the
+  // descriptor blocks for the new element ordering (see MLBase::remap). ML
+  // state has no symbol-keyed spec representation, so this replaces the
   // decompose/materialize-from-spec round-trip used for analytic potentials.
   boost::leaf::result<ForceCalculator>
   remap_seeded_ml(const SpeciesRegistry &old_reg,
@@ -218,9 +228,9 @@ private:
   std::map<std::string, RadialPotential> density_;
   std::map<std::string, RadialPotential> embedding_;
   // Extra per-family tables (per-pair keyed by PairKey, per-type by symbol).
-  std::map<PairKey, RadialPotential> dipole_;     // ADP
-  std::map<PairKey, RadialPotential> quadrupole_; // ADP
-  std::map<PairKey, RadialPotential> radial_;     // angular
+  std::map<PairKey, RadialPotential> dipole_;      // ADP
+  std::map<PairKey, RadialPotential> quadrupole_;  // ADP
+  std::map<PairKey, RadialPotential> radial_;      // angular
   std::map<std::string, RadialPotential> angular_; // angular (central type)
   std::map<PairKey, TersoffParams> tersoff_;
   std::map<PairKey, SWParams> stiweb_;

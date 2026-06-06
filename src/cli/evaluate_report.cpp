@@ -21,11 +21,15 @@ leaf::result<void> write_evaluate_report(forcesmith::Forcesmith &session,
   const double sw = o.stress_weight;
 
   BOOST_LEAF_AUTO(configs, session.configurations());
+  // Evaluate every config up front, in parallel across cores. The serial loop
+  // below then only formats JSON, so output order and total_sumsq are
+  // unchanged.
+  BOOST_LEAF_AUTO(results, session.evaluate_all());
 
   std::ofstream out(ev_path);
   if (!out) {
-    return leaf::new_error(
-        forcesmith::io::ParseError{"cannot open evaluate output: " + ev_path, 0});
+    return leaf::new_error(forcesmith::io::ParseError{
+        "cannot open evaluate output: " + ev_path, 0});
   }
   out << std::setprecision(17);
 
@@ -40,7 +44,7 @@ leaf::result<void> write_evaluate_report(forcesmith::Forcesmith &session,
 
   for (std::size_t i = 0; i < configs.size(); ++i) {
     const forcesmith::Configuration &cfg = configs[i];
-    BOOST_LEAF_AUTO(r, session.evaluate(i));
+    const forcesmith::force::EvalResult &r = results[i];
 
     double csq = 0.0;
     out << "    {\n      \"index\": " << i << ",\n      \"name\": \""
