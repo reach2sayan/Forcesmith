@@ -38,6 +38,7 @@
 #include <cstddef>
 #include <execution>
 #include <memory>
+#include <numeric>
 #include <optional>
 #include <ranges>
 #include <span>
@@ -70,6 +71,11 @@ struct HeadConcept {
   virtual ~HeadConcept() = default;
   virtual double energy(const Eigen::VectorXd &D) const = 0;
   virtual Eigen::VectorXd grad(const Eigen::VectorXd &D) const = 0; // de/dD
+  // True if grad(D) and dgrad_dparam(D) are independent of D (a LINEAR head),
+  // so ∂E/∂D and ∂(∂E/∂D)/∂θ are one value per element type. This lets the
+  // cached force/Jacobian assembly hoist them out of the atom loop and batch
+  // every atom of a type into a single BLAS call (see CacheData::groups).
+  virtual bool constant_grad() const = 0;
   // Analytic parameter derivatives, in gather_params() order, used to build the
   // optimizer Jacobian without finite-differencing the residual over every
   // weight. has_param_jacobian()==false ⇒ the functor falls back to the FD
@@ -185,6 +191,8 @@ struct LinearHead : HeadParams<LinearHead> {
 
   double energy(const Eigen::VectorXd &D) const;
   Eigen::VectorXd grad(const Eigen::VectorXd &) const;
+  // Linear: de/dD = coeffs, independent of D — enables the batched cached path.
+  constexpr bool constant_grad() const { return true; }
   // E = c·D + bias ⇒ ∂E/∂θ = D (per free coeff), and ∂(∂E/∂D)/∂θ = I (the
   // descriptor-gradient *is* the coeffs), so the force-Jacobian column for
   // coeff k is just −dD/dr column k. Exact and trivial.
@@ -219,6 +227,7 @@ class EnergyHead : private detail::ErasedValue<detail::HeadConcept> {
     Eigen::VectorXd grad(const Eigen::VectorXd &D) const override {
       return impl_.grad(D);
     }
+    bool constant_grad() const override { return impl_.constant_grad(); }
     bool has_param_jacobian() const override {
       return impl_.has_param_jacobian();
     }
@@ -281,6 +290,7 @@ public:
   Eigen::VectorXd grad(const Eigen::VectorXd &D) const {
     return self_->grad(D);
   }
+  bool constant_grad() const { return self_->constant_grad(); }
   bool has_param_jacobian() const { return self_->has_param_jacobian(); }
   Eigen::VectorXd param_grad(const Eigen::VectorXd &D) const {
     return self_->param_grad(D);
@@ -332,16 +342,39 @@ struct MLBase : ForceCalculatorBase<Derived>, NoGlobals {
   // Jacobian (ForcesmithFunctor::df) accumulate forces into private per-column
   // buffers with zero shared mutable state.
   struct AtomCache {
-    int type = 0;                           // element slot → head index
-    Eigen::VectorXd values;                 // D_i  (descriptor_size)
-    DescriptorGrad grad_self;               // dD_i/dr_i           (S×3)
-    std::vector<DescriptorGrad> grad_neigh; // dD_i/dr_j per neighbor (S×3)
-    std::vector<std::size_t> neigh_idx;     // neighbor atom index in the config
-    std::vector<Vec3> neigh_dist;           // bond r_j − r_i (for the virial)
+    int type = 0;           // element slot → head index
+    Eigen::VectorXd values; // D_i  (descriptor_size S)
+    // Every position-gradient block of D_i stacked COLUMN-WISE into one
+    // contiguous S×(3·(1+nbonds)) matrix: columns [0,3) are dD_i/dr_i (the
+    // centre), columns [3·(k+1), 3·(k+1)+3) are dD_i/dr_j for neighbour k
+    // (parallel to neigh_idx/neigh_dist). Stacking lets eval_cached and the
+    // Jacobian contract ALL blocks against ∂E/∂D in a single batched BLAS call
+    // — replacing the per-block 3×S gemv flood that dominated the SOAP profile.
+    Eigen::MatrixXd grad_all;
+    std::vector<std::size_t> neigh_idx; // neighbor atom index in the config
+    std::vector<Vec3> neigh_dist;       // bond r_j − r_i (for the virial)
+  };
+  // Per-(config, element type) grouping of EVERY gradient block of that type's
+  // atoms, concatenated column-wise. For a LINEAR head ∂E/∂D is one vector c_t
+  // per type, so the whole group's forces are a SINGLE gemv `grad^T · c_t`
+  // (and the Jacobian a single gemm `grad^T · M_t`) — one BLAS call per
+  // (config,type) instead of one per atom. Built only when every head reports
+  // constant_grad(); otherwise `groups` stays empty and eval falls back to the
+  // per-atom AtomCache path.
+  //   grad   — S × (3·nblocks): block b occupies columns [3b, 3b+3)
+  //   target — [nblocks] atom index that block b's force scatters into
+  //   bond   — [nblocks] bond vector for the virial (Zero for self blocks, so
+  //            they contribute no stress — same as the per-atom path)
+  struct ForceGroup {
+    int type = 0;
+    Eigen::MatrixXd grad;
+    std::vector<int> target;
+    std::vector<Vec3> bond;
   };
   struct CacheData {
-    std::vector<std::vector<AtomCache>> rows; // [config][atom]
-    std::vector<double> volume;               // per-config cell volume
+    std::vector<std::vector<AtomCache>> rows;    // [config][atom] (energy/values)
+    std::vector<std::vector<ForceGroup>> groups; // [config][type] (force fast path)
+    std::vector<double> volume;                  // per-config cell volume
   };
   // shared_ptr<const>: copying the model for a parallel Jacobian column copies
   // the pointer (cheap, read-only sharing is thread-safe), never the data.
@@ -354,6 +387,13 @@ struct MLBase : ForceCalculatorBase<Derived>, NoGlobals {
     return heads.size() > 0 &&
            std::ranges::all_of(heads, [](const EnergyHead &h) {
              return h.has_param_jacobian();
+           });
+  }
+
+  // Every head linear ⇒ enable the batched per-(config,type) cache fast path.
+  [[nodiscard]] bool all_constant_grad() const {
+    return heads.size() > 0 && std::ranges::all_of(heads, [](const EnergyHead &h) {
+             return h.constant_grad();
            });
   }
 
@@ -489,9 +529,69 @@ private:
     std::for_each(std::execution::par, work.begin(), work.end(),
                   [&](const std::pair<std::size_t, std::size_t> &ca) {
                     AtomCache &cc = data.rows[ca.first][ca.second];
-                    standardize_in_place(cc.type, cc.values, cc.grad_self,
-                                         cc.grad_neigh);
+                    standardize_cached(cc.type, cc.values, cc.grad_all);
                   });
+    return data;
+  }
+
+  // Stage 5 — regroup the per-atom gradient blocks into per-(config,type)
+  // concatenations for the batched linear-head force/Jacobian path. Each config
+  // is independent → parallel over configs. After grouping, the per-atom grad
+  // blocks are released so total memory stays flat (the data just moves). No-op
+  // (groups left empty, per-atom layout kept) unless every head is linear.
+  CacheData step_group_cache(CacheData data) const {
+    // Sized to rows either way so eval can index groups[cache_index] safely;
+    // left empty per config when not grouping (non-linear heads keep per-atom).
+    data.groups.resize(data.rows.size());
+    if (!all_constant_grad()) {
+      return data; // keep per-atom AtomCache layout for non-linear heads
+    }
+    const auto T = static_cast<std::size_t>(this->ntypes);
+    std::vector<std::size_t> cidx(data.rows.size());
+    std::iota(cidx.begin(), cidx.end(), std::size_t{0});
+    std::for_each(
+        std::execution::par, cidx.begin(), cidx.end(), [&](std::size_t c) {
+          auto &row = data.rows[c];
+          std::vector<Eigen::Index> ncol(T, 0);
+          Eigen::Index S = 0;
+          for (const AtomCache &cc : row) {
+            ncol[static_cast<std::size_t>(cc.type)] += cc.grad_all.cols();
+            S = cc.grad_all.rows();
+          }
+          std::vector<ForceGroup> &grps = data.groups[c];
+          std::vector<int> gidx(T, -1);
+          for (std::size_t t = 0; t < T; ++t) {
+            if (ncol[t] > 0) {
+              gidx[t] = static_cast<int>(grps.size());
+              ForceGroup g;
+              g.type = static_cast<int>(t);
+              g.grad.resize(S, ncol[t]);
+              const auto nb = static_cast<std::size_t>(ncol[t] / 3);
+              g.target.reserve(nb);
+              g.bond.reserve(nb);
+              grps.push_back(std::move(g));
+            }
+          }
+          std::vector<Eigen::Index> off(T, 0);
+          for (std::size_t a = 0; a < row.size(); ++a) {
+            AtomCache &cc = row[a];
+            ForceGroup &g = grps[static_cast<std::size_t>(
+                gidx[static_cast<std::size_t>(cc.type)])];
+            Eigen::Index &o = off[static_cast<std::size_t>(cc.type)];
+            g.grad.middleCols(o, cc.grad_all.cols()) = cc.grad_all;
+            o += cc.grad_all.cols();
+            g.target.push_back(static_cast<int>(a)); // self block
+            g.bond.emplace_back(Vec3::Zero());
+            for (auto [ni, nd] :
+                 std::views::zip(cc.neigh_idx, cc.neigh_dist)) {
+              g.target.push_back(static_cast<int>(ni));
+              g.bond.push_back(nd);
+            }
+            cc.grad_all.resize(0, 0); // released: data now lives in the group
+            cc.neigh_idx = {};
+            cc.neigh_dist = {};
+          }
+        });
     return data;
   }
 
@@ -499,8 +599,8 @@ public:
   // One-time precompute over the whole training set, written as a sequence of
   // named stages. A single CacheData is threaded through the pipeline — each
   // stage takes it by value and returns it (state-threading) — so the body reads
-  // as the pipeline it is: allocate → warm-up → fill → whiten → commit. See the
-  // individual step_* helpers for the rationale of each stage.
+  // as the pipeline it is: allocate → warm-up → fill → whiten → group → commit.
+  // See the individual step_* helpers for the rationale of each stage.
   void prepare(std::span<Configuration> configs) const {
     const Worklist work = step_atom_worklist(configs);
 
@@ -508,6 +608,7 @@ public:
     step_warm_up_descriptors(configs);             // serial lazy descriptor init
     data = step_fill_cache(configs, work, std::move(data));    // parallel fill
     data = step_whiten_cache(work, std::move(data));           // optional whiten
+    data = step_group_cache(std::move(data)); // batch linear heads per type
 
     cache_ = std::make_shared<CacheData>(std::move(data));
   }
@@ -520,17 +621,41 @@ public:
     stress = SymTens::Zero();
     std::ranges::for_each(forces, [](Vec3 &f) { f.setZero(); });
 
-    // rows is in atom order, so it pairs elementwise with the force span.
-    for (auto [cc, fi] : std::views::zip(rows, forces)) {
-      const EnergyHead &h = heads[static_cast<std::size_t>(cc.type)];
-      energy += h.energy(cc.values);
-      const Eigen::VectorXd dEdD = h.grad(cc.values);
-      fi -= cc.grad_self.transpose() * dEdD;
-      for (const auto &[gn, nidx, nd] :
-           std::views::zip(cc.grad_neigh, cc.neigh_idx, cc.neigh_dist)) {
-        const Vec3 f_on_j = -(gn.transpose() * dEdD);
-        forces[nidx] += f_on_j;
-        stress += nd * f_on_j.transpose();
+    // Energy is per atom either way (cheap dot products).
+    for (const AtomCache &cc : rows) {
+      energy += heads[static_cast<std::size_t>(cc.type)].energy(cc.values);
+    }
+
+    const auto &groups = cache->groups[cache_index];
+    if (!groups.empty()) {
+      // Linear-head fast path: one gemv per (config,type). ∂E/∂D = c_t is
+      // hoisted out of the atom loop; the whole type's blocks are contracted
+      // at once, then scattered. contrib block b is grad_block_b^T · c_t.
+      for (const ForceGroup &g : groups) {
+        const EnergyHead &h = heads[static_cast<std::size_t>(g.type)];
+        const Eigen::VectorXd dEdD = h.grad(Eigen::VectorXd{}); // const for linear
+        const Eigen::VectorXd contrib = g.grad.transpose() * dEdD;
+        for (std::size_t b = 0; b < g.target.size(); ++b) {
+          const Vec3 cb = contrib.segment<3>(3 * static_cast<Eigen::Index>(b));
+          forces[static_cast<std::size_t>(g.target[b])] -= cb;
+          stress -= g.bond[b] * cb.transpose(); // bond==0 for self → no stress
+        }
+      }
+    } else {
+      // Fallback (non-linear heads): per-atom batched gemv over its blocks.
+      for (auto [cc, fi] : std::views::zip(rows, forces)) {
+        const EnergyHead &h = heads[static_cast<std::size_t>(cc.type)];
+        const Eigen::VectorXd dEdD = h.grad(cc.values);
+        const Eigen::VectorXd contrib = cc.grad_all.transpose() * dEdD;
+        fi -= contrib.head<3>();
+        Eigen::Index b = 1;
+        for (const auto &[nidx, nd] :
+             std::views::zip(cc.neigh_idx, cc.neigh_dist)) {
+          const Vec3 f_on_j = -contrib.segment<3>(3 * b);
+          forces[nidx] += f_on_j;
+          stress += nd * f_on_j.transpose();
+          ++b;
+        }
       }
     }
     stress /= cache->volume[cache_index];
@@ -559,37 +684,72 @@ public:
     static constexpr int sp[6] = {0, 1, 2, 0, 0, 1};
     static constexpr int sq[6] = {0, 1, 2, 1, 2, 2};
 
+    // Energy column block ∂E_i/∂θ is per atom (param_grad depends on D_i).
     for (int i = 0; i < na; ++i) {
       const AtomCache &cc = rows[i];
       const auto t = static_cast<std::size_t>(cc.type);
-      const EnergyHead &h = heads[t];
       const int c0 = col_off[t];
-      const int pc = col_off[t + 1] - c0; // head param count
+      const int pc = col_off[t + 1] - c0;
       if (pc == 0) {
         continue;
       }
-
-      // Energy column block: ∂E_i/∂θ into the energy row (weighted).
-      const Eigen::VectorXd gE = h.param_grad(cc.values);
+      const Eigen::VectorXd gE = heads[t].param_grad(cc.values);
       fjac.block(erow, c0, 1, pc).noalias() += energy_weight * gE.transpose();
+    }
 
-      // M_i = ∂(∂E_i/∂D)/∂θ   (S × pc) — the mixed second derivative.
-      const Eigen::MatrixXd M = h.dgrad_dparam(cc.values);
+    // Stress scatter shared by both layouts.
+    const auto scatter_stress = [&](int c0, int pc, const Vec3 &nd,
+                                    const Eigen::MatrixXd &fblk) {
+      if (stress_weight > 0.0) {
+        for (int s = 0; s < 6; ++s) {
+          fjac.block(srow + s, c0, 1, pc) +=
+              (stress_weight * inv_vol * nd[sp[s]]) * fblk.row(sq[s]);
+        }
+      }
+    };
 
-      // Self force rows: ∂f_i/∂θ = −grad_self^T · M   (3 × pc).
-      fjac.block(row0 + 3 * i, c0, 3, pc).noalias() -=
-          cc.grad_self.transpose() * M;
-
-      // Neighbour force rows (and stress): ∂f_on_j/∂θ = −grad_neigh^T · M.
-      for (const auto &[gn, nidx, nd] :
-           std::views::zip(cc.grad_neigh, cc.neigh_idx, cc.neigh_dist)) {
-        const Eigen::MatrixXd fblk = -(gn.transpose() * M); // 3 × pc
-        fjac.block(row0 + 3 * static_cast<int>(nidx), c0, 3, pc) += fblk;
-        if (stress_weight > 0.0) {
-          for (int s = 0; s < 6; ++s) {
-            fjac.block(srow + s, c0, 1, pc) +=
-                (stress_weight * inv_vol * nd[sp[s]]) * fblk.row(sq[s]);
-          }
+    const auto &groups = cache->groups[cache_index];
+    if (!groups.empty()) {
+      // Linear-head fast path: M_t = ∂(∂E/∂D)/∂θ is constant per type, so one
+      // gemm `grad^T · M_t` covers a whole (config,type); scatter each 3-row
+      // block. ∂f_target/∂θ = −block (self & neighbours alike; self bond==0).
+      for (const ForceGroup &g : groups) {
+        const auto t = static_cast<std::size_t>(g.type);
+        const int c0 = col_off[t];
+        const int pc = col_off[t + 1] - c0;
+        if (pc == 0) {
+          continue;
+        }
+        const Eigen::MatrixXd M =
+            heads[t].dgrad_dparam(Eigen::VectorXd::Zero(g.grad.rows()));
+        const Eigen::MatrixXd blocks = g.grad.transpose() * M; // (3·nblocks)×pc
+        for (std::size_t b = 0; b < g.target.size(); ++b) {
+          const Eigen::MatrixXd fblk =
+              -blocks.middleRows(3 * static_cast<Eigen::Index>(b), 3); // 3×pc
+          fjac.block(row0 + 3 * g.target[b], c0, 3, pc) += fblk;
+          scatter_stress(c0, pc, g.bond[b], fblk);
+        }
+      }
+    } else {
+      // Fallback (non-linear heads): per-atom batched gemm over its blocks.
+      for (int i = 0; i < na; ++i) {
+        const AtomCache &cc = rows[i];
+        const auto t = static_cast<std::size_t>(cc.type);
+        const int c0 = col_off[t];
+        const int pc = col_off[t + 1] - c0;
+        if (pc == 0) {
+          continue;
+        }
+        const Eigen::MatrixXd M = heads[t].dgrad_dparam(cc.values);
+        const Eigen::MatrixXd blocks = cc.grad_all.transpose() * M;
+        fjac.block(row0 + 3 * i, c0, 3, pc).noalias() -= blocks.topRows(3);
+        Eigen::Index b = 1;
+        for (const auto &[nidx, nd] :
+             std::views::zip(cc.neigh_idx, cc.neigh_dist)) {
+          const Eigen::MatrixXd fblk = -blocks.middleRows(3 * b, 3); // 3 × pc
+          fjac.block(row0 + 3 * static_cast<int>(nidx), c0, 3, pc) += fblk;
+          scatter_stress(c0, pc, nd, fblk);
+          ++b;
         }
       }
     }
@@ -724,8 +884,16 @@ private:
     cc.type = static_cast<int>(atom.type.index);
     const DescriptorValue d = descriptor_with_grad(atom);
     cc.values = d.values;
-    cc.grad_self = d.grad_self;
-    cc.grad_neigh = d.grad_neigh;
+    // Stack the centre block + every neighbour block column-wise (see
+    // AtomCache::grad_all). The producer side keeps the natural per-block
+    // layout (DescriptorValue); only the cache is restacked for batched eval.
+    const Eigen::Index S = d.values.size();
+    const auto K = static_cast<Eigen::Index>(d.grad_neigh.size());
+    cc.grad_all.resize(S, 3 * (K + 1));
+    cc.grad_all.leftCols(3) = d.grad_self;
+    for (Eigen::Index k = 0; k < K; ++k) {
+      cc.grad_all.middleCols(3 * (k + 1), 3) = d.grad_neigh[k];
+    }
     cc.neigh_idx.resize(atom.neighbors.size());
     cc.neigh_dist.resize(atom.neighbors.size());
     for (auto [nb, nidx, nd] :
@@ -775,6 +943,25 @@ private:
   }
   void standardize_in_place(int type, DescriptorValue &d) const {
     standardize_in_place(type, d.values, d.grad_self, d.grad_neigh);
+  }
+
+  // Whitening for the cache's stacked layout: each feature-row k of grad_all
+  // scales by inv_std[k] (μ is a constant shift that drops out of gradients).
+  // Equivalent to standardize_in_place applied per block, but on the single
+  // contiguous matrix.
+  void standardize_cached(int type, Eigen::VectorXd &values,
+                          Eigen::MatrixXd &grad_all) const {
+    if (!has_standardization()) {
+      return;
+    }
+    const auto t = static_cast<std::size_t>(type);
+    const Eigen::VectorXd &mu = mean_[t];
+    const Eigen::VectorXd &iv = inv_std_[t];
+    if (mu.size() != values.size()) {
+      return; // type had no training atoms → identity
+    }
+    values = (values - mu).cwiseProduct(iv);
+    grad_all = iv.asDiagonal() * grad_all;
   }
 
   // Population mean/variance of each descriptor feature over all cached atoms

@@ -161,10 +161,13 @@ TEST(MLStandardize, DeadFeatureMapsToZero) {
   for (const auto &row : m.cache_->rows) {
     for (const auto &cc : row) {
       EXPECT_NEAR(cc.values[2], 0.0, 1e-12);
-      EXPECT_NEAR(cc.grad_self.row(2).norm(), 0.0, 1e-12);
-      for (const auto &gn : cc.grad_neigh) {
-        EXPECT_NEAR(gn.row(2).norm(), 0.0, 1e-12);
-      }
+    }
+  }
+  // With a linear head the per-atom blocks are regrouped per (config,type) into
+  // one stacked `grad` matrix; row 2 is dead feature 2 across every block.
+  for (const auto &grps : m.cache_->groups) {
+    for (const auto &g : grps) {
+      EXPECT_NEAR(g.grad.row(2).norm(), 0.0, 1e-12);
     }
   }
 }
