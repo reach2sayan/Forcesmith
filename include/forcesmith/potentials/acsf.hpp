@@ -40,7 +40,7 @@ enum class SymmetryFunctionFamily : std::size_t {
   G2 = 1,
   G3 = 2,
   G4 = 3,
-  G5 = 5
+  G5 = 4
 };
 
 // Flat layout of the ACSF descriptor vector — the contiguous blocks
