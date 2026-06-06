@@ -4,10 +4,6 @@
 
 namespace forcesmith {
 
-// A single optimizable scalar that carries a fix/free flag and an optional
-// [min, max] box constraint (default ±∞ → unbounded). Implicitly converts to
-// double so it can be used directly in arithmetic without changing eval code
-// (p.A * exp(...) still compiles when p.A is Param).
 struct Param {
   double value = 0.0;
   bool fixed = false;

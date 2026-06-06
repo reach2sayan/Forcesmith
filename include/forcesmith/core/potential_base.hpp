@@ -1,6 +1,7 @@
 #pragma once
 
 #include "forcesmith/core/erased.hpp"
+#include "forcesmith/core/fit_params.hpp"
 #include "forcesmith/core/site_id.hpp"
 #include "forcesmith/potentials/curvature.hpp"
 #include <Eigen/Core>
@@ -20,24 +21,24 @@ namespace forcesmith {
 //   VectorXd&,int), gather_bounds(VectorXd&,VectorXd&,int)
 
 namespace detail {
-struct PotentialConcept {
-  virtual ~PotentialConcept() = default;
+// Inherits the optimizer param-plumbing virtuals (param_count, gather_params,
+// scatter_params, gather_bounds) from FittableConcept (core/fit_params.hpp).
+struct PotentialConcept : FittableConcept {
   virtual double eval(double r) const = 0;
   virtual double deriv(double r) const = 0;
   virtual int prepare_site(double r) const = 0;
+
   virtual double eval_at(int site) const = 0;
   virtual double deriv_at(int site) const = 0;
   virtual std::pair<double, double> eval_and_deriv(double r) const = 0;
   virtual std::pair<double, double> eval_and_deriv_at(int site) const = 0;
+
   virtual std::pair<double, double> span() const = 0;
-  virtual std::size_t param_count() const = 0;
-  virtual void gather_params(Eigen::VectorXd &x, std::size_t off) const = 0;
-  virtual void scatter_params(const Eigen::VectorXd &x, std::size_t off) = 0;
-  virtual void gather_bounds(Eigen::VectorXd &lo, Eigen::VectorXd &hi,
-                             std::size_t off) const = 0;
+
   virtual void set_param(std::size_t i, double v) = 0;
   virtual void set_fixed(std::size_t i, bool f) = 0;
   virtual void set_bounds(std::size_t i, double lo, double hi) = 0;
+
   virtual std::size_t smoothness_count() const = 0;
   virtual void write_smoothness(Eigen::VectorXd &x, std::size_t off,
                                 double weight) const = 0;
@@ -46,15 +47,14 @@ struct PotentialConcept {
 } // namespace detail
 
 class Potential : private detail::ErasedValue<detail::PotentialConcept> {
-  template <typename T> struct Model final : detail::PotentialConcept {
-    T impl_;
-    constexpr explicit Model(T t) : impl_(std::move(t)) {}
+  template <typename T>
+  struct Model final : detail::FittableModel<T, detail::PotentialConcept> {
+    using Base = detail::FittableModel<T, detail::PotentialConcept>;
+    using Base::Base;     // inherit the impl_-forwarding constructor
+    using Base::impl_;    // bring impl_ into scope for the bodies below
     constexpr double eval(double r) const override { return impl_.eval(r); }
     constexpr double deriv(double r) const override { return impl_.deriv(r); }
-    // Fit-time evaluation cache. Spline potentials memoize the geometry-fixed
-    // part of an evaluation; analytic (non-cacheable) potentials return the -1
-    // sentinel from prepare_site, signalling the caller to use eval/deriv(r)
-    // directly — so eval_at/deriv_at are never reached for them.
+
     int prepare_site(double r) const override {
       if constexpr (requires(const T &t, double rr) { t.prepare_site(rr); }) {
         return impl_.prepare_site(r);
@@ -66,6 +66,7 @@ class Potential : private detail::ErasedValue<detail::PotentialConcept> {
       if constexpr (requires(const T &t, int s) { t.eval_at(s); }) {
         return impl_.eval_at(site);
       } else {
+        std::unreachable();
         return 0.0; // unreachable: prepare_site returned -1 for this type
       }
     }
@@ -73,12 +74,12 @@ class Potential : private detail::ErasedValue<detail::PotentialConcept> {
       if constexpr (requires(const T &t, int s) { t.deriv_at(s); }) {
         return impl_.deriv_at(site);
       } else {
+        std::unreachable();
         return 0.0; // unreachable: prepare_site returned -1 for this type
       }
     }
-    // Fused value+derivative. Cacheable (spline) types fuse the cached site
-    // lookup; everything else (analytic) falls back to the two separate calls
-    // so the pair() result is unchanged.
+
+    // TODO : Make eval_and_deriv for all
     std::pair<double, double> eval_and_deriv(double r) const override {
       if constexpr (requires(const T &t, double rr) { t.eval_and_deriv(rr); }) {
         return impl_.eval_and_deriv(r);
@@ -90,37 +91,12 @@ class Potential : private detail::ErasedValue<detail::PotentialConcept> {
       if constexpr (requires(const T &t, int s) { t.eval_and_deriv_at(s); }) {
         return impl_.eval_and_deriv_at(site);
       } else {
-        return {0.0,
-                0.0}; // unreachable: prepare_site returned -1 for this type
+        std::unreachable();
+        return {0.0, 0.0};
       }
     }
     constexpr std::pair<double, double> span() const override {
       return impl_.span();
-    }
-    constexpr std::size_t param_count() const override {
-      return impl_.param_count();
-    }
-    constexpr void gather_params(Eigen::VectorXd &x,
-                                 std::size_t off) const override {
-      impl_.gather_params(x, off);
-    }
-    constexpr void scatter_params(const Eigen::VectorXd &x,
-                                  std::size_t off) override {
-      impl_.scatter_params(x, off);
-    }
-    constexpr void gather_bounds(Eigen::VectorXd &lo, Eigen::VectorXd &hi,
-                                 std::size_t off) const override {
-      if constexpr (requires(const T &t, Eigen::VectorXd &v, std::size_t o) {
-                      t.gather_bounds(v, v, o);
-                    }) {
-        impl_.gather_bounds(lo, hi, off);
-      } else {
-        // Type carries no bound metadata → all free params unbounded.
-        const std::size_t n = static_cast<std::size_t>(impl_.param_count());
-        lo.segment(off, n).setConstant(
-            -std::numeric_limits<double>::infinity());
-        hi.segment(off, n).setConstant(std::numeric_limits<double>::infinity());
-      }
     }
     constexpr void set_param(std::size_t i, double v) override {
       if constexpr (requires(T &t, std::size_t j, double w) {

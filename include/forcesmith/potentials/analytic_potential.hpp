@@ -1,5 +1,6 @@
 #pragma once
 
+#include "forcesmith/core/fit_params.hpp"
 #include "forcesmith/core/param.hpp"
 #include "forcesmith/core/types.hpp"
 #include <Eigen/Core>
@@ -7,6 +8,7 @@
 #include <array>
 #include <cmath>
 #include <numbers>
+#include <ranges>
 #include <utility>
 
 namespace forcesmith {
@@ -16,7 +18,8 @@ namespace forcesmith {
 // (param_count/gather/scatter/set_param). Each Derived supplies the maths
 // directly — eval(double) and deriv(double) — defined inline below so the
 // compiler inlines them at the Potential/SmoothCutoff call sites.
-template <typename Derived, std::size_t N> struct AnalyticParams {
+template <typename Derived, std::size_t N>
+struct AnalyticParams : ParamSet<AnalyticParams<Derived, N>> {
   static constexpr std::size_t num_params = N;
 
 protected:
@@ -42,36 +45,13 @@ public:
   // slot, which is held fixed so gather/scatter skip it.
   constexpr void set_param(std::size_t i, double v) { params[i].value = v; }
 
-  constexpr std::size_t param_count() const {
-    return std::ranges::count_if(params,
-                                 [](const auto &p) { return !p.fixed; });
-  }
-  constexpr void gather_params(Eigen::VectorXd &dst, std::size_t off) const {
-    for (const auto &p : params) {
-      if (!p.fixed) {
-        dst[off++] = p.value;
-      }
-    }
-  }
-  constexpr void scatter_params(const Eigen::VectorXd &src, std::size_t off) {
-    for (auto &p : params) {
-      if (!p.fixed) {
-        p.value = src[off++];
-      }
-    }
-  }
-  // Per-free-param box constraints, in the same order as gather_params so the
-  // bound vectors align element-for-element with the gathered x.
-  constexpr void gather_bounds(Eigen::VectorXd &lo, Eigen::VectorXd &hi,
-                               std::size_t off) const {
-    for (const auto &p : params) {
-      if (!p.fixed) {
-        lo[off] = p.min;
-        hi[off] = p.max;
-        ++off;
-      }
-    }
-  }
+  // ParamSet customization point: the optimizer plumbing
+  // (param_count/gather_params/scatter_params/gather_bounds) is generated from
+  // this single Param range. Both overloads so gather/bounds (const) and scatter
+  // (mutating) see the matching constness.
+  constexpr auto param_fields() { return std::views::all(params); }
+  constexpr auto param_fields() const { return std::views::all(params); }
+
   // Set parameter i's [min, max] box (raw index, bypassing the fixed flag).
   constexpr void set_bounds(std::size_t i, double lo, double hi) {
     params[i].min = lo;

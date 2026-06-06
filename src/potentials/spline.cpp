@@ -1,5 +1,7 @@
 #include "forcesmith/potentials/spline.hpp"
 
+#include "forcesmith/core/fit_params.hpp"
+
 #include <algorithm>
 #include <boost/assert.hpp>
 #include <cassert>
@@ -141,20 +143,14 @@ double SplinePotential::hermite_deriv_(std::size_t i, double r) const {
 
 void SplinePotential::gather_params(Eigen::VectorXd &dst,
                                     std::size_t offset) const {
-  for (auto [y, fixed] : std::views::zip(y_, fixed_)) {
-    if (!fixed) {
-      dst[offset++] = y;
-    }
-  }
+  // Spline knots are stored as parallel value/fixed arrays (not Param objects),
+  // so use the (values, fixed) overload of the shared leaf loop.
+  detail::gather_params_impl(y_, fixed_, dst, offset);
 }
 
 void SplinePotential::scatter_params(const Eigen::VectorXd &src,
                                      std::size_t offset) {
-  for (auto &&[y, fixed] : std::views::zip(y_, fixed_)) {
-    if (!fixed) {
-      y = src[offset++];
-    }
-  }
+  detail::scatter_params_impl(y_, fixed_, src, offset);
   // Only the knot VALUES changed; the x-grid (and therefore every cached site)
   // is untouched. Recompute the cheap per-knot slopes; do NOT clear sites_.
   recompute_slopes_();

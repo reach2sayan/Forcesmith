@@ -23,6 +23,7 @@
 
 #include "forcesmith/core/atom.hpp"
 #include "forcesmith/core/erased.hpp"
+#include "forcesmith/core/fit_params.hpp"
 #include "forcesmith/core/neighbor_list.hpp" // build_neighbor_list, bc_volume
 #include "forcesmith/core/param.hpp"
 #include "forcesmith/events/signals.hpp"
@@ -58,8 +59,9 @@ struct DescriptorValue {
 };
 
 namespace detail {
-struct HeadConcept {
-  virtual ~HeadConcept() = default;
+// Inherits the optimizer param-plumbing virtuals (param_count, gather_params,
+// scatter_params, gather_bounds) from FittableConcept (core/fit_params.hpp).
+struct HeadConcept : FittableConcept {
   virtual double energy(const Eigen::VectorXd &D) const = 0;
 
   virtual Eigen::VectorXd grad(const Eigen::VectorXd &D) const = 0; // de/dD
@@ -71,12 +73,6 @@ struct HeadConcept {
   param_grad(const Eigen::VectorXd &D) const = 0; // ∂E/∂θ  (1 x num_params)
   virtual Eigen::MatrixXd dgrad_dparam(const Eigen::VectorXd &D)
       const = 0; // ∂(∂E/∂D)/∂θ  (num_descritptor x num_params)
-  virtual std::size_t param_count() const = 0;
-
-  virtual void gather_params(Eigen::VectorXd &x, std::size_t off) const = 0;
-  virtual void scatter_params(const Eigen::VectorXd &x, std::size_t off) = 0;
-  virtual void gather_bounds(Eigen::VectorXd &lo, Eigen::VectorXd &hi,
-                             std::size_t off) const = 0;
 
   // Generic (de)serialization surface so the io layer can round-trip any head
   // without knowing its concrete type (keeps nlohmann out of this header).
@@ -101,35 +97,20 @@ struct HeadConcept {
 };
 } // namespace detail
 
-template <typename Derived> struct HeadParams {
-  std::size_t param_count() const {
-    auto f = self().field_ptrs();
-    return static_cast<std::size_t>(
-        std::ranges::count_if(f, [](const Param *p) { return !p->fixed; }));
+template <typename Derived> struct HeadParams : ParamSet<HeadParams<Derived>> {
+  // ParamSet customization point: a head stores its coefficients as scattered
+  // Param objects, so expose them as a Param& range over field_ptrs(). The
+  // optimizer plumbing (param_count/gather/scatter/gather_bounds) is generated
+  // from this by ParamSet.
+  auto param_fields() {
+    return self().field_ptrs() |
+           std::views::transform([](Param *p) -> Param & { return *p; });
   }
-  void gather_params(Eigen::VectorXd &dst, std::size_t off) const {
-    for (const Param *p : self().field_ptrs()) {
-      if (!p->fixed) {
-        dst[off++] = p->value;
-      }
-    }
-  }
-  void scatter_params(const Eigen::VectorXd &src, std::size_t off) {
-    for (Param *p : self().field_ptrs()) {
-      if (!p->fixed) {
-        p->value = src[off++];
-      }
-    }
-  }
-  void gather_bounds(Eigen::VectorXd &lo, Eigen::VectorXd &hi,
-                     std::size_t off) const {
-    for (const Param *p : self().field_ptrs()) {
-      if (!p->fixed) {
-        lo[off] = p->min;
-        hi[off] = p->max;
-        ++off;
-      }
-    }
+  auto param_fields() const {
+    return self().field_ptrs() | std::views::transform(
+                                     [](const Param *p) -> const Param & {
+                                       return *p;
+                                     });
   }
 
   // Default (de)serialization over field_ptrs() — ALL params, free and fixed.
@@ -198,9 +179,11 @@ struct LinearHead : HeadParams<LinearHead> {
 };
 
 class EnergyHead : private detail::ErasedValue<detail::HeadConcept> {
-  template <typename T> struct Model final : detail::HeadConcept {
-    T impl_;
-    explicit Model(T t) : impl_(std::move(t)) {}
+  template <typename T>
+  struct Model final : detail::FittableModel<T, detail::HeadConcept> {
+    using Base = detail::FittableModel<T, detail::HeadConcept>;
+    using Base::Base;     // inherit the impl_-forwarding constructor
+    using Base::impl_;    // bring impl_ into scope for the bodies below
     double energy(const Eigen::VectorXd &D) const override {
       return impl_.energy(D);
     }
@@ -216,17 +199,6 @@ class EnergyHead : private detail::ErasedValue<detail::HeadConcept> {
     }
     Eigen::MatrixXd dgrad_dparam(const Eigen::VectorXd &D) const override {
       return impl_.dgrad_dparam(D);
-    }
-    std::size_t param_count() const override { return impl_.param_count(); }
-    void gather_params(Eigen::VectorXd &x, std::size_t off) const override {
-      impl_.gather_params(x, off);
-    }
-    void scatter_params(const Eigen::VectorXd &x, std::size_t off) override {
-      impl_.scatter_params(x, off);
-    }
-    void gather_bounds(Eigen::VectorXd &lo, Eigen::VectorXd &hi,
-                       std::size_t off) const override {
-      impl_.gather_bounds(lo, hi, off);
     }
     std::string type_tag() const override { return impl_.type_tag(); }
     std::vector<int> architecture() const override {
@@ -345,8 +317,7 @@ struct MLBase : ForceCalculatorBase<Derived>, NoGlobals {
   };
   struct CacheData {
     std::vector<std::vector<AtomCache>> rows; // [config][atom] (energy/values)
-    std::vector<std::vector<ForceGroup>>
-        groups;                 // [config][type] (force fast path)
+    std::vector<std::vector<ForceGroup>> groups;  // [config][type]
     std::vector<double> volume; // per-config cell volume
     // M_t = ∂(∂E/∂D)/∂θ per type (linear heads): constant across atoms AND
     // optimizer iterations, so precompute
@@ -375,8 +346,6 @@ struct MLBase : ForceCalculatorBase<Derived>, NoGlobals {
   [[nodiscard]] boost::leaf::result<Derived>
   remap(const SpeciesRegistry &old_reg, const SpeciesRegistry &new_reg) const {
     Derived out = self();
-    // Build the descriptor index map (derived from the registries, not ntypes)
-    // BEFORE changing out.ntypes so descriptor_size() below sees the new count.
     const std::vector<std::optional<Eigen::Index>> idx =
         self().descriptor_index_map(old_reg, new_reg);
     const std::vector<std::optional<std::size_t>> old_of_new =
@@ -575,18 +544,13 @@ private:
   }
 
 public:
-  // One-time precompute over the whole training set, written as a sequence of
-  // named stages. A single CacheData is threaded through the pipeline — each
-  // stage takes it by value and returns it (state-threading) — so the body
-  // reads as the pipeline it is: allocate → warm-up → fill → whiten → group →
-  // commit. See the individual step_* helpers for the rationale of each stage.
   void prepare(std::span<Configuration> configs) const {
     const Worklist work = step_atom_worklist(configs);
 
     CacheData data = step_allocate_cache(configs); // neighbour lists + sizing
     step_warm_up_descriptors(configs); // serial lazy descriptor init
     data = step_fill_cache(configs, work, std::move(data)); // parallel fill
-    data = step_whiten_cache(work, std::move(data));        // optional whiten
+    data = step_whiten_cache(work, std::move(data)); // optional whiten
     data = step_group_cache(std::move(data)); // batch linear heads per type
 
     cache_ = std::make_shared<CacheData>(std::move(data));
@@ -900,9 +864,7 @@ private:
 
   // Apply the per-type whitening D'=(D−μ)/σ to a descriptor value and its
   // position-gradients in place. Each gradient row k scales by inv_std[k]; μ is
-  // a constant shift and drops out. No-op until prepare() has computed the
-  // stats (or when disabled / a type has no training atoms), so the pre-fit
-  // baseline stays on raw descriptors.
+  // a constant shift and drops out.
   void standardize_in_place(int type, Eigen::VectorXd &values,
                             DescriptorGrad &grad_self,
                             std::vector<DescriptorGrad> &grad_neigh) const {
@@ -925,10 +887,6 @@ private:
     standardize_in_place(type, d.values, d.grad_self, d.grad_neigh);
   }
 
-  // Whitening for the cache's stacked layout: each feature-row k of grad_all
-  // scales by inv_std[k] (μ is a constant shift that drops out of gradients).
-  // Equivalent to standardize_in_place applied per block, but on the single
-  // contiguous matrix.
   void standardize_cached(int type, Eigen::VectorXd &values,
                           Eigen::MatrixXd &grad_all) const {
     if (!has_standardization()) {
@@ -944,10 +902,6 @@ private:
     grad_all = iv.asDiagonal() * grad_all;
   }
 
-  // Population mean/variance of each descriptor feature over all cached atoms
-  // of each element type → mean_/inv_std_. Near-constant features (var ≤ eps)
-  // get inv_std 0, mapping them to a constant-0 input with zero gradient
-  // (dropped), which avoids amplifying noise on dead channels.
   void compute_standardization(const CacheData &data) const {
     Eigen::Index S = 0;
     for (const auto &row : data.rows) {

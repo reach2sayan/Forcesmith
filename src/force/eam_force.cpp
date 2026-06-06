@@ -1,4 +1,5 @@
 #include "forcesmith/force/eam_force.hpp"
+#include "forcesmith/core/fit_params.hpp"
 #include "forcesmith/core/neighbor_list.hpp"
 #include "forcesmith/events/signals.hpp"
 #include "forcesmith/potentials/spline.hpp"
@@ -65,11 +66,10 @@ void EAMForceCalculator::gather_params(Eigen::VectorXd &dst,
   gather_range(pair, dst, off);
   gather_range(density, dst, off);
   gather_range(embedding, dst, off);
-  std::ranges::for_each(globals, [&](const auto &g) {
-    if (!g.value.fixed) {
-      dst[off++] = g.value.value;
-    }
-  });
+  detail::gather_params_impl(
+      globals | std::views::transform(
+                    [](const GlobalParam &g) -> const Param & { return g.value; }),
+      dst, off);
 }
 
 void EAMForceCalculator::scatter_params(const Eigen::VectorXd &src,
@@ -77,11 +77,10 @@ void EAMForceCalculator::scatter_params(const Eigen::VectorXd &src,
   scatter_range(pair, src, off);
   scatter_range(density, src, off);
   scatter_range(embedding, src, off);
-  std::ranges::for_each(globals, [&](auto &g) {
-    if (!g.value.fixed) {
-      g.value.value = src[off++];
-    }
-  });
+  detail::scatter_params_impl(
+      globals |
+          std::views::transform([](GlobalParam &g) -> Param & { return g.value; }),
+      src, off);
   broadcast_globals();
 }
 
@@ -90,13 +89,10 @@ void EAMForceCalculator::gather_bounds(Eigen::VectorXd &lo, Eigen::VectorXd &hi,
   gather_bounds_range(pair, lo, hi, off);
   gather_bounds_range(density, lo, hi, off);
   gather_bounds_range(embedding, lo, hi, off);
-  std::ranges::for_each(globals, [&](const auto &g) {
-    if (!g.value.fixed) {
-      lo[off] = g.value.min;
-      hi[off] = g.value.max;
-      ++off;
-    }
-  });
+  detail::gather_bounds_impl(
+      globals | std::views::transform(
+                    [](const GlobalParam &g) -> const Param & { return g.value; }),
+      lo, hi, off);
 }
 
 void EAMForceCalculator::broadcast_globals() {

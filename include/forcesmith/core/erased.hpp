@@ -16,8 +16,9 @@ public:
   ErasedValue(const ErasedValue &o) : self_(o.self_->clone()) {}
   ErasedValue(ErasedValue &&) noexcept = default;
   ErasedValue &operator=(const ErasedValue &o) {
-    if (this != &o)
+    if (this != &o) {
       self_ = o.self_->clone();
+    }
     return *this;
   }
   ErasedValue &operator=(ErasedValue &&) noexcept = default;

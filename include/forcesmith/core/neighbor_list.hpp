@@ -10,7 +10,6 @@
 
 namespace forcesmith {
 
-// Build the full neighbour list for cfg.
 // Geometry-only overload: all NeighborEntry::pot are left nullptr.
 void build_neighbor_list(Configuration &cfg, double rcut);
 

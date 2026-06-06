@@ -158,7 +158,7 @@ inline constexpr char kGlobalsRerankError[] =
     "decomposing a seeded model with global parameters after a re-rank is not "
     "supported; set potentials programmatically";
 
-template <class Calc> struct PotentialType; // primary left undefined
+template <class Calc> struct PotentialType;
 
 template <> struct PotentialType<PairForceCalculator> {
   static constexpr bool applies(const SpecRef &) {
@@ -327,10 +327,6 @@ template <> struct PotentialType<StiwebForceCalculator> {
   }
 };
 
-// ML models are built directly by the reader factory (force_model_reader.cpp),
-// never from the scalar-Potential spec maps. This specialization exists only so
-// the seed/decompose std::visit over the ForceCalculator variant compiles; the
-// programmatic spec-map path is intentionally unsupported for ML.
 template <> struct PotentialType<ACSF> {
   static bool applies(const SpecRef &) { return false; }
   static leaf::result<ForceCalculator> materialize(const SpecRef &) {
