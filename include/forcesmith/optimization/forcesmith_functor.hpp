@@ -21,9 +21,13 @@ struct ForcesmithFunctor {
   using ValueType = Eigen::VectorXd;
   using JacobianType = Eigen::MatrixXd;
 
+  // stream_jacobian: skip the persistent whole-dataset descriptor cache and
+  // build the (constant, linear-head) Jacobian one config at a time in df().
+  // Set by the optimizer for one-shot solvers on linear ML models, so memory
+  // stays O(dense Jacobian) instead of O(all atoms' descriptor gradients).
   ForcesmithFunctor(std::span<Configuration> configs, ForceCalculator model,
                     double energy_weight = 1.0, double stress_weight = 0.0,
-                    double smooth_weight = 0.0);
+                    double smooth_weight = 0.0, bool stream_jacobian = false);
 
   int operator()(const Eigen::VectorXd &x, Eigen::VectorXd &fvec) const;
   int df(const Eigen::VectorXd &x, Eigen::MatrixXd &fjac) const;
@@ -42,6 +46,7 @@ private:
   double energy_weight_;
   double stress_weight_;
   double smooth_weight_;
+  bool stream_jacobian_ = false;
   int smooth_count_ = 0; // # curvature residuals (0 when smooth_weight_ == 0)
   int inputs_ = 0;
   int values_ = 0;

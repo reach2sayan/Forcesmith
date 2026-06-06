@@ -49,6 +49,8 @@ struct ForceCalcConcept : FittableConcept {
   // Fit fast-path predicates; default false.
   virtual bool has_cache() const = 0;
   virtual bool has_param_jacobian() const = 0;
+  // Per-feature descriptor standardization active (ML only); default false.
+  virtual bool has_standardization() const = 0;
   virtual void eval_cached(std::size_t cache_index, std::span<Vec3> forces,
                            double &energy, SymTens &stress) const = 0;
   virtual void eval_cached_jacobian(std::size_t cache_index, int row0,

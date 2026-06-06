@@ -2,6 +2,7 @@
 
 #include "forcesmith/events/signals.hpp"
 
+#include <tbb/enumerable_thread_specific.h>
 #include <tbb/global_control.h>
 #include <tbb/info.h>
 #include <tbb/task_arena.h>
@@ -173,15 +174,53 @@ void df_cached_analytic(ForceCalculator &m0, const Eigen::VectorXd &x,
                 });
 }
 
+// Streaming analytic Jacobian: same exact per-config columns as
+// df_cached_analytic, but WITHOUT a persistent whole-dataset descriptor cache.
+// Each config builds its own single-config cache (index 0) on a thread-local
+// model copy, writes its disjoint row block into `fjac`, then discards it on
+// the next config — so peak memory is O(threads × one config) + the dense
+// Jacobian, not O(all atoms' gradients). Used for one-shot linear-head fits.
+void df_streaming(ForceCalculator &m0, const Eigen::VectorXd &x,
+                  Eigen::MatrixXd &fjac, std::span<Configuration> configs,
+                  const std::vector<int> &row_offset, double energy_weight,
+                  double stress_weight) {
+  fjac.setZero();
+
+  // Column offset per head/type — the column analogue of row_offset.
+  const std::vector<std::size_t> head_pc = m0.head_param_counts();
+  std::vector<int> col_off(head_pc.size() + 1, 0);
+  for (std::size_t t = 0; t < head_pc.size(); ++t) {
+    col_off[t + 1] = col_off[t] + static_cast<int>(head_pc[t]);
+  }
+
+  // One private model copy per worker thread (params scattered once); each
+  // overwrites its single-config cache_ as it sweeps its share of configs.
+  tbb::enumerable_thread_specific<ForceCalculator> tls([&] {
+    ForceCalculator m = m0;
+    m.scatter_params(x, std::size_t{0});
+    return m;
+  });
+
+  std::vector<std::size_t> cidx(configs.size());
+  std::iota(cidx.begin(), cidx.end(), std::size_t{0});
+  std::for_each(std::execution::par, cidx.begin(), cidx.end(),
+                [&](std::size_t c) {
+                  ForceCalculator &m = tls.local();
+                  m.prepare(configs.subspan(c, 1)); // single-config cache → 0
+                  m.eval_cached_jacobian(0, row_offset[c], col_off,
+                                         energy_weight, stress_weight, fjac);
+                });
+}
+
 } // namespace
 
 ForcesmithFunctor::ForcesmithFunctor(std::span<Configuration> configs,
                                      ForceCalculator model,
                                      double energy_weight, double stress_weight,
-                                     double smooth_weight)
+                                     double smooth_weight, bool stream_jacobian)
     : configs_(configs), model_(std::move(model)),
       energy_weight_(energy_weight), stress_weight_(stress_weight),
-      smooth_weight_(smooth_weight),
+      smooth_weight_(smooth_weight), stream_jacobian_(stream_jacobian),
       smooth_count_{smooth_weight > 0.0
                         ? static_cast<int>(model_.smoothness_count())
                         : 0},
@@ -199,8 +238,13 @@ ForcesmithFunctor::ForcesmithFunctor(std::span<Configuration> configs,
   }
 
   // Precompute the descriptor cache ONCE so every residual/Jacobian evaluation
-  // below is cheap cached algebra.
-  shared_arena().execute([&] { model_.prepare(configs_); });
+  // below is cheap cached algebra. Skipped in streaming mode: a one-shot solver
+  // builds the Jacobian per-config in df_streaming and the residual recomputes
+  // per-config (eval_forces falls back when there is no cache), so the
+  // whole-dataset cache — the memory hog for large SOAP/ACSF fits — is avoided.
+  if (!stream_jacobian_) {
+    shared_arena().execute([&] { model_.prepare(configs_); });
+  }
 }
 
 int ForcesmithFunctor::operator()(const Eigen::VectorXd &x,
@@ -236,6 +280,19 @@ bool ForcesmithFunctor::df_cached(const Eigen::VectorXd &x,
 
 int ForcesmithFunctor::df(const Eigen::VectorXd &x,
                           Eigen::MatrixXd &fjac) const {
+  // Streaming one-shot path: no persistent cache, exact per-config linear-head
+  // Jacobian. Requires an analytic param-Jacobian (every head linear).
+  if (stream_jacobian_ && model_.has_param_jacobian()) {
+    shared_arena().execute([&] {
+      df_streaming(model_, x, fjac, configs_, row_offset_, energy_weight_,
+                   stress_weight_);
+    });
+    if (last_fvec_.size() == fjac.rows()) {
+      grad_norm_ = (fjac.transpose() * last_fvec_).norm();
+    }
+    return 0;
+  }
+
   if (!df_cached(x, fjac)) {
     constexpr double delta = 1e-5;
     Eigen::VectorXd fp(values_), fm(values_), xp = x;

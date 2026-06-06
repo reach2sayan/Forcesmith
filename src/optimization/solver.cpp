@@ -287,6 +287,36 @@ LineSearchSolver::PowellDirectionSet::conjugate_direction(
   return t < 0.0 ? std::optional<Eigen::VectorXd>{std::move(xi)} : std::nullopt;
 }
 
+int NormalEquationsSolver::minimize(Eigen::VectorXd &x, ResidualFn f,
+                                    JacobianFn jac, int n_vals,
+                                    const Eigen::VectorXd & /*lower*/,
+                                    const Eigen::VectorXd & /*upper*/) const {
+  const Eigen::Index P = x.size();
+  if (P == 0 || n_vals == 0) {
+    return 0;
+  }
+
+  // One residual + one Jacobian evaluation at the start point (the functor
+  // streams `jac` per-config, so J is the only large allocation: n_vals × P).
+  const Eigen::VectorXd r0 = std::invoke(f, x);
+  Eigen::MatrixXd J(n_vals, P);
+  std::invoke(jac, x, J);
+
+  // Normal equations of min‖r0 + J·Δ‖²:  (JᵀJ + λI)·Δ = −Jᵀr0.
+  Eigen::MatrixXd AtA = J.transpose() * J; // P×P (small)
+  const Eigen::VectorXd Atb = J.transpose() * r0;
+
+  double lambda = ridge;
+  if (lambda <= 0.0) {
+    lambda = 1e-8 * std::max(AtA.diagonal().mean(), 1.0);
+  }
+  AtA.diagonal().array() += lambda;
+
+  // PSD ⇒ LDLᵀ; θ = θ₀ + Δ = θ₀ − (JᵀJ+λ)⁻¹·Jᵀr0.
+  x -= AtA.ldlt().solve(Atb);
+  return 0;
+}
+
 Solver make_default_solver(int max_iter, double xtol, double ftol) {
   return Solver(EigenLMSolver{max_iter, xtol, ftol});
 }

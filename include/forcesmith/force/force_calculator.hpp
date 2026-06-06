@@ -62,6 +62,9 @@ class ForceCalculator : private detail::ErasedValue<detail::ForceCalcConcept> {
     bool has_param_jacobian() const override {
       return impl_.has_param_jacobian();
     }
+    bool has_standardization() const override {
+      return impl_.has_standardization();
+    }
     void eval_cached(std::size_t cache_index, std::span<Vec3> forces,
                      double &energy, SymTens &stress) const override {
       impl_.eval_cached(cache_index, forces, energy, stress);
@@ -166,6 +169,9 @@ public:
   FORCE_INLINE bool has_cache() const { return self_->has_cache(); }
   FORCE_INLINE bool has_param_jacobian() const {
     return self_->has_param_jacobian();
+  }
+  FORCE_INLINE bool has_standardization() const {
+    return self_->has_standardization();
   }
   FORCE_INLINE void eval_cached(std::size_t cache_index, std::span<Vec3> forces,
                                 double &energy, SymTens &stress) const {

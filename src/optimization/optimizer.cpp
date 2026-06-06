@@ -9,8 +9,17 @@ namespace {
 
 int run_with_solver(std::span<Configuration> configs, ForceCalculator &model,
                     const OptimizerOptions &opts, const Solver &solver) {
+  // A one-shot (closed-form least-squares) solver on a model that is linear in
+  // its parameters (every ML head a LinearHead ⇒ has_param_jacobian()) needs
+  // the Jacobian only once, so the functor streams it per-config and skips the
+  // whole-dataset descriptor cache. Standardization needs global μ/σ that the
+  // per-config stream cannot compute, so it forces the cached path. EAM/ADP/etc.
+  // (not param-linear) keep the iterative cached path regardless of solver.
+  const bool stream_jacobian = solver.one_shot() && model.has_param_jacobian() &&
+                               !model.has_standardization();
+
   ForcesmithFunctor functor(configs, model, opts.energy_weight, opts.stress_weight,
-                        opts.smooth_weight);
+                        opts.smooth_weight, stream_jacobian);
 
   Eigen::VectorXd x(functor.inputs());
   model.gather_params(x, std::size_t{0});

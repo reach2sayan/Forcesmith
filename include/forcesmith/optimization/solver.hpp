@@ -30,6 +30,7 @@ struct SolverConcept {
                        const Eigen::VectorXd &,
                        const Eigen::VectorXd &) const = 0;
   virtual bool honors_bounds() const = 0;
+  virtual bool one_shot() const = 0;
 };
 } // namespace detail
 
@@ -48,6 +49,17 @@ class Solver : private detail::ErasedMoveOnly<detail::SolverConcept> {
     bool honors_bounds() const override {
       if constexpr (requires(const T &t) { t.honors_bounds(); }) {
         return impl_.honors_bounds();
+      } else {
+        return false;
+      }
+    }
+    // Optional: true for solvers that evaluate the residual + Jacobian once and
+    // solve in closed form (NormalEquationsSolver). The optimizer uses this to
+    // let the functor stream the Jacobian and skip the persistent descriptor
+    // cache. Probe and default to false (iterative solvers reuse the cache).
+    bool one_shot() const override {
+      if constexpr (requires(const T &t) { t.one_shot(); }) {
+        return impl_.one_shot();
       } else {
         return false;
       }
@@ -73,6 +85,9 @@ public:
   }
   // True iff the wrapped solver applies the box constraints (Ipopt / DE).
   bool honors_bounds() const { return self_->honors_bounds(); }
+  // True iff the solver needs only a single residual+Jacobian evaluation
+  // (closed-form least squares) — lets the optimizer stream the Jacobian.
+  bool one_shot() const { return self_->one_shot(); }
 };
 
 struct EigenLMSolver {
@@ -159,6 +174,29 @@ private:
 };
 
 static_assert(CSolver<LineSearchSolver>);
+
+// Closed-form (weighted) linear least-squares solver. For a model that is
+// LINEAR in its parameters — every ML head a LinearHead — the residual is
+// r(θ) = r(θ₀) + J·(θ−θ₀) with a CONSTANT Jacobian J, so the minimiser of
+// ‖r‖² is the single Cholesky solve of the normal equations
+//   (JᵀJ + λI)·Δ = −Jᵀr(θ₀),   θ = θ₀ + Δ.
+// It evaluates f and jac exactly once each (hence one_shot()), so the optimizer
+// streams the Jacobian per-config and never materialises the whole-dataset
+// descriptor cache — the memory win for large SOAP/ACSF fits. A small ridge λ
+// (Tikhonov) conditions the normal matrix and tames collinear/dead features;
+// λ = 0 requests an auto tiny value derived from the diagonal.
+//
+// Intended for linear ML heads; on a nonlinear model it degrades to a single
+// Gauss–Newton step (well-defined, but not a full fit).
+struct NormalEquationsSolver {
+  double ridge = 0.0; // Tikhonov λ; 0 → auto (1e-8 · mean|diag|)
+  int minimize(Eigen::VectorXd &x, ResidualFn f, JacobianFn jac, int n_vals,
+               const Eigen::VectorXd &lower,
+               const Eigen::VectorXd &upper) const;
+  bool one_shot() const { return true; }
+};
+
+static_assert(CSolver<NormalEquationsSolver>);
 
 // Factory for the default solver (used by run_optimizer when none is supplied).
 Solver make_default_solver(int max_iter = 500, double xtol = 1e-7,

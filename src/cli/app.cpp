@@ -42,6 +42,13 @@ std::optional<forcesmith::Solver> build_solver(const CliOptions &o) {
     return forcesmith::Solver{forcesmith::LineSearchSolver{o.max_iter}};
   } else if (o.algorithm == "ipopt") {
     return forcesmith::Solver{forcesmith::IpoptSolver{o.max_iter}};
+  } else if (o.algorithm == "lsq" || o.algorithm == "linear") {
+    // Closed-form least squares — exact for linear ML heads (SOAP/ACSF), and
+    // low-memory: the functor streams the Jacobian instead of caching the whole
+    // dataset. --smooth-weight doubles as the ridge λ (0 → auto tiny).
+    forcesmith::NormalEquationsSolver s;
+    s.ridge = o.smooth_weight;
+    return forcesmith::Solver{std::move(s)};
   } else if (o.algorithm == "de") {
     forcesmith::BoostDESolver s;
     s.mutation_factor = o.de_F;
@@ -138,7 +145,7 @@ int run(const CliOptions &o) {
       session.set_solver(std::move(*solver));
     } else {
       std::cerr << "unknown algorithm '" << o.algorithm
-                << "'; choose: lm | powell | de | ls | ipopt\n";
+                << "'; choose: lm | powell | de | ls | ipopt | lsq\n";
       ret = 1;
       return {};
     }

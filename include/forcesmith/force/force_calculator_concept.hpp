@@ -62,6 +62,9 @@ template <class Derived> struct NoCache {
   [[nodiscard]] constexpr bool has_param_jacobian() const noexcept {
     return false;
   }
+  [[nodiscard]] constexpr bool has_standardization() const noexcept {
+    return false;
+  }
   void eval_forces(Configuration &cfg, std::size_t /*cache_index*/) const {
     static_cast<const Derived &>(*this).eval_forces(cfg);
   }
