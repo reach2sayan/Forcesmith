@@ -1,6 +1,6 @@
 #pragma once
 
-#include "forcesmith/core/potential_base.hpp"
+#include "forcesmith/core/radial_potential.hpp"
 
 #include <Eigen/Core>
 #include <cstddef>
@@ -11,7 +11,7 @@ namespace forcesmith {
 // Wrapper: eval(x) = base.eval(x) − slope × x − intercept.
 // gather/scatter delegate to base so optimizer sees unchanged parameter layout.
 struct LinearAdjustedPotential {
-  Potential base;
+  RadialPotential base;
   double slope = 0.0;
   double intercept = 0.0;
 
@@ -35,7 +35,7 @@ struct LinearAdjustedPotential {
 // Wrapper: scales the OUTPUT by a — density g(r) → a·g(r). Used for the
 // rho-axis stretch. gather/scatter delegate to base (knot params unchanged).
 struct ScaledOutputPotential {
-  Potential base;
+  RadialPotential base;
   double a = 1.0;
 
   constexpr double eval(double r) const { return a * base.eval(r); }
@@ -56,7 +56,7 @@ struct ScaledOutputPotential {
 // Wrapper: scales the ARGUMENT by 1/a — embedding F(ρ) → F(ρ/a), so the stretch
 // is energy-preserving (F_new(a·ρ_old) = F_old(ρ_old)). The span scales by a.
 struct ScaledArgPotential {
-  Potential base;
+  RadialPotential base;
   double a = 1.0;
 
   constexpr double eval(double rho) const { return base.eval(rho / a); }
@@ -81,9 +81,9 @@ struct ScaledArgPotential {
 // g_alpha.eval(r). Implements the EAM gauge compensation for a linear F shift.
 // gather/scatter delegate to phi; density copies are fixed at rescale time.
 struct CompensatedPairPotential {
-  Potential phi;
-  Potential g_alpha;
-  Potential g_beta;
+  RadialPotential phi;
+  RadialPotential g_alpha;
+  RadialPotential g_beta;
   double coeff_alpha = 0.0;
   double coeff_beta = 0.0;
 

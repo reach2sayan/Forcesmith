@@ -15,7 +15,7 @@ std::vector<double> compute_rho_ref(EAMForceCalculator &calc,
                                     std::span<Configuration> configs);
 
 // Renormalize the density axis so the sampled electron density fills the
-// embedding table range (matches forcesmith rescale.c's rho-axis stretch).
+// embedding table range.
 // Scans per-type min/max ρ, picks a single global factor a from the dominant
 // type (a = upper / right), and applies it energy-preservingly:
 //   g_t(r) → a·g_t(r)        (all types)

@@ -32,7 +32,7 @@ static Configuration make_test_config() {
 }
 
 // A single-type pair model owning the given potentials.
-static ForceCalculator pair_model(std::vector<Potential> pots) {
+static ForceCalculator pair_model(std::vector<RadialPotential> pots) {
     return make_pair_force_calculator(std::move(pots));
 }
 
@@ -74,8 +74,8 @@ static bool round_trip(const std::filesystem::path& pfx,
 }
 
 // First pair potential φ_00 of a round-tripped pair model.
-static const Potential& pair00(const ForceCalculator& m) {
-    return std::get<PairForceCalculator>(m).pair[0, 0];
+static const RadialPotential& pair00(const ForceCalculator& m) {
+    return (*(m).target<PairForceCalculator>()).pair[0, 0];
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
@@ -84,7 +84,7 @@ TEST(Checkpoint, SplinePotentialRoundTrip) {
     TmpDir tmp;
     std::vector<Configuration> configs_in = { make_test_config() };
     SplinePotential spline({1.0, 2.0, 3.0, 4.0}, {2.0, 0.5, 0.5, 2.0});
-    ForceCalculator model_in = pair_model({Potential(spline)});
+    ForceCalculator model_in = pair_model({RadialPotential(spline)});
 
     std::vector<Configuration> cfgs2;
     ForceCalculator           model2;
@@ -98,8 +98,8 @@ TEST(Checkpoint, SplinePotentialRoundTrip) {
     EXPECT_NEAR(cfgs2[0].atoms[0].pos.x(), 1.0,  1e-12);
     EXPECT_NEAR(cfgs2[0].atoms[0].ref.force.z(), 0.3, 1e-12);
 
-    // Potential values reproduced within grid sampling tolerance.
-    ASSERT_TRUE(std::holds_alternative<PairForceCalculator>(model2));
+    // RadialPotential values reproduced within grid sampling tolerance.
+    ASSERT_TRUE(((model2).target<PairForceCalculator>() != nullptr));
     for (double r : {1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0})
         EXPECT_NEAR(pair00(model2).eval(r), spline.eval(r), 1e-3) << "at r=" << r;
 }
@@ -109,13 +109,13 @@ TEST(Checkpoint, AnalyticLJRoundTrip) {
     std::vector<Configuration> configs_in = { make_test_config() };
     const double eps = 1.5, sigma = 2.0;
     LennardJones lj(eps, sigma, sigma * 0.8, sigma * 3.0);
-    ForceCalculator model_in = pair_model({Potential(lj)});
+    ForceCalculator model_in = pair_model({RadialPotential(lj)});
 
     std::vector<Configuration> cfgs2;
     ForceCalculator           model2;
     ASSERT_TRUE(round_trip(tmp.prefix("lj"), configs_in, model_in, cfgs2, model2));
 
-    ASSERT_TRUE(std::holds_alternative<PairForceCalculator>(model2));
+    ASSERT_TRUE(((model2).target<PairForceCalculator>() != nullptr));
     auto [lo, hi] = pair00(model2).span();
     EXPECT_NEAR(lo, sigma * 0.8, 1e-10);
     EXPECT_NEAR(hi, sigma * 3.0, 1e-10);
@@ -146,14 +146,14 @@ TEST(Checkpoint, EAMModelRoundTrip) {
     ForceCalculator           model2;
     ASSERT_TRUE(round_trip(tmp.prefix("eam"), configs_in, model_in, cfgs2, model2));
 
-    ASSERT_TRUE(std::holds_alternative<EAMForceCalculator>(model2));
-    const auto& in  = std::get<EAMForceCalculator>(model_in);
-    const auto& out = std::get<EAMForceCalculator>(model2);
+    ASSERT_TRUE(((model2).target<EAMForceCalculator>() != nullptr));
+    const auto& in  = (*(model_in).target<EAMForceCalculator>());
+    const auto& out = (*(model2).target<EAMForceCalculator>());
     EXPECT_EQ(out.ntypes, in.ntypes);
 
     // Every table reproduced within tabulation tolerance.
-    const Potential& out_phi = out.pair[0, 0];
-    const Potential& in_phi  = in.pair[0, 0];
+    const RadialPotential& out_phi = out.pair[0, 0];
+    const RadialPotential& in_phi  = in.pair[0, 0];
     for (double r : {1.5, 2.5, 3.75, 5.0, 6.0}) {
         EXPECT_NEAR(out_phi.eval(r), in_phi.eval(r), 1e-3) << "pair r=" << r;
         EXPECT_NEAR(out.density[0].eval(r), in.density[0].eval(r), 1e-3) << "density r=" << r;
@@ -174,7 +174,7 @@ TEST(Checkpoint, BoxMatrixPreserved) {
     Atom a; a.type = 0; a.pos = Vec3::Zero();
     cfg.atoms.push_back(a);
 
-    ForceCalculator model_in = pair_model({Potential(SplinePotential({1.0, 2.0}, {0.0, 1.0}))});
+    ForceCalculator model_in = pair_model({RadialPotential(SplinePotential({1.0, 2.0}, {0.0, 1.0}))});
 
     std::vector<Configuration> cfgs2;
     ForceCalculator           model2;
@@ -197,7 +197,7 @@ TEST(Checkpoint, MultipleConfigurations) {
         cfg.weight = static_cast<double>(i + 1);
         configs_in.push_back(cfg);
     }
-    ForceCalculator model_in = pair_model({Potential(SplinePotential({0.5, 1.5, 2.5}, {1.0, 0.0, 1.0}))});
+    ForceCalculator model_in = pair_model({RadialPotential(SplinePotential({0.5, 1.5, 2.5}, {1.0, 0.0, 1.0}))});
 
     std::vector<Configuration> cfgs2;
     ForceCalculator           model2;

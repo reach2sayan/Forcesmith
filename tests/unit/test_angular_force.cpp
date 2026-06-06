@@ -9,7 +9,7 @@ using namespace forcesmith;
 
 // ── Minimal analytic potential types ─────────────────────────────────────────
 
-struct LJPair {
+struct LJPair : NoBounds<LJPair> {
     double eps = 1.0, sigma = 1.0;
     double eval(double r)  const {
         const double sr6 = std::pow(sigma/r, 6);
@@ -26,7 +26,7 @@ struct LJPair {
 };
 
 // f(r) = exp(-r): smooth radial modulation that goes to 0 at large r
-struct ExpMod {
+struct ExpMod : NoBounds<ExpMod> {
     double alpha = 1.0;
     double eval(double r)  const { return std::exp(-alpha * r); }
     double deriv(double r) const { return -alpha * std::exp(-alpha * r); }
@@ -37,7 +37,7 @@ struct ExpMod {
 };
 
 // g(cos θ) = (cos θ − cos θ₀)²: penalises deviation from preferred angle
-struct CosAngle {
+struct CosAngle : NoBounds<CosAngle> {
     double cos0 = -0.5;  // preferred angle ~120°
     double k    = 1.0;
     double eval(double c)  const { return k * (c - cos0) * (c - cos0); }
@@ -48,7 +48,7 @@ struct CosAngle {
     void scatter_params(const Eigen::VectorXd&, int) {}
 };
 
-struct ZeroPot {
+struct ZeroPot : NoBounds<ZeroPot> {
     double eval(double)  const { return 0.0; }
     double deriv(double) const { return 0.0; }
     std::pair<double,double> span() const { return {0.0, 100.0}; }

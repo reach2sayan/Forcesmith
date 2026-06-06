@@ -1,5 +1,6 @@
 #pragma once
 
+#include "forcesmith/core/fit_params.hpp" // NoBounds
 #include "forcesmith/core/types.hpp"
 
 #include <Eigen/Core>
@@ -21,7 +22,7 @@
 
 namespace forcesmith {
 
-class SplinePotential {
+class SplinePotential : public NoBounds<SplinePotential> {
 public:
   SplinePotential(std::vector<double> x, std::vector<double> y);
   double eval(double r) const;
@@ -34,7 +35,7 @@ public:
   constexpr bool is_fixed(std::size_t i) const { return fixed_[i]; }
 
   // Direct knot setter (interface parity with AnalyticParams::set_param,
-  // required by the erased Potential). Global parameters only ever bind to
+  // required by the erased RadialPotential). Global parameters only ever bind to
   // analytic _sc potentials, never to tabulated ones, so this path is unused in
   // practice.
   void set_param(std::size_t i, double v) { y_[i] = v; }
@@ -44,17 +45,19 @@ public:
   }
   void gather_params(Eigen::VectorXd &dst, std::size_t offset) const;
   void scatter_params(const Eigen::VectorXd &src, std::size_t offset);
+  // gather_bounds (±inf over the free knots) is inherited from NoBounds — knots
+  // carry no [min, max] metadata.
 
-  // ── Fit-time evaluation cache ─────────────────────────────────────────────
+  // Fit-time evaluation cache
   // During a fit the query distances r are frozen (atom geometry is fixed)
   // while the knot values y_ move every iteration. prepare_site(r) memoizes the
   // geometry-fixed part of the evaluation — the bracketing knot interval and
-  // the Hermite basis weights at r — and returns an index; eval_at/deriv_at
-  // then evaluate against the CURRENT y_/slopes with NO binary search. This is
-  // the spline analog of the ML descriptor cache. prepare_site MUST be called
-  // single-threaded (it mutates the site table); eval_at/deriv_at are read-only
-  // and safe under the parallel Jacobian. Returns a non-negative index.
+  // the Hermite basis weights at r — and returns an index;
+  //
+  // eval_at/deriv_at then evaluate against the CURRENT y_/slopes with NO binary search.
+  // prepare_site MUST be called is thread-unsafe
   int prepare_site(double r) const;
+
   // Hot per-bond accessors: defined inline (FORCE_INLINE) so they fuse into the
   // force calculators' neighbor loops — the cached EvalSite + knot loads feed a
   // register-resident Hermite FMA chain with no call/spill across a TU boundary.
@@ -131,8 +134,6 @@ public:
                        double weight) const;
 
 private:
-  // One cached evaluation site (one distinct fit-time distance r). Stores only
-  // geometry (depends on x_ and r, never on y_), so it survives scatter_params.
   struct EvalSite {
     enum class Kind : std::uint8_t { Cubic, Linear } kind = Kind::Linear;
     std::size_t i = 0;  // interval: x_[i] <= r < x_[i+1]  (Linear: anchor knot)
@@ -163,7 +164,7 @@ private:
 };
 
 // Curvature customization-point overloads (found by ADL from the erased
-// Potential); these make a tabulated potential participate in the Tikhonov
+// RadialPotential); these make a tabulated potential participate in the Tikhonov
 // smoothness regularization. See forcesmith/potentials/curvature.hpp.
 FORCE_INLINE std::size_t curvature_count(const SplinePotential &p) {
   return p.curvature_count();

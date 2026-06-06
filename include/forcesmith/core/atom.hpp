@@ -23,7 +23,7 @@ namespace forcesmith {
 
 struct Atom;
 struct Configuration;
-class Potential;
+class RadialPotential;
 
 // Radial-table roles a single bond can drive; indices into NeighborEntry::sites
 // (the spline-evaluation-cache hints). EAM uses the first three, the pair
@@ -39,15 +39,15 @@ enum NeighborSiteRole : std::size_t {
 
 struct NeighborEntry : Serializable<NeighborEntry> {
   const Atom *neighbor = nullptr; // non-owning; restored by build_neighbor_list
-  const Potential *pot = nullptr; // non-owning; resolved at build time
+  const RadialPotential *pot = nullptr; // non-owning; resolved at build time
   Vec3 dist = Vec3::Zero();
 
   // Fit-time spline-evaluation-cache handles, one per radial-table role above:
-  // the SiteId returned by Potential::prepare_site(r), or a default (none) when
-  // unset / uncacheable (caller falls back to eval/deriv(r)). Transient — same
-  // contract as `neighbor`/`pot`: populated by a ForceCalculator prepare()
-  // pass, reset on every neighbor-list rebuild (fresh entries default to none),
-  // never serialized.
+  // the SiteId returned by RadialPotential::prepare_site(r), or a default
+  // (none) when unset / uncacheable (caller falls back to eval/deriv(r)).
+  // Transient — same contract as `neighbor`/`pot`: populated by a
+  // ForceCalculator prepare() pass, reset on every neighbor-list rebuild (fresh
+  // entries default to none), never serialized.
   std::array<SiteId, kNeighborSiteCount> sites = {};
 };
 
@@ -98,7 +98,7 @@ struct Configuration : Serializable<Configuration> {
   SymTens calc_stress = SymTens::Zero();
   double calc_limit = 0.0; // F(ρ) out-of-range penalty (RESCALE-style)
 
-  //TODO : A proper ting for a key
+  // TODO : A proper ting for a key
   bool nl_valid = false;
   double nl_rcut = -1.0;
   const void *nl_pots = nullptr;
@@ -122,8 +122,6 @@ inline double force_rms(const Configuration &cfg) {
 template <> struct Serializer<NeighborEntry> {
   template <class Archive>
   static void apply(Archive &ar, NeighborEntry &e, unsigned int) {
-    // Pointers are transient — only geometry is persisted.
-    // Call build_neighbour_list after deserialization to restore them.
     ar & e.dist(0) & e.dist(1) & e.dist(2);
   }
 };

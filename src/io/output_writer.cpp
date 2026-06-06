@@ -26,7 +26,7 @@ namespace leaf = boost::leaf;
 using json = nlohmann::json;
 
 // Sample one potential on a uniform grid over its span → {rmin,rmax,knots}.
-static leaf::result<json> sample_one(const Potential &p, int nknots) {
+static leaf::result<json> sample_one(const RadialPotential &p, int nknots) {
   auto [lo, hi] = p.span();
   const double step = (hi - lo) / (nknots - 1);
   json pot;
@@ -61,7 +61,7 @@ static leaf::result<json> sample_section(const Range &pots, int nknots) {
 }
 
 leaf::result<void> write_native(const std::filesystem::path &path,
-                                const std::vector<Potential> &potentials,
+                                const std::vector<RadialPotential> &potentials,
                                 int nknots) {
   OPEN_FILE_WITH_HANDLE(f, path);
   BOOST_LEAF_AUTO(j, sample_section(potentials, nknots));
@@ -175,24 +175,10 @@ leaf::result<void> write_native_stiweb(const std::filesystem::path &path,
   return {};
 }
 
-// Serialize one value-erased head via its generic surface (type_tag /
-// architecture / all_values), so any head type round-trips through the reader.
-static json head_to_json(const EnergyHead &h) {
-  json head;
-  const std::string tag = h.type_tag();
-  assert(tag == "linear"); // linear is the only head type
-  head["type"] = tag;
-  const Eigen::VectorXd vals = h.all_values();
-  const std::vector<int> arch = h.architecture();
-  // architecture = {n_coeffs}; all_values = [coeffs…, bias].
-  const int n = arch.empty() ? 0 : arch[0];
-  head["coeffs"] = json::array();
-  for (int k = 0; k < n; ++k) {
-    head["coeffs"].push_back(vals[k]);
-  }
-  head["bias"] = vals[n];
-  return head;
-}
+// Serialize one value-erased head. EnergyHead::to_json() routes to the
+// build_json_from_head ADL CPO of the held concrete head, so each head type
+// (including external ones) owns its own JSON shape.
+static json head_to_json(const EnergyHead &h) { return h.to_json(); }
 
 static json heads_to_json(const TypeArray<EnergyHead> &heads) {
   json arr = json::array();
@@ -323,7 +309,7 @@ leaf::result<void> write_native_lmbtr(const std::filesystem::path &path,
 }
 
 leaf::result<void> write_lammps(const std::filesystem::path &path,
-                                const std::vector<Potential> &potentials) {
+                                const std::vector<RadialPotential> &potentials) {
   OPEN_FILE_WITH_HANDLE(f, path);
 
   for (auto [idx, p] : std::views::enumerate(potentials)) {
@@ -344,7 +330,7 @@ leaf::result<void> write_lammps(const std::filesystem::path &path,
 }
 
 leaf::result<void> write_imd(const std::filesystem::path &path,
-                             const std::vector<Potential> &potentials) {
+                             const std::vector<RadialPotential> &potentials) {
   OPEN_FILE_WITH_HANDLE(f, path);
 
   const int n = static_cast<int>(potentials.size());

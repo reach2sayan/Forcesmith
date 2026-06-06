@@ -52,8 +52,8 @@ struct SWParams {
 // access via params(ti, tj).
 // lambda — per-triplet 3-body strength λ[i][j][k] (symmetric in j,k), stored as
 // a flat vector of ntypes·paircol entries, indexed i·paircol + pair_slot(j,k).
-struct StiwebForceCalculator : ForceCalculatorBase<StiwebForceCalculator>,
-                               NoGlobals {
+struct StiwebForceCalculator : ForceCalculatorBase<StiwebForceCalculator> {
+  using Base = ForceCalculatorBase<StiwebForceCalculator>;
   SymmetricMatrix<SWParams> params;
   std::vector<Param> lambda;
 
@@ -63,6 +63,7 @@ struct StiwebForceCalculator : ForceCalculatorBase<StiwebForceCalculator>,
   }
 
   void eval_forces(Configuration &cfg) const;
+  using Base::eval_forces; // indexed (no-cache)
 
   std::size_t param_count() const;
   void gather_params(Eigen::VectorXd &dst, std::size_t off) const;
@@ -87,6 +88,6 @@ private:
   }
 };
 
-static_assert(ForceCalculatorModel<StiwebForceCalculator>);
+static_assert(CForceCalculator<StiwebForceCalculator>);
 
 } // namespace forcesmith

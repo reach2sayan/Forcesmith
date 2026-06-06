@@ -46,13 +46,13 @@ using LambdaKey = std::tuple<std::string, std::string, std::string>;
 // free strategies can read (materialize) and write (decompose) them.
 struct SpecRef {
   const SpeciesRegistry &registry;
-  std::map<Forcesmith::PairKey, Potential> &pair;
-  std::map<std::string, Potential> &density;
-  std::map<std::string, Potential> &embedding;
-  std::map<Forcesmith::PairKey, Potential> &dipole;
-  std::map<Forcesmith::PairKey, Potential> &quadrupole;
-  std::map<Forcesmith::PairKey, Potential> &radial;
-  std::map<std::string, Potential> &angular;
+  std::map<Forcesmith::PairKey, RadialPotential> &pair;
+  std::map<std::string, RadialPotential> &density;
+  std::map<std::string, RadialPotential> &embedding;
+  std::map<Forcesmith::PairKey, RadialPotential> &dipole;
+  std::map<Forcesmith::PairKey, RadialPotential> &quadrupole;
+  std::map<Forcesmith::PairKey, RadialPotential> &radial;
+  std::map<std::string, RadialPotential> &angular;
   std::map<Forcesmith::PairKey, TersoffParams> &tersoff;
   std::map<Forcesmith::PairKey, SWParams> &stiweb;
   std::map<LambdaKey, Param> &lambda;
@@ -60,7 +60,7 @@ struct SpecRef {
 };
 
 [[nodiscard]] inline Forcesmith::PairKey norm_key(std::string_view a,
-                                              std::string_view b) {
+                                                  std::string_view b) {
   std::string sa(a), sb(b);
   if (sb < sa) {
     std::swap(sa, sb);
@@ -85,10 +85,10 @@ build_pair_table(const std::map<Forcesmith::PairKey, V> &src,
   return mat;
 }
 
-[[nodiscard]] inline leaf::result<PotentialArray>
-build_type_array(const std::map<std::string, Potential> &src,
+[[nodiscard]] inline leaf::result<RadialPotentialArray>
+build_type_array(const std::map<std::string, RadialPotential> &src,
                  const SpeciesRegistry &reg, std::string_view what) {
-  PotentialArray arr;
+  RadialPotentialArray arr;
   const std::size_t n = ntypes(reg);
   arr.reserve(n);
   for (std::size_t t = 0; t < n; ++t) {
@@ -131,9 +131,9 @@ void dump_pair_table(const SymmetricMatrix<V> &mat, const SpeciesRegistry &reg,
   }
 }
 
-inline void dump_type_array(const PotentialArray &arr,
+inline void dump_type_array(const RadialPotentialArray &arr,
                             const SpeciesRegistry &reg,
-                            std::map<std::string, Potential> &dst) {
+                            std::map<std::string, RadialPotential> &dst) {
   for (std::size_t t = 0; t < ntypes(reg); ++t) {
     dst.insert_or_assign(std::string(species_at(reg, t).symbol), arr[t]);
   }

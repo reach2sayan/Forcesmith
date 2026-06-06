@@ -168,16 +168,16 @@ double nearest_neighbour_distance(const json &configs) {
 // sqrt embedding (B>0). Matches fit_eam.py::analytic_start.
 leaf::result<void> set_analytic_start(Forcesmith &s, const std::string &el,
                                       double rmin, double rmax) {
-  BOOST_LEAF_AUTO(pair, Potential::from_text(
+  BOOST_LEAF_AUTO(pair, RadialPotential::from_text(
                             json{{"type", "morse"}, {"rmin", rmin},
                                  {"rmax", rmax}, {"De", 0.5}, {"a", 2.0},
                                  {"re", rmin}}
                                 .dump()));
-  BOOST_LEAF_AUTO(rho, Potential::from_text(
+  BOOST_LEAF_AUTO(rho, RadialPotential::from_text(
                            json{{"type", "exp_decay"}, {"rmin", rmin},
                                 {"rmax", rmax}, {"A", 1.0}, {"B", 1.0}}
                                .dump()));
-  BOOST_LEAF_AUTO(emb, Potential::from_text(
+  BOOST_LEAF_AUTO(emb, RadialPotential::from_text(
                            json{{"type", "sqrt"}, {"rmin", 1e-4}, {"rmax", 10.0},
                                 {"A", -1.0}, {"B", 1.0}}
                                .dump()));
@@ -212,7 +212,7 @@ leaf::result<json> set_tabulated_start(Forcesmith &s, const std::string &el,
                                        const json &dense, int knots) {
   json spec{{"model", dense.value("model", "eam")},
             {"ntypes", dense.value("ntypes", 1)}};
-  auto one = [&](const char *section) -> leaf::result<Potential> {
+  auto one = [&](const char *section) -> leaf::result<RadialPotential> {
     const auto &p = dense.at(section).at("potentials").at(0);
     std::vector<double> y = p.at("knots").get<std::vector<double>>();
     const double rmin = p.at("rmin").get<double>();
@@ -226,7 +226,7 @@ leaf::result<json> set_tabulated_start(Forcesmith &s, const std::string &el,
     sec["format"] = "tabulated";
     sec["potentials"] = json::array({pot});
     spec[section] = sec;
-    return Potential::from_text(pot.dump());
+    return RadialPotential::from_text(pot.dump());
   };
   BOOST_LEAF_AUTO(pair, one("pair"));
   BOOST_LEAF_AUTO(rho, one("density"));

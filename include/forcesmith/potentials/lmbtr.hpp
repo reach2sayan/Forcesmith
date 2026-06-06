@@ -36,7 +36,6 @@ namespace forcesmith {
 struct LmbtrLayout {
   DescriptorLayout d_;
   std::optional<std::size_t> k2b, k3b;
-
   LmbtrLayout(std::size_t S, std::optional<int> n2, std::optional<int> n3) {
     const std::size_t P = S * (S + 1) / 2;
     if (n2) {
@@ -105,6 +104,6 @@ private:
                      const Grid &g, const LmbtrLayout &L) const;
 };
 
-static_assert(ForceCalculatorModel<LMBTR>);
+static_assert(CForceCalculator<LMBTR>);
 
 } // namespace forcesmith

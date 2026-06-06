@@ -6,8 +6,9 @@
 namespace forcesmith {
 
 // Ipopt-backed solver for the least-squares objective φ(x) = ½‖F(x)‖².
-// Satisfies SolverImpl, so it drops into the same Solver façade as EigenLMSolver
-// and friends. The objective and its gradient are handed to Ipopt as
+// Satisfies SolverImpl, so it drops into the same Solver façade as
+// EigenLMSolver and friends. The objective and its gradient are handed to Ipopt
+// as
 //   f(x)  = ½ F(x)ᵀ F(x)
 //   ∇f(x) = J(x)ᵀ F(x)
 // with no constraints and an L-BFGS (limited-memory) Hessian approximation. The

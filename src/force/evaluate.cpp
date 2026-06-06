@@ -1,12 +1,10 @@
 #include "forcesmith/force/evaluate.hpp"
 
-#include <variant>
-
 namespace forcesmith::force {
 
 EvalResult evaluate(const ForceCalculator &calc, const Configuration &cfg) {
   Configuration scratch = cfg; // non-mutating: never touch the caller's config
-  std::visit([&](const auto &m) { m.eval_forces(scratch); }, calc);
+  calc.eval_forces(scratch);
 
   EvalResult out;
   out.energy = scratch.calc_energy;

@@ -1,5 +1,5 @@
 #include "forcesmith/core/neighbor_list.hpp"
-#include "forcesmith/core/potential_base.hpp"
+#include "forcesmith/core/radial_potential.hpp"
 
 #include <boost/container_hash/hash.hpp>
 
@@ -7,7 +7,6 @@
 #include <cmath>
 #include <execution>
 #include <span>
-#include <variant>
 #include <vector>
 
 namespace forcesmith {
@@ -38,7 +37,7 @@ std::size_t geometry_signature(const Configuration &cfg) {
   return h;
 }
 
-const Potential *resolve_pot(const PotentialPair *pots, const Atom &ai,
+const RadialPotential *resolve_pot(const RadialPotentialPair *pots, const Atom &ai,
                              const Atom &aj) {
   if (pots && ai.type < pots->ntypes() && aj.type < pots->ntypes()) {
     return &(*pots)[ai.type, aj.type];
@@ -46,7 +45,7 @@ const Potential *resolve_pot(const PotentialPair *pots, const Atom &ai,
   return nullptr;
 }
 
-void add_neighbor(Configuration &cfg, const PotentialPair *pots, std::size_t i,
+void add_neighbor(Configuration &cfg, const RadialPotentialPair *pots, std::size_t i,
                   std::size_t j, const Vec3 &d, double rcut2) {
   if (d.squaredNorm() > rcut2) {
     return;
@@ -66,7 +65,7 @@ void add_neighbor(Configuration &cfg, const PotentialPair *pots, std::size_t i,
 // +R/−R image entries of a self-pair cancel (zero net self force) and each
 // contribute the correct 0.5·phi, so no separate "self" handling is needed.
 void build_periodic(Configuration &cfg, double rcut, double rcut2,
-                    const PotentialPair *pots, const PeriodicBC &pbc) {
+                    const RadialPotentialPair *pots, const PeriodicBC &pbc) {
   const Mat3 &box = pbc.box();
   const Vec3 a = box.col(0), b = box.col(1), c = box.col(2);
 
@@ -101,7 +100,7 @@ void build_periodic(Configuration &cfg, double rcut, double rcut2,
 
 // Non-periodic (cluster) build: direct pairs only, no images.
 void build_infinite(Configuration &cfg, double rcut2,
-                    const PotentialPair *pots) {
+                    const RadialPotentialPair *pots) {
   for (std::size_t i = 0; i < cfg.atoms.size(); ++i)
     for (std::size_t j = 0; j < cfg.atoms.size(); ++j) {
       if (i == j) {
@@ -111,7 +110,7 @@ void build_infinite(Configuration &cfg, double rcut2,
     }
 }
 
-void build_impl(Configuration &cfg, double rcut, const PotentialPair *pots) {
+void build_impl(Configuration &cfg, double rcut, const RadialPotentialPair *pots) {
   // Cache hit: an identical list was already built for THIS configuration
   // object (parent stamp rules out copies/loads, whose neighbour pointers would
   // dangle into the source) with the same cutoff, potential table and geometry.
@@ -148,7 +147,7 @@ void build_neighbor_list(Configuration &cfg, double rcut) {
 }
 
 void build_neighbor_list(Configuration &cfg, double rcut,
-                         const PotentialPair &pots) {
+                         const RadialPotentialPair &pots) {
   build_impl(cfg, rcut, &pots);
 }
 

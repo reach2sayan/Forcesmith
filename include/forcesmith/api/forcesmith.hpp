@@ -23,7 +23,7 @@
 
 #include "forcesmith/core/atom.hpp"
 #include "forcesmith/core/config_index.hpp"
-#include "forcesmith/core/potential_base.hpp"
+#include "forcesmith/core/radial_potential.hpp"
 #include "forcesmith/core/species.hpp"
 #include "forcesmith/core/types.hpp"
 #include "forcesmith/force/evaluate.hpp"
@@ -123,21 +123,21 @@ public:
   boost::leaf::result<void> declare_element(std::string_view sym);
 
   boost::leaf::result<void> set_pair_potential(std::string_view a,
-                                               std::string_view b, Potential p);
-  boost::leaf::result<void> set_density(std::string_view a, Potential p);
-  boost::leaf::result<void> set_embedding(std::string_view a, Potential p);
+                                               std::string_view b, RadialPotential p);
+  boost::leaf::result<void> set_density(std::string_view a, RadialPotential p);
+  boost::leaf::result<void> set_embedding(std::string_view a, RadialPotential p);
   void set_global(GlobalParam g);
 
   // ── extra tables for the richer model families ────────────────────────────
   // ADP: dipole u_{ij}(r) and quadrupole w_{ij}(r), per element pair.
   boost::leaf::result<void> set_dipole(std::string_view a, std::string_view b,
-                                       Potential p);
+                                       RadialPotential p);
   boost::leaf::result<void> set_quadrupole(std::string_view a,
-                                           std::string_view b, Potential p);
+                                           std::string_view b, RadialPotential p);
   // Angular: radial modulation f_{ij}(r) per pair, angular g_i(cosθ) per type.
   boost::leaf::result<void> set_radial(std::string_view a, std::string_view b,
-                                       Potential p);
-  boost::leaf::result<void> set_angular(std::string_view a, Potential p);
+                                       RadialPotential p);
+  boost::leaf::result<void> set_angular(std::string_view a, RadialPotential p);
   // Tersoff / Stiweb: analytic parameter blocks per element pair.
   boost::leaf::result<void> set_tersoff_params(std::string_view a,
                                                std::string_view b,
@@ -214,14 +214,14 @@ private:
   std::vector<Configuration> configs_;
 
   // Symbol-keyed potentials (programmatic build path).
-  std::map<PairKey, Potential> pair_;
-  std::map<std::string, Potential> density_;
-  std::map<std::string, Potential> embedding_;
+  std::map<PairKey, RadialPotential> pair_;
+  std::map<std::string, RadialPotential> density_;
+  std::map<std::string, RadialPotential> embedding_;
   // Extra per-family tables (per-pair keyed by PairKey, per-type by symbol).
-  std::map<PairKey, Potential> dipole_;     // ADP
-  std::map<PairKey, Potential> quadrupole_; // ADP
-  std::map<PairKey, Potential> radial_;     // angular
-  std::map<std::string, Potential> angular_; // angular (central type)
+  std::map<PairKey, RadialPotential> dipole_;     // ADP
+  std::map<PairKey, RadialPotential> quadrupole_; // ADP
+  std::map<PairKey, RadialPotential> radial_;     // angular
+  std::map<std::string, RadialPotential> angular_; // angular (central type)
   std::map<PairKey, TersoffParams> tersoff_;
   std::map<PairKey, SWParams> stiweb_;
   // Stiweb λ: (central symbol, sorted neighbour pair) → 3-body strength.

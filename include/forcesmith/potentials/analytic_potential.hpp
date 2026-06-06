@@ -17,7 +17,7 @@ namespace forcesmith {
 // generates the optimizer param-plumbing
 // (param_count/gather/scatter/set_param). Each Derived supplies the maths
 // directly — eval(double) and deriv(double) — defined inline below so the
-// compiler inlines them at the Potential/SmoothCutoff call sites.
+// compiler inlines them at the RadialPotential/SmoothCutoff call sites.
 template <typename Derived, std::size_t N>
 struct AnalyticParams : ParamSet<AnalyticParams<Derived, N>> {
   static constexpr std::size_t num_params = N;
@@ -39,16 +39,9 @@ public:
   // Mark parameter i as fixed (excluded from optimizer) or free.
   constexpr void set_fixed(std::size_t i, bool f) { params[i].fixed = f; }
   constexpr bool is_fixed(std::size_t i) const { return params[i].fixed; }
-
-  // Write parameter i directly, bypassing the fixed flag. Used to broadcast a
-  // shared global parameter (e.g. a smooth-cutoff h) into this potential's
-  // slot, which is held fixed so gather/scatter skip it.
   constexpr void set_param(std::size_t i, double v) { params[i].value = v; }
 
-  // ParamSet customization point: the optimizer plumbing
-  // (param_count/gather_params/scatter_params/gather_bounds) is generated from
-  // this single Param range. Both overloads so gather/bounds (const) and scatter
-  // (mutating) see the matching constness.
+  // ParamSet CPO
   constexpr auto param_fields() { return std::views::all(params); }
   constexpr auto param_fields() const { return std::views::all(params); }
 
@@ -146,7 +139,7 @@ struct Morse : AnalyticParams<Morse, 3> {
   }
 };
 
-// ── Buckingham: V = A exp(−r/ρ) − C·ρ^6/r^6 ─────────────────────────────────
+// Buckingham: V = A exp(−r/ρ) − C·ρ^6/r^6
 // Matches forcesmith buck_value: the dispersion term carries a ρ^6 factor.
 // params: {A, rho, C}
 struct Buckingham : AnalyticParams<Buckingham, 3> {
@@ -164,7 +157,7 @@ struct Buckingham : AnalyticParams<Buckingham, 3> {
   }
 };
 
-// ── Born: V = A exp((C−r)/B) − D/r^6 + E/r^8 ────────────────────────────────
+// Born: V = A exp((C−r)/B) − D/r^6 + E/r^8
 // Matches forcesmith born_value. params: {A, B, C, D, E}
 //   A: amplitude, B: range, C: offset inside exponent, D: r^6, E: r^8.
 struct Born : AnalyticParams<Born, 5> {
@@ -198,7 +191,7 @@ struct PowerDecay : AnalyticParams<PowerDecay, 2> {
   }
 };
 
-// ── ExpDecay: V = A exp(−Br) ─────────────────────────────────────────────────
+// ExpDecay: V = A exp(−Br)
 // params: {A, B}
 struct ExpDecay : AnalyticParams<ExpDecay, 2> {
   constexpr ExpDecay(double A, double B, double lo, double hi)
@@ -213,7 +206,7 @@ struct ExpDecay : AnalyticParams<ExpDecay, 2> {
   }
 };
 
-// ── MexpDecay, matches forcesmith mexp_decay_value: V = A·exp(−B·(r − r0)) ───────
+// MexpDecay, V = A·exp(−B·(r − r0))
 // params order follows forcesmith p[]: {A, B, r0}
 struct MexpDecay : AnalyticParams<MexpDecay, 3> {
   constexpr MexpDecay(double A, double B, double r0, double lo, double hi)
@@ -228,7 +221,7 @@ struct MexpDecay : AnalyticParams<MexpDecay, 3> {
   }
 };
 
-// ── Harmonic: V = k(r−r0)² ───────────────────────────────────────────────────
+// Harmonic: V = k(r−r0)²
 // params: {k, r0}
 struct Harmonic : AnalyticParams<Harmonic, 2> {
   constexpr Harmonic(double k, double r0, double lo, double hi)
@@ -243,7 +236,7 @@ struct Harmonic : AnalyticParams<Harmonic, 2> {
   }
 };
 
-// ── Universal embedding function, matches forcesmith universal_value:
+// Universal embedding function
 //   V = E0·(b/(b−a)·r^a − a/(b−a)·r^b) + c·r
 // params order follows forcesmith p[]: {E0, a, b, c}
 struct Universal : AnalyticParams<Universal, 4> {
@@ -262,7 +255,7 @@ struct Universal : AnalyticParams<Universal, 4> {
   }
 };
 
-// ── Eopp (empirical oscillating pair), matches forcesmith eopp_value:
+// Eopp (empirical oscillating pair)
 //   V = A/r^n + (B/r^m)·cos(k·r + φ)
 // params order follows forcesmith p[]: {A, n, B, m, k, phi}
 struct Eopp : AnalyticParams<Eopp, 6> {
@@ -355,7 +348,7 @@ template <typename Base> struct SmoothCutoff {
   }
 };
 
-// ── EoppExp, matches forcesmith eopp_exp_value:
+// EoppExp:
 //   V = A·exp(−B·r) + (C/r^m)·cos(k·r + φ)
 // params order follows forcesmith p[]: {A, B, C, m, k, phi}
 struct EoppExp : AnalyticParams<EoppExp, 6> {
@@ -374,7 +367,7 @@ struct EoppExp : AnalyticParams<EoppExp, 6> {
   }
 };
 
-// ── Meopp (modified eopp), matches forcesmith meopp_value:
+// Meopp (modified eopp):
 //   V = A/(r−r0)^n + (B/r^m)·cos(k·r + φ)
 // params order follows forcesmith p[]: {A, n, B, m, k, phi, r0}
 struct Meopp : AnalyticParams<Meopp, 7> {
@@ -394,7 +387,7 @@ struct Meopp : AnalyticParams<Meopp, 7> {
   }
 };
 
-// ── GenLJ (generalized Lennard-Jones), matches forcesmith gen_lj_value:
+// GenLJ (generalized Lennard-Jones):
 //   x = r/r0;  V = A/(m−n)·(m·x^{−n} − n·x^{−m}) + B
 // params order follows forcesmith p[]: {A, n, m, r0, B}
 struct GenLJ : AnalyticParams<GenLJ, 5> {
@@ -415,7 +408,7 @@ struct GenLJ : AnalyticParams<GenLJ, 5> {
   }
 };
 
-// ── DoubleMorse: sum of two Morse terms + constant offset ────────────────────
+// DoubleMorse: sum of two Morse terms + constant offset
 // params: {D1, a1, r1, D2, a2, r2, C}
 struct DoubleMorse : AnalyticParams<DoubleMorse, 7> {
   constexpr DoubleMorse(double D1, double a1, double r1, double D2, double a2,
@@ -436,7 +429,7 @@ struct DoubleMorse : AnalyticParams<DoubleMorse, 7> {
   }
 };
 
-// ── DoubleExp, matches forcesmith double_exp_value:
+// DoubleExp, matches forcesmith double_exp_value:
 //   V = A·exp(−B·(r − r1)²) + exp(−C·(r − r2))   (2nd term has no prefactor)
 // params order follows forcesmith p[]: {A, B, r1, C, r2}
 struct DoubleExp : AnalyticParams<DoubleExp, 5> {
@@ -456,7 +449,7 @@ struct DoubleExp : AnalyticParams<DoubleExp, 5> {
   }
 };
 
-// ── Mishin, matches forcesmith mishin_value:
+// Mishin, matches forcesmith mishin_value:
 //   z = r − r0;  e = exp(−d·z);  V = A·z^n·e·(1 + B·e) + C
 // params order follows forcesmith p[]: {A, B, C, r0, n, d}
 struct Mishin : AnalyticParams<Mishin, 6> {
@@ -496,7 +489,7 @@ struct SqrtFunc : AnalyticParams<SqrtFunc, 2> {
 };
 
 // ConstFunc: V = C
-// // params: {C}
+// params: {C}
 struct ConstFunc : AnalyticParams<ConstFunc, 1> {
   constexpr explicit ConstFunc(double C, double lo, double hi)
       : AnalyticParams({C}, lo, hi) {}
@@ -504,7 +497,7 @@ struct ConstFunc : AnalyticParams<ConstFunc, 1> {
   constexpr FORCE_INLINE double deriv(double) const { return 0.0; }
 };
 
-// ── Parabola: V = Ar² + Br + C ───────────────────────────────────────────────
+// Parabola: V = Ar² + Br + C
 // params: {A, B, C}
 struct Parabola : AnalyticParams<Parabola, 3> {
   constexpr Parabola(double A, double B, double C, double lo, double hi)
@@ -519,7 +512,7 @@ struct Parabola : AnalyticParams<Parabola, 3> {
   }
 };
 
-// ── Poly5, matches forcesmith poly_5_value (expansion about r = 1):
+// Poly5, matches forcesmith poly_5_value (expansion about r = 1):
 //   s = r − 1;  V = a0 + 0.5·a1·s² + a2·s³ + a3·s⁴ + a4·s⁵
 // params: {a0, a1, a2, a3, a4}
 struct Poly5 : AnalyticParams<Poly5, 5> {
@@ -538,7 +531,7 @@ struct Poly5 : AnalyticParams<Poly5, 5> {
   }
 };
 
-// ── StiwWeb2 (Stillinger-Weber pair), matches forcesmith stiweb_2_value:
+// StiwWeb2 (Stillinger-Weber pair), matches forcesmith stiweb_2_value:
 //   V = (A·r^{−p} − B·r^{−q})·exp(δ/(r − rc))
 // params order follows forcesmith p[]: {A, B, p, q, delta, rc}
 struct StiwWeb2 : AnalyticParams<StiwWeb2, 6> {
@@ -565,7 +558,7 @@ struct StiwWeb2 : AnalyticParams<StiwWeb2, 6> {
   }
 };
 
-// ── StiwWeb3: h(r) = exp(γ/(r−a)),  r < a  [SW 3-body radial function] ───────
+// StiwWeb3: h(r) = exp(γ/(r−a)),  r < a  [SW 3-body radial function]
 // params: {gamma, a}   (γ = γ_SW × σ and a = a_SW × σ, pre-multiplied)
 struct StiwWeb3 : AnalyticParams<StiwWeb3, 2> {
   constexpr StiwWeb3(double gamma, double a, double lo, double hi)
@@ -588,7 +581,7 @@ struct StiwWeb3 : AnalyticParams<StiwWeb3, 2> {
   }
 };
 
-// ── TersoffPot: V = fc(r)[A exp(−λr) − B exp(−μr)] ──────────────────────────
+// TersoffPot: V = fc(r)[A exp(−λr) − B exp(−μr)]
 // Bond-order params β, n, c, d, h are stored but not used in pure pair eval.
 // params: {A, B, lambda, mu, beta, n, c, d, h, R, S}
 struct TersoffPot : AnalyticParams<TersoffPot, 11> {
@@ -614,7 +607,7 @@ struct TersoffPot : AnalyticParams<TersoffPot, 11> {
   }
 };
 
-// ── TersoffMix: mixing correction V = χ exp(−ω r) ────────────────────────────
+// TersoffMix: mixing correction V = χ exp(−ω r)
 // params: {chi, omega}
 struct TersoffMix : AnalyticParams<TersoffMix, 2> {
   constexpr TersoffMix(double chi, double omega, double lo, double hi)
@@ -629,7 +622,7 @@ struct TersoffMix : AnalyticParams<TersoffMix, 2> {
   }
 };
 
-// ── TersoffModPot: modified Tersoff pair (16 params) ─────────────────────────
+// TersoffModPot: modified Tersoff pair (16 params)
 // Extended pair: fc(r)[A exp(−λr) − B exp(−μr)] × polynomial correction.
 // Extra params c1..c5 (indices 11-15) provide a polynomial correction.
 // params: {A, B, lambda, mu, beta, n, c, d, h, R, S, c1, c2, c3, c4, c5}
@@ -666,7 +659,7 @@ struct TersoffModPot : AnalyticParams<TersoffModPot, 16> {
   }
 };
 
-// ── Kawamura ionic potential, matches forcesmith kawamura_value:
+// Kawamura ionic potential:
 //   V = p0·p1/r + p2·(p5+p6)·exp((p3+p4−r)/(p5+p6)) − p7·p8/r^6
 // params follow forcesmith p[] (charges/sums multiply): {p0..p8}
 struct Kawamura : AnalyticParams<Kawamura, 9> {
@@ -688,7 +681,7 @@ struct Kawamura : AnalyticParams<Kawamura, 9> {
   }
 };
 
-// ── KawamuraMix, matches forcesmith kawamura_mix_value:
+// KawamuraMix:
 //   V = kawamura(p0..p8) + p2·p9·(exp(−2·p10·(r−p11)) − 2·exp(−p10·(r−p11)))
 // params follow forcesmith p[]: {p0..p11}
 struct KawamuraMix : AnalyticParams<KawamuraMix, 12> {
@@ -716,8 +709,7 @@ struct KawamuraMix : AnalyticParams<KawamuraMix, 12> {
   }
 };
 
-// ── Softshell: V = (A/r)^n (soft-core repulsion) ─────────────────────────────
-// Matches forcesmith softshell_value: the whole ratio A/r is raised to n.
+// Softshell: V = (A/r)^n (soft-core repulsion)
 // params: {A, n}
 struct Softshell : AnalyticParams<Softshell, 2> {
   constexpr Softshell(double A, double n, double lo, double hi)

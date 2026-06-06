@@ -12,7 +12,6 @@
 #include <string>
 #include <tuple>
 #include <type_traits>
-#include <variant>
 #include <vector>
 
 namespace forcesmith {
@@ -37,31 +36,38 @@ using detail::SpecRef;
 
 namespace {
 
-[[nodiscard]] constexpr std::size_t ntypes_of(const ForceCalculator &m) {
-  return std::visit([](const auto &c) { return c.ntypes; }, m);
+[[nodiscard]] std::size_t ntypes_of(const ForceCalculator &m) {
+  return m.ntypes();
 }
 // ML models (ACSF/SOAP/LMBTR) re-rank by direct head remap rather than the
-// analytic decompose/materialize-from-spec round-trip.
-[[nodiscard]] constexpr bool is_ml(const ForceCalculator &m) {
-  return std::holds_alternative<ACSF>(m) ||
-         std::holds_alternative<SoapModel>(m) ||
-         std::holds_alternative<LMBTR>(m);
+// analytic decompose/materialize-from-spec round-trip. The closed ML family is
+// recovered through the typed escape hatch — adding an ANALYTIC calculator
+// never touches this list.
+[[nodiscard]] bool is_ml(const ForceCalculator &m) {
+  return m.target<ACSF>() != nullptr || m.target<SoapModel>() != nullptr ||
+         m.target<LMBTR>() != nullptr;
 }
-[[nodiscard]] constexpr double max_cutoff_of(const ForceCalculator &m) {
-  return std::visit([](const auto &c) { return c.max_cutoff(); }, m);
+[[nodiscard]] double max_cutoff_of(const ForceCalculator &m) {
+  return m.max_cutoff();
 }
-// Radial pair table (φ_ij) when the model has one; nullptr for tersoff/stiweb.
-[[nodiscard]] constexpr const PotentialPair *
-pair_table_of(const ForceCalculator &m) {
-  return std::visit(
-      [](const auto &c) -> const PotentialPair * {
-        if constexpr (requires { c.pair; }) {
-          return &c.pair;
-        } else {
-          return nullptr;
-        }
-      },
-      m);
+// Radial pair table (φ_ij) when the model has one; nullptr for tersoff/stiweb
+// and the ML models. Pair-table access is an API/IO concern (live-edit path,
+// set_pair_param), kept out of the core concept — so the four table-bearing
+// families are enumerated here via the typed escape hatch.
+[[nodiscard]] RadialPotentialPair *pair_table_of(ForceCalculator &m) {
+  if (auto *c = m.target<PairForceCalculator>()) {
+    return &c->pair;
+  }
+  if (auto *c = m.target<EAMForceCalculator>()) {
+    return &c->pair;
+  }
+  if (auto *c = m.target<ADPForceCalculator>()) {
+    return &c->pair;
+  }
+  if (auto *c = m.target<AngularForceCalculator>()) {
+    return &c->pair;
+  }
+  return nullptr;
 }
 
 } // namespace
@@ -298,7 +304,7 @@ leaf::result<void> Forcesmith::declare_element(std::string_view sym) {
 }
 
 leaf::result<void> Forcesmith::set_pair_potential(std::string_view a,
-                                              std::string_view b, Potential p) {
+                                              std::string_view b, RadialPotential p) {
   BOOST_LEAF_CHECK(Species::lookup(a));
   BOOST_LEAF_CHECK(Species::lookup(b));
   BOOST_LEAF_CHECK(detach_seeded("edit"));
@@ -307,7 +313,7 @@ leaf::result<void> Forcesmith::set_pair_potential(std::string_view a,
   return {};
 }
 
-leaf::result<void> Forcesmith::set_density(std::string_view a, Potential p) {
+leaf::result<void> Forcesmith::set_density(std::string_view a, RadialPotential p) {
   BOOST_LEAF_CHECK(Species::lookup(a));
   BOOST_LEAF_CHECK(detach_seeded("edit"));
   density_.insert_or_assign(std::string(a), std::move(p));
@@ -315,7 +321,7 @@ leaf::result<void> Forcesmith::set_density(std::string_view a, Potential p) {
   return {};
 }
 
-leaf::result<void> Forcesmith::set_embedding(std::string_view a, Potential p) {
+leaf::result<void> Forcesmith::set_embedding(std::string_view a, RadialPotential p) {
   BOOST_LEAF_CHECK(Species::lookup(a));
   BOOST_LEAF_CHECK(detach_seeded("edit"));
   embedding_.insert_or_assign(std::string(a), std::move(p));
@@ -329,7 +335,7 @@ void Forcesmith::set_global(GlobalParam g) {
 }
 
 leaf::result<void> Forcesmith::set_dipole(std::string_view a, std::string_view b,
-                                      Potential p) {
+                                      RadialPotential p) {
   BOOST_LEAF_CHECK(Species::lookup(a));
   BOOST_LEAF_CHECK(Species::lookup(b));
   BOOST_LEAF_CHECK(detach_seeded("edit"));
@@ -339,7 +345,7 @@ leaf::result<void> Forcesmith::set_dipole(std::string_view a, std::string_view b
 }
 
 leaf::result<void> Forcesmith::set_quadrupole(std::string_view a,
-                                          std::string_view b, Potential p) {
+                                          std::string_view b, RadialPotential p) {
   BOOST_LEAF_CHECK(Species::lookup(a));
   BOOST_LEAF_CHECK(Species::lookup(b));
   BOOST_LEAF_CHECK(detach_seeded("edit"));
@@ -349,7 +355,7 @@ leaf::result<void> Forcesmith::set_quadrupole(std::string_view a,
 }
 
 leaf::result<void> Forcesmith::set_radial(std::string_view a, std::string_view b,
-                                      Potential p) {
+                                      RadialPotential p) {
   BOOST_LEAF_CHECK(Species::lookup(a));
   BOOST_LEAF_CHECK(Species::lookup(b));
   BOOST_LEAF_CHECK(detach_seeded("edit"));
@@ -358,7 +364,7 @@ leaf::result<void> Forcesmith::set_radial(std::string_view a, std::string_view b
   return {};
 }
 
-leaf::result<void> Forcesmith::set_angular(std::string_view a, Potential p) {
+leaf::result<void> Forcesmith::set_angular(std::string_view a, RadialPotential p) {
   BOOST_LEAF_CHECK(Species::lookup(a));
   BOOST_LEAF_CHECK(detach_seeded("edit"));
   angular_.insert_or_assign(std::string(a), std::move(p));
@@ -406,20 +412,14 @@ leaf::result<void> Forcesmith::set_pair_param(std::string_view a,
                                           std::string_view b, std::size_t i,
                                           double v) {
   BOOST_LEAF_CHECK(ensure_frozen());
-  const PotentialPair *pt = pair_table_of(model_);
+  // Edit the live materialized potential in place (value-only; does not dirty).
+  RadialPotentialPair *pt = pair_table_of(model_);
   if (pt == nullptr) {
     return err("this model has no pair table to edit");
   }
   BOOST_LEAF_AUTO(sa, species_of(registry_, a));
   BOOST_LEAF_AUTO(sb, species_of(registry_, b));
-  // Edit the live materialized potential (value-only; does not dirty).
-  std::visit(
-      [&](auto &c) {
-        if constexpr (requires { c.pair; }) {
-          c.pair[sa.index, sb.index].set_param(i, v);
-        }
-      },
-      model_);
+  (*pt)[sa.index, sb.index].set_param(i, v);
   return {};
 }
 
@@ -524,27 +524,46 @@ Forcesmith::decompose_seeded_into_spec(const SpeciesRegistry &reg) {
   }
   SpecRef spec{registry_, pair_,    density_, embedding_, dipole_, quadrupole_,
                radial_,   angular_, tersoff_, stiweb_,    lambda_, globals_};
-  return std::visit(
-      [&](auto &c) -> leaf::result<void> {
-        return PotentialType<std::decay_t<decltype(c)>>::decompose(c, reg,
-                                                                   spec);
-      },
-      *seeded_);
+  // decompose() is family-specific (the PotentialType trait); recover the
+  // concrete model through the typed escape hatch and dispatch. ML families'
+  // decompose returns a leaf error (they re-rank via remap, not the spec).
+  ForceCalculator &m = *seeded_;
+  if (auto *c = m.target<PairForceCalculator>()) {
+    return PotentialType<PairForceCalculator>::decompose(*c, reg, spec);
+  }
+  if (auto *c = m.target<EAMForceCalculator>()) {
+    return PotentialType<EAMForceCalculator>::decompose(*c, reg, spec);
+  }
+  if (auto *c = m.target<ADPForceCalculator>()) {
+    return PotentialType<ADPForceCalculator>::decompose(*c, reg, spec);
+  }
+  if (auto *c = m.target<AngularForceCalculator>()) {
+    return PotentialType<AngularForceCalculator>::decompose(*c, reg, spec);
+  }
+  if (auto *c = m.target<TersoffForceCalculator>()) {
+    return PotentialType<TersoffForceCalculator>::decompose(*c, reg, spec);
+  }
+  if (auto *c = m.target<StiwebForceCalculator>()) {
+    return PotentialType<StiwebForceCalculator>::decompose(*c, reg, spec);
+  }
+  if (auto *c = m.target<ACSF>()) {
+    return PotentialType<ACSF>::decompose(*c, reg, spec);
+  }
+  if (auto *c = m.target<SoapModel>()) {
+    return PotentialType<SoapModel>::decompose(*c, reg, spec);
+  }
+  if (auto *c = m.target<LMBTR>()) {
+    return PotentialType<LMBTR>::decompose(*c, reg, spec);
+  }
+  return err("decompose: unknown force model");
 }
 
 leaf::result<ForceCalculator>
 Forcesmith::remap_seeded_ml(const SpeciesRegistry &old_reg,
                         const SpeciesRegistry &new_reg) const {
-  return std::visit(
-      [&](const auto &c) -> leaf::result<ForceCalculator> {
-        if constexpr (requires { c.remap(old_reg, new_reg); }) {
-          BOOST_LEAF_AUTO(remapped, c.remap(old_reg, new_reg));
-          return ForceCalculator{std::move(remapped)};
-        } else {
-          return err("remap_seeded_ml called on a non-ML model");
-        }
-      },
-      *seeded_);
+  // ForceCalculator::remap dispatches to the held model's virtual (ML models
+  // re-rank their heads; analytic models return a leaf error).
+  return seeded_->remap(old_reg, new_reg);
 }
 
 leaf::result<void> Forcesmith::ensure_frozen() {
@@ -589,7 +608,7 @@ leaf::result<void> Forcesmith::ensure_frozen() {
 
   // Build neighbor lists against the materialized model (must outlive them).
   const double rcut = max_cutoff_of(model_);
-  const PotentialPair *pt = pair_table_of(model_);
+  const RadialPotentialPair *pt = pair_table_of(model_);
   for (auto &cfg : configs_) {
     if (pt != nullptr) {
       build_neighbor_list(cfg, rcut, *pt);

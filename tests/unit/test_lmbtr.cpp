@@ -203,9 +203,9 @@ TEST(Lmbtr, ReaderRoundTrip) {
 
   auto r = io::parse_force_model(json);
   ASSERT_TRUE(r) << "parse failed";
-  ASSERT_TRUE(std::holds_alternative<LMBTR>(*r));
+  ASSERT_TRUE(((*r).target<LMBTR>() != nullptr));
 
-  const auto &lm = std::get<LMBTR>(*r);
+  const auto &lm = (*(*r).target<LMBTR>());
   EXPECT_EQ(lm.descriptor_size(), 16u); // 8 (k2) + 8 (k3), ntypes=1
   ASSERT_TRUE(lm.k2.has_value());
   ASSERT_TRUE(lm.k3.has_value());

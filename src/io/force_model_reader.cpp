@@ -32,8 +32,8 @@ leaf::error_id fail(std::string_view label, std::string msg) {
 }
 
 // Parse a sub-object of shape {"format": ..., "potentials": [...]}
-// into a flat vector<Potential>. Mirrors the logic in parse_potential.
-leaf::result<std::vector<Potential>> parse_pot_list(const json &sub,
+// into a flat vector<RadialPotential>. Mirrors the logic in parse_potential.
+leaf::result<std::vector<RadialPotential>> parse_pot_list(const json &sub,
                                                     std::string_view label) {
   if (!sub.contains("format")) {
     return fail(label, "missing 'format' key");
@@ -50,9 +50,9 @@ leaf::result<std::vector<Potential>> parse_pot_list(const json &sub,
   return std::move(*r);
 }
 
-// Load paircol potentials from sub into a PotentialPair
-// (SymmetricMatrix<Potential>).
-leaf::result<void> fill_pair(PotentialPair &mat, const json &sub,
+// Load paircol potentials from sub into a RadialPotentialPair
+// (SymmetricMatrix<RadialPotential>).
+leaf::result<void> fill_pair(RadialPotentialPair &mat, const json &sub,
                              std::size_t ntypes, std::string_view label) {
   auto r = parse_pot_list(sub, label);
   if (!r) {
@@ -72,8 +72,8 @@ leaf::result<void> fill_pair(PotentialPair &mat, const json &sub,
   return {};
 }
 
-// Load ntypes potentials from sub into a PotentialArray (TypeArray<Potential>).
-leaf::result<void> fill_arr(PotentialArray &arr, const json &sub,
+// Load ntypes potentials from sub into a RadialPotentialArray (TypeArray<RadialPotential>).
+leaf::result<void> fill_arr(RadialPotentialArray &arr, const json &sub,
                             std::size_t ntypes, std::string_view label) {
   auto r = parse_pot_list(sub, label);
   if (!r) {
@@ -396,27 +396,34 @@ leaf::result<ForceCalculator> build_stiweb(json &j, std::size_t ntypes) {
   return ForceCalculator{std::move(calc)};
 }
 
+// Per-head JSON parser: linear (coeffs + bias). The symmetric counterpart of the
+// build_json_from_head writer CPO; adding a head type means adding a parser like
+// this plus a dispatch branch in parse_head.
+leaf::result<EnergyHead> parse_linear_head(const json &h, std::size_t S) {
+  if (!h.contains("coeffs") || !h["coeffs"].is_array()) {
+    return fail("ml", "linear head missing 'coeffs' array");
+  }
+  if (h["coeffs"].size() != S) {
+    return fail("ml", "head coeffs length " +
+                          std::to_string(h["coeffs"].size()) +
+                          " != descriptor size " + std::to_string(S));
+  }
+  const bool fixed = h.value("fixed", false);
+  LinearHead lh;
+  lh.coeffs.reserve(S);
+  for (const auto &c : h["coeffs"]) {
+    lh.coeffs.push_back(Param{c.get<double>(), fixed});
+  }
+  lh.bias = Param{h.value("bias", 0.0), h.value("bias_fixed", true)};
+  return EnergyHead{std::move(lh)};
+}
+
 // Build one EnergyHead from a JSON head spec, validated against descriptor size
-// S. Supports "linear" (coeffs + bias).
+// S. Dispatches on the "type" string to the per-head parser.
 leaf::result<EnergyHead> parse_head(const json &h, std::size_t S) {
   const std::string htype = h.value("type", std::string("linear"));
   if (htype == "linear") {
-    if (!h.contains("coeffs") || !h["coeffs"].is_array()) {
-      return fail("ml", "linear head missing 'coeffs' array");
-    }
-    if (h["coeffs"].size() != S) {
-      return fail("ml", "head coeffs length " +
-                            std::to_string(h["coeffs"].size()) +
-                            " != descriptor size " + std::to_string(S));
-    }
-    const bool fixed = h.value("fixed", false);
-    LinearHead lh;
-    lh.coeffs.reserve(S);
-    for (const auto &c : h["coeffs"]) {
-      lh.coeffs.push_back(Param{c.get<double>(), fixed});
-    }
-    lh.bias = Param{h.value("bias", 0.0), h.value("bias_fixed", true)};
-    return EnergyHead{std::move(lh)};
+    return parse_linear_head(h, S);
   }
   return fail("ml", "unknown head type '" + htype + "'");
 }

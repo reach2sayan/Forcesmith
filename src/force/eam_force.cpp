@@ -16,19 +16,19 @@ namespace {
 // Spline-aware fast paths for the per-bond radial-table evaluations, mirroring
 // the generic eval_gated/deriv_gated/eval_deriv_gated
 // (force_calculator_concept.hpp). The caller hoists the concrete
-// `const SplinePotential*` for each table once (via Potential::target<>), so a
+// `const SplinePotential*` for each table once (via RadialPotential::target<>), so a
 // primed (cacheable) bond on a spline table evaluates through a direct,
 // inlinable non-virtual call — no vtable, no spill across a call. `sp ==
 // nullptr` (an analytic table) or an unprimed bond falls back to the erased
-// Potential, reproducing the generic helpers exactly.
-FORCE_INLINE double eval_gated(const SplinePotential *sp, const Potential &p,
+// RadialPotential, reproducing the generic helpers exactly.
+FORCE_INLINE double eval_gated(const SplinePotential *sp, const RadialPotential &p,
                                SiteId site, double r) {
   if (site.cacheable()) {
     return sp ? sp->eval_at(site.index()) : p.eval_at(site);
   }
   return in_range(p, r) ? p.eval(r) : 0.0;
 }
-FORCE_INLINE double deriv_gated(const SplinePotential *sp, const Potential &p,
+FORCE_INLINE double deriv_gated(const SplinePotential *sp, const RadialPotential &p,
                                 SiteId site, double r) {
   if (site.cacheable()) {
     return sp ? sp->deriv_at(site.index()) : p.deriv_at(site);
@@ -36,7 +36,7 @@ FORCE_INLINE double deriv_gated(const SplinePotential *sp, const Potential &p,
   return in_range(p, r) ? p.deriv(r) : 0.0;
 }
 FORCE_INLINE std::pair<double, double>
-eval_deriv_gated(const SplinePotential *sp, const Potential &p, SiteId site,
+eval_deriv_gated(const SplinePotential *sp, const RadialPotential &p, SiteId site,
                  double r) {
   if (site.cacheable()) {
     return sp ? sp->eval_and_deriv_at(site.index()) : p.eval_and_deriv_at(site);

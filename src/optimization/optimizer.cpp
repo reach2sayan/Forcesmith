@@ -13,13 +13,11 @@ int run_with_solver(std::span<Configuration> configs, ForceCalculator &model,
                         opts.smooth_weight);
 
   Eigen::VectorXd x(functor.inputs());
-  std::visit([&](const auto &m) { m.gather_params(x, std::size_t{0}); }, model);
+  model.gather_params(x, std::size_t{0});
 
   // Per-parameter box constraints, aligned with x (±∞ where unbounded).
   Eigen::VectorXd lower(functor.inputs()), upper(functor.inputs());
-  std::visit(
-      [&](const auto &m) { m.gather_bounds(lower, upper, std::size_t{0}); },
-      model);
+  model.gather_bounds(lower, upper, std::size_t{0});
 
   // Warn once if a real bound was supplied but the chosen solver ignores it.
   const bool has_finite_bound =
@@ -44,7 +42,7 @@ int run_with_solver(std::span<Configuration> configs, ForceCalculator &model,
       solver.minimize(x, std::move(residual_fn), std::move(jacobian_fn),
                       functor.values(), lower, upper);
 
-  std::visit([&](auto &m) { m.scatter_params(x, std::size_t{0}); }, model);
+  model.scatter_params(x, std::size_t{0});
   return status;
 }
 

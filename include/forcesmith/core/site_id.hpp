@@ -4,7 +4,7 @@
 
 namespace forcesmith {
 
-// Opaque handle to a fit-time evaluation-cache slot inside a Potential.
+// Opaque handle to a fit-time evaluation-cache slot inside a RadialPotential.
 //
 // prepare_site(r) mints one (single-threaded);
 // eval_at/deriv_at/eval_and_deriv_at consume it (read-only, safe under the
@@ -20,14 +20,12 @@ class SiteId {
 public:
   SiteId() = default;
   explicit constexpr SiteId(std::int32_t index) noexcept : index_(index) {}
-
   // True iff this refers to a real prepared cache slot (was `site >= 0`).
   [[nodiscard]] constexpr bool cacheable() const noexcept {
     return index_ >= 0;
   }
   // The underlying cache index; only meaningful when cacheable().
   [[nodiscard]] constexpr std::int32_t index() const noexcept { return index_; }
-
 private:
   std::int32_t index_ = -1; // -1 == none / unprimed
 };

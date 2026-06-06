@@ -6,7 +6,7 @@
 // conf) + optional stress (6 per conf). Jacobian: central finite differences.
 
 #include "forcesmith/core/atom.hpp"
-#include "forcesmith/core/potential_base.hpp"
+#include "forcesmith/core/radial_potential.hpp"
 #include "forcesmith/force/force_calculator.hpp"
 
 #include <Eigen/Core>
@@ -22,19 +22,15 @@ struct ForcesmithFunctor {
   using JacobianType = Eigen::MatrixXd;
 
   ForcesmithFunctor(std::span<Configuration> configs, ForceCalculator model,
-                double energy_weight = 1.0, double stress_weight = 0.0,
-                double smooth_weight = 0.0);
+                    double energy_weight = 1.0, double stress_weight = 0.0,
+                    double smooth_weight = 0.0);
 
-  // Evaluate residual vector fvec given parameter vector x.
   int operator()(const Eigen::VectorXd &x, Eigen::VectorXd &fvec) const;
-
-  // Evaluate Jacobian fjac via central finite differences.
   int df(const Eigen::VectorXd &x, Eigen::MatrixXd &fjac) const;
 
   constexpr int inputs() const { return inputs_; }
   constexpr int values() const { return values_; }
 
-  // Access the underlying force calculator (e.g. to gather final params).
   const ForceCalculator &model() const { return model_; }
   ForceCalculator &model() { return model_; }
 
@@ -57,9 +53,9 @@ private:
   std::vector<int> row_offset_;
   mutable std::uint64_t iter_ = 0;
   // Most recent residual vector from operator(), and the gradient norm ‖Jᵀf‖
-  // computed from it in df(). operator() emits on_iteration before df() runs for
-  // the same x, so the logged |grad| reflects the *previous* linearisation —
-  // a one-iteration lag that is fine for a progress log.
+  // computed from it in df(). operator() emits on_iteration before df() runs
+  // for the same x, so the logged |grad| reflects the *previous* linearization
+  // — a one-iteration lag that is fine for a progress log.
   mutable Eigen::VectorXd last_fvec_;
   mutable double grad_norm_ = 0.0;
 };

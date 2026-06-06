@@ -12,7 +12,7 @@ using namespace forcesmith::io;
 
 struct PotResult {
     bool ok = false;
-    std::vector<Potential> pots;
+    std::vector<RadialPotential> pots;
     ParseError error;
 };
 

@@ -17,12 +17,12 @@ engine or widening any menu.
 
 ---
 
-## Adding a new Potential
+## Adding a new RadialPotential
 
 ### The contract
 
-A potential is any type with these members (see the `Potential` erasure in
-`include/forcesmith/core/potential_base.hpp`):
+A potential is any type with these members (see the `RadialPotential` erasure in
+`include/forcesmith/core/radial_potential.hpp`):
 
 ```cpp
 double eval(double r) const;                          // value at r
@@ -75,18 +75,18 @@ curvature CPO so `--smooth-weight` regularisation works.
 
 ### Using it — the recommended path (API injection)
 
-Wrap the value in the type-erased `Potential` and place it into a session. This
+Wrap the value in the type-erased `RadialPotential` and place it into a session. This
 is the direct analogue of injecting a solver, and needs **no registry edit and
 no engine recompile**:
 
 ```cpp
 forcesmith::Forcesmith session;
-session.set_pair_potential("Cu", "Cu", forcesmith::Potential{MyExp(0.34, 1.4, 0.0, 2.0, 6.0)});
+session.set_pair_potential("Cu", "Cu", forcesmith::RadialPotential{MyExp(0.34, 1.4, 0.0, 2.0, 6.0)});
 // also: set_density(elem, …), set_embedding(elem, …),
 //       set_dipole / set_quadrupole (ADP), set_radial / set_angular (angular)
 ```
 
-`Potential` accepts any type satisfying the contract above (`Potential.hpp:87`),
+`RadialPotential` accepts any type satisfying the contract above (`RadialPotential.hpp:87`),
 so your struct drops straight in.
 
 ### Optional: expose it to file-driven runs
@@ -98,7 +98,7 @@ file*, add one line to the maker registry in `src/io/potential_reader.cpp`
 
 ```cpp
 add(m, /*nparams*/ 3, {"A","B","C"},
-    [](auto p, auto lo, auto hi) { return Potential(MyExp(p[0], p[1], p[2], lo, hi)); },
+    [](auto p, auto lo, auto hi) { return RadialPotential(MyExp(p[0], p[1], p[2], lo, hi)); },
     "myexp");                       // one or more JSON "type" aliases
 ```
 
@@ -113,11 +113,12 @@ variant is also a single registry line.
 
 ### The contract
 
-A solver is any type satisfying the `SolverImpl` concept
+A solver is any type satisfying the `CSolver` concept
 (`include/forcesmith/optimization/solver.hpp`):
 
 ```cpp
-int minimize(Eigen::VectorXd& x, ResidualFn f, JacobianFn jac, int n_vals) const;
+int minimize(Eigen::VectorXd& x, ResidualFn f, JacobianFn jac, int n_vals,
+             const Eigen::VectorXd& lower, const Eigen::VectorXd& upper) const;
 ```
 
 - `x` — the parameter vector, in/out: seeded with the start values, overwritten
@@ -129,6 +130,12 @@ int minimize(Eigen::VectorXd& x, ResidualFn f, JacobianFn jac, int n_vals) const
   empty Jacobian means none was supplied, so a solver that needs one should fall
   back to its own finite differences.
 - `n_vals` — the residual count (rows of the Jacobian).
+- `lower` / `upper` — full-length box constraints aligned element-for-element
+  with `x`, ±∞ where a parameter is unbounded. Only solvers that report
+  `honors_bounds() == true` (Ipopt, DE) apply them; the gradient solvers ignore
+  the two extra arguments. `honors_bounds()` is **optional** — add
+  `bool honors_bounds() const { return true; }` to apply the box; omit it and the
+  erased `Solver` defaults it to `false`.
 - returns an integer status code (solver-specific; ≥0 conventionally success).
 
 Add a `static_assert` so a contract break is a compile error, exactly like the
@@ -139,7 +146,9 @@ struct MyGradientDescent {
   int max_iter = 500;
   double step = 1e-3;
   int minimize(Eigen::VectorXd& x, forcesmith::ResidualFn f,
-               forcesmith::JacobianFn jac, int n_vals) const {
+               forcesmith::JacobianFn jac, int n_vals,
+               const Eigen::VectorXd& /*lower*/,
+               const Eigen::VectorXd& /*upper*/) const {
     Eigen::MatrixXd J(n_vals, x.size());
     for (int it = 0; it < max_iter; ++it) {
       const Eigen::VectorXd F = f(x);
@@ -148,8 +157,9 @@ struct MyGradientDescent {
     }
     return 0;
   }
+  // bool honors_bounds() const { return true; }  // opt in to honour lower/upper
 };
-static_assert(forcesmith::SolverImpl<MyGradientDescent>);
+static_assert(forcesmith::CSolver<MyGradientDescent>);
 ```
 
 The built-in solvers (`EigenLMSolver`, `EigenHybridSolver`, `BoostDESolver`,
@@ -231,9 +241,80 @@ and its gradient feed the force engine directly.
 
 ---
 
+## Adding a new ForceCalculator
+
+A **force calculator** is the top-level model the optimiser fits: it owns the
+potentials/heads, builds neighbour lists, and turns a `Configuration` into
+forces/energy/stress. `ForceCalculator`
+(`include/forcesmith/force/force_calculator.hpp`) is the type-erased value that
+holds one — the open replacement for the old closed `std::variant`. A new
+calculator (analytic family, a new bond-order form, …) drops in **without
+editing `force_calculator.hpp`**.
+
+### The contract
+
+Satisfy the `ForceCalculatorModel` concept
+(`include/forcesmith/force/force_calculator_concept.hpp`) — the methods the
+optimiser and evaluator always call:
+
+```cpp
+void eval_forces(Configuration& cfg) const;        // forces/energy/stress/limit
+double max_cutoff() const;                          // neighbour-list cutoff
+std::size_t param_count() const;                    // # of FREE params
+void gather_params(Eigen::VectorXd& dst, std::size_t off) const;
+void scatter_params(const Eigen::VectorXd& src, std::size_t off);
+void gather_bounds(Eigen::VectorXd& lo, Eigen::VectorXd& hi, std::size_t off) const;
+```
+
+Plus a public `std::size_t ntypes` member (inherit `ForceCalculatorBase<Derived>`
+to get `ntypes`/`conf_index`), and the curvature CPO for `--smooth-weight`
+regularisation (`model_smoothness_count` / `model_write_smoothness` in
+`include/forcesmith/force/smoothness.hpp` — the templated default contributes 0,
+overload it if your calculator owns tabulated tables).
+
+### The descriptor-cache capability — mix in `FitCache`
+
+The erased `ForceCalculator` also calls a fit fast-path interface
+(`has_cache`/`has_param_jacobian`/`prepare`/`eval_cached`/`eval_cached_jacobian`/
+`head_param_counts` and an indexed `eval_forces(cfg, cache_index)`). These exist
+only on ML models (`MLBase` implements the real descriptor cache). Every other
+calculator gets the correct **no-cache** defaults by mixing in
+`FitCache<Derived>` (the analogue of `NoGlobals`/`WithGlobals`):
+
+```cpp
+struct MyForce : ForceCalculatorBase<MyForce>, NoGlobals, FitCache<MyForce> {
+  std::size_t /* …state… */;
+  void eval_forces(Configuration& cfg) const;
+  using FitCache<MyForce>::eval_forces;  // expose the indexed (no-cache) overload
+  std::size_t param_count() const; /* … the rest of the contract … */
+};
+static_assert(forcesmith::ForceCalculatorModel<MyForce>);
+```
+
+The `using` re-exposes the mixin's `eval_forces(cfg, cache_index)` overload that
+your own `eval_forces(cfg)` would otherwise hide. `FitCache<Derived, true>` is
+the opt-in for a calculator that *does* carry a cache — it must then override the
+cached hooks itself.
+
+### Using it — API injection
+
+```cpp
+forcesmith::Forcesmith session;
+session.seed_force_model(forcesmith::ForceCalculator{MyForce{/* … */}});
+```
+
+The escape hatch `calc.target<MyForce>()` (mirrors `std::function::target`)
+recovers the concrete type for the few typed call sites that stay outside the
+core concept on purpose — pair-table edits, native file writers
+(`src/io/write_model.cpp`), and spec decomposition (the `PotentialType` trait).
+Those three enumerate the known families, so exposing a *new* calculator to
+**file output** or **multi-element re-rank** still means adding to those lists
+(and to the model reader in `src/io/force_model_reader.cpp`); fitting and
+evaluating it needs none of that.
+
 ## Why it works this way
 
-`Potential` and `Solver` are both type-erased value types built on the small
+`RadialPotential` and `Solver` are both type-erased value types built on the small
 `detail::ErasedValue` / `detail::ErasedMoveOnly` helpers
 (`include/forcesmith/core/erased.hpp`). The engine manipulates them through their
 public value interface and never knows the concrete type — so adding a potential

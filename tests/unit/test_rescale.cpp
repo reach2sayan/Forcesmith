@@ -10,8 +10,9 @@ using namespace forcesmith;
 
 // ── Minimal analytic potential types ─────────────────────────────────────────
 
-struct RepulsivePair {
+struct RepulsivePair : NoBounds<RepulsivePair> {
     double A = 1.0;
+    explicit RepulsivePair(double a = 1.0) : A(a) {}
     double eval(double r)  const { return A / std::pow(r, 12); }
     double deriv(double r) const { return -12.0 * A / std::pow(r, 13); }
     std::pair<double,double> span() const { return {0.1, 20.0}; }
@@ -20,8 +21,9 @@ struct RepulsivePair {
     void scatter_params(const Eigen::VectorXd&, int) {}
 };
 
-struct ExpDensity {
+struct ExpDensity : NoBounds<ExpDensity> {
     double beta = 1.0;
+    explicit ExpDensity(double b = 1.0) : beta(b) {}
     double eval(double r)  const { return std::exp(-beta * r); }
     double deriv(double r) const { return -beta * std::exp(-beta * r); }
     std::pair<double,double> span() const { return {0.1, 20.0}; }
@@ -31,8 +33,9 @@ struct ExpDensity {
 };
 
 // F(ρ) = −c × √ρ  (Finnis-Sinclair style — has non-zero slope everywhere)
-struct SqrtEmbedding {
+struct SqrtEmbedding : NoBounds<SqrtEmbedding> {
     double c = 1.0;
+    explicit SqrtEmbedding(double cc = 1.0) : c(cc) {}
     double eval(double rho)  const { return -c * std::sqrt(rho); }
     double deriv(double rho) const { return -c / (2.0 * std::sqrt(rho)); }
     std::pair<double,double> span() const { return {1e-10, 1e6}; }

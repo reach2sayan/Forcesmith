@@ -6,10 +6,17 @@
 // forcesmith/potentials/curvature.hpp) over every tabulated potential a
 // calculator owns. The default reports zero (calculators with no tabulated
 // potentials — e.g. Tersoff/Stiweb, which are purely analytic — contribute
-// nothing). Calculators built from `Potential` tables overload the two entry
+// nothing). Calculators built from `RadialPotential` tables overload the two entry
 // points below by iterating their public tables.
+//
+// force_calculator.hpp's Model<T> forwards its smoothness virtuals here, so this
+// header pulls only the concrete calculator leaf headers it names — NOT
+// force_calculator.hpp — to break that include cycle.
 
-#include "forcesmith/force/force_calculator.hpp"
+#include "forcesmith/force/adp_force.hpp"
+#include "forcesmith/force/angular_force.hpp"
+#include "forcesmith/force/eam_force.hpp"
+#include "forcesmith/force/pair_force.hpp"
 
 #include <Eigen/Core>
 

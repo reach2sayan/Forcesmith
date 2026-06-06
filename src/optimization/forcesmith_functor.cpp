@@ -1,7 +1,6 @@
 #include "forcesmith/optimization/forcesmith_functor.hpp"
 
 #include "forcesmith/events/signals.hpp"
-#include "forcesmith/force/smoothness.hpp"
 
 #include <tbb/global_control.h>
 #include <tbb/info.h>
@@ -12,7 +11,6 @@
 #include <numeric>
 #include <ranges>
 #include <span>
-#include <variant>
 #include <vector>
 
 namespace forcesmith {
@@ -51,7 +49,7 @@ void eval_into(std::span<Configuration> configs, ForceCalculator &model,
                const Eigen::VectorXd &x, Eigen::VectorXd &fvec,
                double energy_weight, double stress_weight, double smooth_weight,
                const std::vector<int> &row_offset, int smooth_count) {
-  std::visit([&](auto &m) { m.scatter_params(x, std::size_t{0}); }, model);
+  model.scatter_params(x, std::size_t{0});
 
   // Per-config diagnostic events would otherwise fire from every worker thread;
   // mute them for the parallel region (no slots are attached in practice).
@@ -63,18 +61,11 @@ void eval_into(std::span<Configuration> configs, ForceCalculator &model,
         // Contiguous span → index of this config is its offset from the base.
         const std::size_t c = static_cast<std::size_t>(&cfg - configs.data());
         // eval_forces mutates only this config (forces/energy/stress/limit +
-        // its own neighbour list); the model is read-only here. ML models
-        // expose an indexed overload that serves config `c` from the descriptor
-        // cache built in prepare(); everything else recomputes from scratch.
-        std::visit(
-            [&](auto &m) {
-              if constexpr (requires { m.eval_forces(cfg, c); }) {
-                m.eval_forces(cfg, c);
-              } else {
-                m.eval_forces(cfg);
-              }
-            },
-            model);
+        // its own neighbour list); the model is read-only here. ML models serve
+        // config `c` from the descriptor cache built in prepare() via the
+        // indexed overload; the value type forwards to the plain eval_forces for
+        // calculators (analytic) that recompute from scratch.
+        model.eval_forces(cfg, c);
 
         int row = row_offset[c];
         for (const auto &atom : cfg.atoms) {
@@ -106,13 +97,8 @@ void eval_into(std::span<Configuration> configs, ForceCalculator &model,
   // Tikhonov curvature penalty on free knots, appended after the data
   // residuals.
   if (smooth_count > 0) {
-    std::visit(
-        [&](auto &m) {
-          model_write_smoothness(m, fvec,
-                                 static_cast<std::size_t>(row_offset.back()),
-                                 smooth_weight);
-        },
-        model);
+    model.write_smoothness(fvec, static_cast<std::size_t>(row_offset.back()),
+                           smooth_weight);
   }
 }
 
@@ -123,9 +109,8 @@ void eval_into(std::span<Configuration> configs, ForceCalculator &model,
 // shared mutable state, so the column loop fills every core. Residual layout
 // mirrors eval_into exactly (ML models carry no smoothness block, so values ==
 // row_offset.back()).
-template <typename M>
-void df_cached_parallel(M &m0, const Eigen::VectorXd &x, Eigen::MatrixXd &fjac,
-                        std::span<Configuration> configs,
+void df_cached_parallel(ForceCalculator &m0, const Eigen::VectorXd &x,
+                        Eigen::MatrixXd &fjac, std::span<Configuration> configs,
                         const std::vector<int> &row_offset, int values,
                         int inputs, double energy_weight,
                         double stress_weight) {
@@ -138,7 +123,7 @@ void df_cached_parallel(M &m0, const Eigen::VectorXd &x, Eigen::MatrixXd &fjac,
   constexpr double delta = 1e-5;
 
   std::for_each(std::execution::par, cols.begin(), cols.end(), [&](int j) {
-    M m = m0; // private head copy; cache_ shared read-only
+    ForceCalculator m = m0; // private head copy; cache_ shared read-only
     Eigen::VectorXd xp = x, fp(values), fm(values);
     std::vector<Vec3> fbuf(max_atoms);
     auto eval_all = [&](const Eigen::VectorXd &xx, Eigen::VectorXd &out) {
@@ -182,19 +167,19 @@ void df_cached_parallel(M &m0, const Eigen::VectorXd &x, Eigen::MatrixXd &fjac,
 // cached descriptor gradients with the heads' ∂E/∂θ and ∂(∂E/∂D)/∂θ. Configs
 // own disjoint fjac row blocks, so no locking. Drop-in replacement for
 // df_cached_parallel — same residual layout, far cheaper for P≫1.
-template <typename M>
-void df_cached_analytic(M &m0, const Eigen::VectorXd &x, Eigen::MatrixXd &fjac,
-                        std::span<Configuration> configs,
+void df_cached_analytic(ForceCalculator &m0, const Eigen::VectorXd &x,
+                        Eigen::MatrixXd &fjac, std::span<Configuration> configs,
                         const std::vector<int> &row_offset,
                         double energy_weight, double stress_weight) {
   fjac.setZero();
-  M m = m0; // private copy;
+  ForceCalculator m = m0; // private copy;
   m.scatter_params(x, std::size_t{0});
 
   // Column offset per head/type — the column analogue of row_offset.
-  std::vector<int> col_off(m.heads.size() + 1, 0);
-  for (std::size_t t = 0; t < m.heads.size(); ++t) {
-    col_off[t + 1] = col_off[t] + static_cast<int>(m.heads[t].param_count());
+  const std::vector<std::size_t> head_pc = m.head_param_counts();
+  std::vector<int> col_off(head_pc.size() + 1, 0);
+  for (std::size_t t = 0; t < head_pc.size(); ++t) {
+    col_off[t + 1] = col_off[t] + static_cast<int>(head_pc[t]);
   }
 
   std::vector<std::size_t> cidx(configs.size());
@@ -214,14 +199,10 @@ ForcesmithFunctor::ForcesmithFunctor(std::span<Configuration> configs,
     : configs_(configs), model_(std::move(model)),
       energy_weight_(energy_weight), stress_weight_(stress_weight),
       smooth_weight_(smooth_weight),
-      smooth_count_{
-          smooth_weight > 0.0
-              ? static_cast<int>(std::visit(
-                    [](const auto &m) { return model_smoothness_count(m); },
-                    model_))
-              : 0},
-      inputs_{static_cast<int>(
-          std::visit([](const auto &m) { return m.param_count(); }, model_))},
+      smooth_count_{smooth_weight > 0.0
+                        ? static_cast<int>(model_.smoothness_count())
+                        : 0},
+      inputs_{static_cast<int>(model_.param_count())},
       values_{static_cast<int>(count_residuals(configs, stress_weight)) +
               smooth_count_} {
   // Prefix sum of per-config residual counts; back() = start of smoothness
@@ -236,15 +217,7 @@ ForcesmithFunctor::ForcesmithFunctor(std::span<Configuration> configs,
 
   // Precompute the descriptor cache ONCE so every residual/Jacobian evaluation
   // below is cheap cached algebra.
-  shared_arena().execute([&] {
-    std::visit(
-        [&](auto &m) {
-          if constexpr (requires { m.prepare(configs_); }) {
-            m.prepare(configs_);
-          }
-        },
-        model_);
-  });
+  shared_arena().execute([&] { model_.prepare(configs_); });
 }
 
 int ForcesmithFunctor::operator()(const Eigen::VectorXd &x,
@@ -263,24 +236,17 @@ bool ForcesmithFunctor::df_cached(const Eigen::VectorXd &x,
                               Eigen::MatrixXd &fjac) const {
   bool handled = false;
   shared_arena().execute([&] {
-    std::visit(
-        [&](auto &m) {
-          if constexpr (requires { m.has_cache(); }) {
-            if (m.has_cache()) {
-              handled = true;
-              if constexpr (requires { m.has_param_jacobian(); }) {
-                if (m.has_param_jacobian()) {
-                  df_cached_analytic(m, x, fjac, configs_, row_offset_,
-                                     energy_weight_, stress_weight_);
-                  return;
-                }
-              }
-              df_cached_parallel(m, x, fjac, configs_, row_offset_, values_,
-                                 inputs_, energy_weight_, stress_weight_);
-            }
-          }
-        },
-        model_);
+    if (!model_.has_cache()) {
+      return; // analytic calculators recompute on the finite-difference path
+    }
+    handled = true;
+    if (model_.has_param_jacobian()) {
+      df_cached_analytic(model_, x, fjac, configs_, row_offset_, energy_weight_,
+                         stress_weight_);
+    } else {
+      df_cached_parallel(model_, x, fjac, configs_, row_offset_, values_,
+                         inputs_, energy_weight_, stress_weight_);
+    }
   });
   return handled;
 }

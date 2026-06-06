@@ -59,8 +59,8 @@ TEST(ForceModelReader, Pair_Analytic_LJ) {
       ]
     })");
     ASSERT_TRUE(r.ok) << r.error.message;
-    ASSERT_TRUE(std::holds_alternative<PairForceCalculator>(r.model));
-    const auto& calc = std::get<PairForceCalculator>(r.model);
+    ASSERT_TRUE(((r.model).target<PairForceCalculator>() != nullptr));
+    const auto& calc = (*(r.model).target<PairForceCalculator>());
     EXPECT_EQ(calc.pair.size(), 1u);
     // LJ minimum at r = 2^(1/6) * sigma ≈ 2.806
     const double sig = 2.5;
@@ -79,8 +79,8 @@ TEST(ForceModelReader, Pair_Tabulated) {
       ]
     })");
     ASSERT_TRUE(r.ok) << r.error.message;
-    ASSERT_TRUE(std::holds_alternative<PairForceCalculator>(r.model));
-    const auto& calc = std::get<PairForceCalculator>(r.model);
+    ASSERT_TRUE(((r.model).target<PairForceCalculator>() != nullptr));
+    const auto& calc = (*(r.model).target<PairForceCalculator>());
     EXPECT_EQ(calc.pair.size(), 1u);
     const auto& p00 = calc.pair[0, 0];
     EXPECT_NEAR(p00.eval(2.0), 0.0, 1e-10); // middle knot = 0
@@ -112,8 +112,8 @@ TEST(ForceModelReader, EAM_SingleType_Tabulated) {
       }
     })");
     ASSERT_TRUE(r.ok) << r.error.message;
-    ASSERT_TRUE(std::holds_alternative<EAMForceCalculator>(r.model));
-    const auto& calc = std::get<EAMForceCalculator>(r.model);
+    ASSERT_TRUE(((r.model).target<EAMForceCalculator>() != nullptr));
+    const auto& calc = (*(r.model).target<EAMForceCalculator>());
     EXPECT_EQ(calc.ntypes, 1);
     // pair: middle knot at r=3.75 should be near 0
     const auto& phi00 = calc.pair[0, 0];
@@ -151,7 +151,7 @@ TEST(ForceModelReader, EAM_TwoTypes_PairColCount) {
       }
     })");
     ASSERT_TRUE(r.ok) << r.error.message;
-    const auto& calc = std::get<EAMForceCalculator>(r.model);
+    const auto& calc = (*(r.model).target<EAMForceCalculator>());
     EXPECT_EQ(calc.ntypes, 2);
 }
 
@@ -173,8 +173,8 @@ TEST(ForceModelReader, Tersoff_Si_SingleType) {
       ]
     })");
     ASSERT_TRUE(r.ok) << r.error.message;
-    ASSERT_TRUE(std::holds_alternative<TersoffForceCalculator>(r.model));
-    const auto& calc = std::get<TersoffForceCalculator>(r.model);
+    ASSERT_TRUE(((r.model).target<TersoffForceCalculator>() != nullptr));
+    const auto& calc = (*(r.model).target<TersoffForceCalculator>());
     EXPECT_EQ(calc.ntypes, 1);
     const auto& tp = calc.params[0, 0];
     EXPECT_DOUBLE_EQ(tp.A,      1830.8);
@@ -203,8 +203,8 @@ TEST(ForceModelReader, StiWeb_Si_SingleType) {
       "lambda": [45.534]
     })");
     ASSERT_TRUE(r.ok) << r.error.message;
-    ASSERT_TRUE(std::holds_alternative<StiwebForceCalculator>(r.model));
-    const auto& calc = std::get<StiwebForceCalculator>(r.model);
+    ASSERT_TRUE(((r.model).target<StiwebForceCalculator>() != nullptr));
+    const auto& calc = (*(r.model).target<StiwebForceCalculator>());
     EXPECT_EQ(calc.ntypes, 1);
     const auto& sp = calc.params[0, 0];
     EXPECT_DOUBLE_EQ(sp.A,     7.0496);
@@ -237,8 +237,8 @@ TEST(ForceModelReader, Angular_SingleType) {
       }
     })");
     ASSERT_TRUE(r.ok) << r.error.message;
-    ASSERT_TRUE(std::holds_alternative<AngularForceCalculator>(r.model));
-    const auto& calc = std::get<AngularForceCalculator>(r.model);
+    ASSERT_TRUE(((r.model).target<AngularForceCalculator>() != nullptr));
+    const auto& calc = (*(r.model).target<AngularForceCalculator>());
     EXPECT_EQ(calc.ntypes, 1);
 }
 
@@ -252,8 +252,8 @@ TEST(ForceModelReader, BarePairSection_TreatedAsPairModel) {
       "potentials": [ {"rmin": 1.5, "rmax": 6.0, "knots": [2.0, 1.0, 0.0, 1.0, 2.0]} ]
     })");
     ASSERT_TRUE(r.ok) << r.error.message;
-    ASSERT_TRUE(std::holds_alternative<PairForceCalculator>(r.model));
-    EXPECT_EQ(std::get<PairForceCalculator>(r.model).ntypes, 1u);
+    ASSERT_TRUE(((r.model).target<PairForceCalculator>() != nullptr));
+    EXPECT_EQ((*(r.model).target<PairForceCalculator>()).ntypes, 1u);
 }
 
 // A bare section whose potential count is not a valid paircol (n*(n+1)/2) errors.
@@ -350,8 +350,8 @@ static constexpr const char *kEamGlobalH = R"({
 TEST(ForceModelReader, EAM_GlobalH_ParsedAndCounted) {
     auto r = run(kEamGlobalH);
     ASSERT_TRUE(r.ok) << r.error.message;
-    ASSERT_TRUE(std::holds_alternative<EAMForceCalculator>(r.model));
-    const auto& calc = std::get<EAMForceCalculator>(r.model);
+    ASSERT_TRUE(((r.model).target<EAMForceCalculator>() != nullptr));
+    const auto& calc = (*(r.model).target<EAMForceCalculator>());
 
     ASSERT_EQ(calc.globals.size(), 1u);
     EXPECT_EQ(calc.globals[0].links.size(), 2u); // morse_sc.h + exp_decay_sc.h
@@ -364,7 +364,7 @@ TEST(ForceModelReader, EAM_GlobalH_ParsedAndCounted) {
 TEST(ForceModelReader, EAM_GlobalH_GatherScatterRoundTrip) {
     auto r = run(kEamGlobalH);
     ASSERT_TRUE(r.ok) << r.error.message;
-    auto& calc = std::get<EAMForceCalculator>(r.model);
+    auto& calc = (*(r.model).target<EAMForceCalculator>());
 
     Eigen::VectorXd x(static_cast<int>(calc.param_count()));
     calc.gather_params(x, 0);
@@ -378,7 +378,7 @@ TEST(ForceModelReader, EAM_GlobalH_GatherScatterRoundTrip) {
 TEST(ForceModelReader, EAM_GlobalH_BroadcastReachesAllLinks) {
     auto r = run(kEamGlobalH);
     ASSERT_TRUE(r.ok) << r.error.message;
-    auto& calc = std::get<EAMForceCalculator>(r.model);
+    auto& calc = (*(r.model).target<EAMForceCalculator>());
 
     const auto& phi = calc.pair[0, 0];   // morse_sc, linked to global h
     const auto& rho = calc.density[0];   // exp_decay_sc, linked to global h
@@ -441,7 +441,7 @@ TEST(WriteModel, EAM_AnalyticEmbedding_RoundTrips) {
                                 std::istreambuf_iterator<char>{}};
             EXPECT_EQ(s.find("null"), std::string::npos) << "writer emitted null knots";
             BOOST_LEAF_AUTO(m, parse_force_model(s));
-            reok = std::holds_alternative<EAMForceCalculator>(m);
+            reok = ((m).target<EAMForceCalculator>() != nullptr);
             return {};
         },
         [&](const ParseError& e) { ADD_FAILURE() << "ParseError: " << e.message; },
@@ -519,11 +519,11 @@ TEST(WriteModel, ML_Standardization_RoundTrips) {
                                 std::istreambuf_iterator<char>{}};
             EXPECT_NE(s.find("standardization"), std::string::npos);
             BOOST_LEAF_AUTO(m, parse_force_model(s));
-            if (!std::holds_alternative<ACSF>(m)) {
+            if (!((m).target<ACSF>() != nullptr)) {
                 ADD_FAILURE() << "expected SF model after reload";
                 return {};
             }
-            const auto& rsf = std::get<ACSF>(m);
+            const auto& rsf = (*(m).target<ACSF>());
             if (rsf.inv_std_.size() == 0) {
                 ADD_FAILURE() << "standardization not restored";
                 return {};

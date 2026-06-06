@@ -14,7 +14,6 @@
 #include <gtest/gtest.h>
 
 #include <span>
-#include <variant>
 #include <vector>
 
 using namespace forcesmith;
@@ -150,8 +149,7 @@ TEST(MlJacobian, SymFuncLinear_AnalyticDf_MatchesFD) {
   ForcesmithFunctor f(std::span<Configuration>(configs), model, /*energy_weight=*/0.5);
 
   Eigen::VectorXd x(f.inputs());
-  std::visit([&](const auto &m) { m.gather_params(x, std::size_t{0}); },
-             f.model());
+  f.model().gather_params(x, std::size_t{0});
 
   Eigen::MatrixXd Jana(f.values(), f.inputs());
   f.df(x, Jana);
@@ -169,8 +167,7 @@ TEST(MlJacobian, SymFuncLinear_AnalyticDf_MatchesFD_WithStress) {
                   /*energy_weight=*/0.5, /*stress_weight=*/0.3);
 
   Eigen::VectorXd x(f.inputs());
-  std::visit([&](const auto &m) { m.gather_params(x, std::size_t{0}); },
-             f.model());
+  f.model().gather_params(x, std::size_t{0});
 
   Eigen::MatrixXd Jana(f.values(), f.inputs());
   f.df(x, Jana);

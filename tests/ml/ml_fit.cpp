@@ -43,7 +43,6 @@
 #include <optional>
 #include <sstream>
 #include <string>
-#include <variant>
 #include <vector>
 
 #ifndef FORCESMITH_ML_ELEMENT
@@ -311,15 +310,17 @@ leaf::result<Result> fit_element(const Args &a) {
   Forcesmith s;
   BOOST_LEAF_CHECK(add_configs(s, configs));
   ForceCalculator model = build_model(a, res.rcut);
-  res.descriptor_size = std::visit(
-      [](const auto &m) -> std::size_t {
-        if constexpr (requires { m.descriptor_size(); })
-          return m.descriptor_size();
-        else
-          return 0;
-      },
-      model);
-  res.params = std::visit([](const auto &m) { return m.param_count(); }, model);
+  // descriptor_size is ML-only (not in the ForceCalculator concept); recover it
+  // through the typed escape hatch, 0 for analytic models.
+  res.descriptor_size = 0;
+  if (const auto *m = model.target<ACSF>()) {
+    res.descriptor_size = m->descriptor_size();
+  } else if (const auto *m = model.target<SoapModel>()) {
+    res.descriptor_size = m->descriptor_size();
+  } else if (const auto *m = model.target<LMBTR>()) {
+    res.descriptor_size = m->descriptor_size();
+  }
+  res.params = model.param_count();
   BOOST_LEAF_CHECK(s.seed_force_model(std::move(model)));
 
   using clock = std::chrono::steady_clock;

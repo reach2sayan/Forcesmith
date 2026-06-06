@@ -1,10 +1,13 @@
 #pragma once
 
 #include "forcesmith/core/atom.hpp"
+#include "forcesmith/core/fit_params.hpp" // CFittable
 #include "forcesmith/core/param.hpp"
 #include <Eigen/Core>
 #include <concepts>
 #include <cstdint>
+#include <span>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -43,6 +46,41 @@ struct WithGlobals {
   [[nodiscard]] bool globals_empty() const noexcept { return globals.empty(); }
 };
 
+// Descriptor-cache fit fast-path surface, mixed in like NoGlobals/WithGlobals.
+// These methods are part of every calculator's contract so the erased
+// ForceCalculator can call the whole interface unconditionally (no `if
+// constexpr` probing in its Model<T> adapter).
+//
+// NoCache is what every analytic calculator wants: has_cache() == false, the
+// indexed eval just recomputes from scratch (CRTP forward to the plain
+// eval_forces), and the cached residual/Jacobian hooks are unreachable. Every
+// calculator inherits it through ForceCalculatorBase. The one cache owner is
+// MLBase, which overrides this whole surface with a real (runtime) descriptor
+// cache — so there is no separate compile-time "has cache" mixin to opt into.
+template <class Derived> struct NoCache {
+  [[nodiscard]] constexpr bool has_cache() const noexcept { return false; }
+  [[nodiscard]] constexpr bool has_param_jacobian() const noexcept {
+    return false;
+  }
+  void eval_forces(Configuration &cfg, std::size_t /*cache_index*/) const {
+    static_cast<const Derived &>(*this).eval_forces(cfg);
+  }
+  void prepare(std::span<Configuration> /*configs*/) const {}
+  void eval_cached(std::size_t /*cache_index*/, std::span<Vec3> /*forces*/,
+                   double & /*energy*/, SymTens & /*stress*/) const {
+    std::unreachable(); // gated by has_cache()
+  }
+  void eval_cached_jacobian(std::size_t /*cache_index*/, int /*row0*/,
+                            const std::vector<int> & /*col_off*/,
+                            double /*energy_weight*/, double /*stress_weight*/,
+                            Eigen::MatrixXd & /*fjac*/) const {
+    std::unreachable(); // gated by has_param_jacobian()
+  }
+  [[nodiscard]] std::vector<std::size_t> head_param_counts() const {
+    return {};
+  }
+};
+
 #if defined(__GNUC__) && !defined(__clang__)
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wdangling-reference"
@@ -52,27 +90,11 @@ struct WithGlobals {
 // out-of-range punishment residual.
 inline constexpr double kDummyWeight = 100.0;
 
-// True iff r lies in the radial table p's own cutoff range [rmin, rmax]. The
-// neighbour list is built with the global max_cutoff() over all tables, so a
-// table with a shorter cutoff would otherwise be fed neighbours past its last
-// knot — where spline potentials linearly *extrapolate* (nonzero) instead of
-// vanishing. Gate every radial table eval/deriv on this. Do NOT use it for the
-// EAM/ADP embedding F(ρ) (argument ρ legitimately falls outside the table,
-// where it is clamped instead) nor for the angular g(cosθ) table (cosθ ∈ [-1,1]
-// is always within the table's own domain). The upper bound is inclusive to
-// match C forcesmith's `r <= end[col]` and the inclusive neighbour-list cutoff.
-template <typename Pot> bool in_range(const Pot &p, double r) {
+template <typename Pot> FORCE_INLINE bool in_range(const Pot &p, double r) {
   const auto [rmin, rmax] = p.span();
   return r >= rmin && r <= rmax;
 }
 
-// Cached + cutoff-gated radial-table evaluation for the force hot loops.
-// A primed bond (site.cacheable()) was already cutoff-checked in the
-// calculator's prepare() pass, so it evaluates straight through the spline cache
-// with NO in_range/span() virtual call; an unprimed bond (none — rescale, tests,
-// or out-of-range-at-prime) falls back to the in_range gate + direct eval,
-// yielding 0 outside the table's own cutoff. Templated so it instantiates only
-// where the full Potential type is visible.
 template <typename Pot>
 FORCE_INLINE double eval_gated(const Pot &p, SiteId site, double r) {
   return site.cacheable() ? p.eval_at(site)
@@ -85,8 +107,8 @@ FORCE_INLINE double deriv_gated(const Pot &p, SiteId site, double r) {
 }
 
 template <typename Pot>
-FORCE_INLINE std::pair<double, double>
-eval_deriv_gated(const Pot &p, SiteId site, double r) {
+FORCE_INLINE std::pair<double, double> eval_deriv_gated(const Pot &p,
+                                                        SiteId site, double r) {
   if (site.cacheable()) {
     return p.eval_and_deriv_at(site);
   }
@@ -140,20 +162,44 @@ void write_smoothness_range(const Range &range, Eigen::VectorXd &dst,
 #pragma GCC diagnostic pop
 #endif
 
+// The leaf-side contract for a type stored in a ForceCalculator. Subsumes
+// CFittable (every calculator supplies the full optimizer param surface,
+// gather_bounds included) and adds the force-evaluation surface. The remaining
+// fit fast-path methods (eval_forces(cfg,idx), prepare, eval_cached…) come from
+// the NoCache mixin in ForceCalculatorBase, so they are always present and need
+// not be re-listed here.
 template <typename T>
-concept ForceCalculatorModel =
-    requires(T calc, Configuration &cfg, Eigen::VectorXd &v, std::size_t off) {
+concept CForceCalculator =
+    CFittable<T> && requires(T calc, Configuration &cfg) {
       { calc.eval_forces(cfg) } -> std::same_as<void>;
-      { calc.param_count() } -> std::same_as<std::size_t>;
-      { calc.gather_params(v, off) } -> std::same_as<void>;
-      { calc.scatter_params(v, off) } -> std::same_as<void>;
-      { calc.gather_bounds(v, v, off) } -> std::same_as<void>;
       { calc.max_cutoff() } -> std::same_as<double>;
+      { calc.ntypes } -> std::convertible_to<std::size_t>;
     };
 
-template <typename Derived> struct ForceCalculatorBase {
+// The shared identity + capability base every concrete force calculator derives
+// from. It carries the type count / config index, always folds in the no-cache
+// fit fast-path surface (NoCache — overridden by ML, which is the only cache
+// owner), and selects the globals axis (NoGlobals|WithGlobals). A calculator
+// names the globals choice with a fluent clause instead of listing extra bases:
+//
+//   struct Tersoff : ForceCalculatorBase<Tersoff> { ... };               // NoGlobals
+//   struct EAM     : ForceCalculatorBase<EAM>::with_globals<> { ... };   // WithGlobals
+//   struct Pair    : ForceCalculatorBase<Pair>::with_globals<> { ... };
+//
+// Omitting the clause keeps the NoGlobals default. A calculator that defines its
+// own eval_forces(cfg) still re-exposes the inherited indexed overload with
+// `using Base::eval_forces;` (C++ name hiding) — see the concrete calculators.
+template <typename Derived, bool HasGlobals = false>
+struct ForceCalculatorBase
+    : std::conditional_t<HasGlobals, WithGlobals, NoGlobals>,
+      NoCache<Derived> {
   std::size_t ntypes = 1;
   std::uint64_t conf_index = 0;
+
+  // Flip the globals axis on. `On` defaults to true so the call site reads
+  // `with_globals<>`.
+  template <bool On = true>
+  using with_globals = ForceCalculatorBase<Derived, On>;
 };
 
 } // namespace forcesmith

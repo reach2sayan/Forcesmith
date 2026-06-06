@@ -19,7 +19,6 @@
 #include <cmath>
 #include <string>
 #include <string_view>
-#include <variant>
 #include <vector>
 
 namespace leaf = boost::leaf;
@@ -281,8 +280,8 @@ TEST(MlRerank, EndToEndSeedThenAddElement) {
     e_after = r1.energy;
 
     BOOST_LEAF_AUTO(mp, s.model());
-    EXPECT_TRUE(std::holds_alternative<ACSF>(*mp));
-    ntypes_after = std::visit([](const auto &cc) { return cc.ntypes; }, *mp);
+    EXPECT_TRUE(((*mp).target<ACSF>() != nullptr));
+    ntypes_after = (*mp).ntypes();
     return {};
   });
 

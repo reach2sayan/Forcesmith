@@ -1,6 +1,6 @@
 #pragma once
 
-// ADP (Angular Dependent Potential) force calculator.
+// ADP (Angular Dependent RadialPotential) force calculator.
 // Reference: Mishin et al., Phys. Rev. B 72, 144104 (2005).
 //
 // Extends EAM with dipole (μ_i) and quadrupole (λ_i) distortion tensors:
@@ -40,15 +40,17 @@ struct PairForce {
   std::array<SiteId, kNeighborSiteCount> sites = {};
 };
 
-struct ADPForceCalculator : ForceCalculatorBase<ADPForceCalculator>, NoGlobals {
+struct ADPForceCalculator : ForceCalculatorBase<ADPForceCalculator> {
+  using Base = ForceCalculatorBase<ADPForceCalculator>;
   // num_pairs = ntypes*(ntypes+1)/2
-  PotentialPair pair; // φ_{ij}(r)  pair repulsion (1 x num_pairs)
-  PotentialArray density; // g_i(r) electron density (1 x ntypes)
-  PotentialArray embedding; // F_i(ρ) embedding energy (1 x ntypes)
-  PotentialPair dipole; // u_{ij}(r)  dipole coupling (1 x num_pairs)
-  PotentialPair quadrupole; // quadrupole coupling (1 x num_pairs)
+  RadialPotentialPair pair; // φ_{ij}(r)  pair repulsion (1 x num_pairs)
+  RadialPotentialArray density; // g_i(r) electron density (1 x ntypes)
+  RadialPotentialArray embedding; // F_i(ρ) embedding energy (1 x ntypes)
+  RadialPotentialPair dipole; // u_{ij}(r)  dipole coupling (1 x num_pairs)
+  RadialPotentialPair quadrupole; // quadrupole coupling (1 x num_pairs)
 
   void eval_forces(Configuration &cfg) const;
+  using Base::eval_forces; // indexed (no-cache) overload
 
   // Primes the spline-cache hints for all five radial-table roles a bond drives
   // (φ, g_j, g_i, dipole, quadrupole).
@@ -92,6 +94,6 @@ private:
   static PairForce accumulate(Atom &ai, Configuration &cfg, PairForce &&pf);
 };
 
-static_assert(ForceCalculatorModel<ADPForceCalculator>);
+static_assert(CForceCalculator<ADPForceCalculator>);
 
 } // namespace forcesmith

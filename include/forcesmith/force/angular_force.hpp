@@ -16,20 +16,21 @@
 
 namespace forcesmith {
 
-// Potential tables for ntypes element types (paircol = ntypes*(ntypes+1)/2):
+// RadialPotential tables for ntypes element types (paircol = ntypes*(ntypes+1)/2):
 //   pair    — φ_{ij}(r)      pair repulsion,              paircol entries
 //   radial  — f_{ij}(r)      radial three-body modulation, paircol entries
 //   angular — g_i(cos θ)     angular function, indexed by the *central* atom
 //                             type i (matches forcesmith's col = 2*paircol +
 //                             typ_i),
 //                                                          ntypes entries
-struct AngularForceCalculator : ForceCalculatorBase<AngularForceCalculator>,
-                                NoGlobals {
-  PotentialPair pair;
-  PotentialPair radial;
-  PotentialArray angular;
+struct AngularForceCalculator : ForceCalculatorBase<AngularForceCalculator> {
+  using Base = ForceCalculatorBase<AngularForceCalculator>;
+  RadialPotentialPair pair;
+  RadialPotentialPair radial;
+  RadialPotentialArray angular;
 
   void eval_forces(Configuration &cfg) const;
+  using Base::eval_forces; // indexed (no-cache)
 
   std::size_t param_count() const;
   void gather_params(Eigen::VectorXd &dst, std::size_t off) const;
@@ -39,6 +40,6 @@ struct AngularForceCalculator : ForceCalculatorBase<AngularForceCalculator>,
   double max_cutoff() const;
 };
 
-static_assert(ForceCalculatorModel<AngularForceCalculator>);
+static_assert(CForceCalculator<AngularForceCalculator>);
 
 } // namespace forcesmith

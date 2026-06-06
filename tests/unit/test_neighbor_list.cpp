@@ -1,5 +1,5 @@
 #include "forcesmith/core/neighbor_list.hpp"
-#include "forcesmith/core/potential_base.hpp"
+#include "forcesmith/core/radial_potential.hpp"
 
 #include <gtest/gtest.h>
 #include <cmath>
@@ -22,8 +22,8 @@ static Atom make_atom(int type, Vec3 pos) {
     return a;
 }
 
-// Trivial potential stub — satisfies the Potential concept.
-struct ConstPot {
+// Trivial potential stub — satisfies the RadialPotential concept.
+struct ConstPot : NoBounds<ConstPot> {
     double eval(double)  const { return 0.0; }
     double deriv(double) const { return 0.0; }
     std::pair<double,double> span() const { return {0.0, 100.0}; }
@@ -106,7 +106,7 @@ TEST(NeighborList, PairSlotSingleType) {
     cfg.atoms = {make_atom(0, {0.0, 0.0, 0.0}),
                  make_atom(0, {1.0, 0.0, 0.0})};
 
-    PotentialPair pots;
+    RadialPotentialPair pots;
     pots.reserve(1);
     pots.emplace_back(ConstPot{});  // (0,0)
     build_neighbor_list(cfg, 5.0, pots);
@@ -121,7 +121,7 @@ TEST(NeighborList, PairSlotTwoTypes) {
                  make_atom(1, {1.0, 0.0, 0.0}),
                  make_atom(1, {0.0, 1.0, 0.0})};
 
-    PotentialPair pots;
+    RadialPotentialPair pots;
     pots.reserve(2);
     pots.emplace_back(ConstPot{});  // (0,0)
     pots.emplace_back(ConstPot{});  // (0,1)

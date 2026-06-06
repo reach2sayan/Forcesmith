@@ -1,5 +1,7 @@
 #include "forcesmith/force/ml_force.hpp"
 
+#include <nlohmann/json.hpp>
+
 #include <algorithm>
 #include <ranges>
 #include <span>
@@ -90,10 +92,26 @@ LinearHead LinearHead::remapped(
   return out;
 }
 
-LinearHead LinearHead::zero_like(Eigen::Index n) const {
+LinearHead LinearHead::zero_like(Eigen::Index n) {
   LinearHead out;
   out.coeffs.assign(static_cast<std::size_t>(n), Param{0.0, false});
   return out; // default bias{0.0, true}
+}
+
+// ---- LinearHead JSON (the build_json_from_head CPO overload) ---------------
+// architecture() = {n_coeffs}; all_values() = [coeffs…, bias].
+nlohmann::json build_json_from_head(const LinearHead &lh) {
+  nlohmann::json head;
+  head["type"] = lh.type_tag();
+  const Eigen::VectorXd vals = lh.all_values();
+  const std::vector<int> arch = lh.architecture();
+  const int n = arch.empty() ? 0 : arch[0];
+  head["coeffs"] = nlohmann::json::array();
+  for (int k = 0; k < n; ++k) {
+    head["coeffs"].push_back(vals[k]);
+  }
+  head["bias"] = vals[n];
+  return head;
 }
 
 } // namespace forcesmith

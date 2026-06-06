@@ -172,8 +172,7 @@ void SplinePotential::write_curvature(Eigen::VectorXd &dst, std::size_t offset,
 
 double SplinePotential::eval(double r) const {
   // Out of range: linear extrapolation using the boundary slope, consistent
-  // with deriv() and with forcesmith's splint (e.g. EAM embedding F(ρ) sampled
-  // outside the tabulated density range).
+  // with deriv()
   const std::size_t n = x_.size();
   if (r <= x_.front()) {
     const double slope = (y_[1] - y_[0]) / (x_[1] - x_[0]);

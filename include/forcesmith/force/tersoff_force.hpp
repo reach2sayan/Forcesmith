@@ -54,11 +54,12 @@ struct Bond {
 
 // params — one TersoffParams per unique pair type (paircol =
 // ntypes*(ntypes+1)/2). Access via params(ti, tj).
-struct TersoffForceCalculator : ForceCalculatorBase<TersoffForceCalculator>,
-                                NoGlobals {
+struct TersoffForceCalculator : ForceCalculatorBase<TersoffForceCalculator> {
+  using Base = ForceCalculatorBase<TersoffForceCalculator>;
   SymmetricMatrix<TersoffParams> params;
 
   void eval_forces(Configuration &cfg) const;
+  using Base::eval_forces; // indexed (no-cache)
 
   std::size_t param_count() const;
   void gather_params(Eigen::VectorXd &dst, std::size_t off) const;
@@ -103,6 +104,6 @@ private:
                                             Bond &&bond) const;
 };
 
-static_assert(ForceCalculatorModel<TersoffForceCalculator>);
+static_assert(CForceCalculator<TersoffForceCalculator>);
 
 } // namespace forcesmith

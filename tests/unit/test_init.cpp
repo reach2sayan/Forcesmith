@@ -19,7 +19,6 @@
 #include <fstream>
 #include <iterator>
 #include <string>
-#include <variant>
 #include <vector>
 
 namespace leaf = boost::leaf;
@@ -85,8 +84,8 @@ TEST(Init, PairLoadsForBothNtypes) {
     auto m = scaffold_and_load("pair" + std::to_string(nt),
                                {"--model", "pair", "--ntypes",
                                 std::to_string(nt)});
-    ASSERT_TRUE(std::holds_alternative<PairForceCalculator>(m));
-    EXPECT_EQ(std::get<PairForceCalculator>(m).pair.size(),
+    ASSERT_TRUE(((m).target<PairForceCalculator>() != nullptr));
+    EXPECT_EQ((*(m).target<PairForceCalculator>()).pair.size(),
               paircol(static_cast<std::size_t>(nt)));
   }
 }
@@ -96,8 +95,8 @@ TEST(Init, EamHasPairDensityEmbedding) {
     auto m = scaffold_and_load("eam" + std::to_string(nt),
                                {"--model", "eam", "--ntypes",
                                 std::to_string(nt)});
-    ASSERT_TRUE(std::holds_alternative<EAMForceCalculator>(m));
-    const auto &e = std::get<EAMForceCalculator>(m);
+    ASSERT_TRUE(((m).target<EAMForceCalculator>() != nullptr));
+    const auto &e = (*(m).target<EAMForceCalculator>());
     EXPECT_EQ(e.pair.size(), paircol(static_cast<std::size_t>(nt)));
     EXPECT_EQ(e.density.size(), static_cast<std::size_t>(nt));
     EXPECT_EQ(e.embedding.size(), static_cast<std::size_t>(nt));
@@ -105,10 +104,8 @@ TEST(Init, EamHasPairDensityEmbedding) {
 }
 
 TEST(Init, AdpAndAngularLoad) {
-  ASSERT_TRUE(std::holds_alternative<ADPForceCalculator>(
-      scaffold_and_load("adp2", {"--model", "adp", "--ntypes", "2"})));
-  ASSERT_TRUE(std::holds_alternative<AngularForceCalculator>(
-      scaffold_and_load("ang2", {"--model", "angular", "--ntypes", "2"})));
+  ASSERT_TRUE(((scaffold_and_load("adp2", {"--model", "adp", "--ntypes", "2"})).target<ADPForceCalculator>() != nullptr));
+  ASSERT_TRUE(((scaffold_and_load("ang2", {"--model", "angular", "--ntypes", "2"})).target<AngularForceCalculator>() != nullptr));
 }
 
 // ── analytic: explicit makeapot-style -f list ───────────────────────────────
@@ -117,7 +114,7 @@ TEST(Init, EamWithExplicitFunctions) {
   // ntypes=1: paircol(1)=1 → 1 pair + 1 density + 1 embedding = 3 functions.
   auto m = scaffold_and_load(
       "eam_f", {"--model", "eam", "--functions", "morse,exp_decay,sqrt"});
-  ASSERT_TRUE(std::holds_alternative<EAMForceCalculator>(m));
+  ASSERT_TRUE(((m).target<EAMForceCalculator>() != nullptr));
 }
 
 TEST(Init, FunctionsCountMismatchFailsGracefully) {
@@ -133,14 +130,12 @@ TEST(Init, FunctionsCountMismatchFailsGracefully) {
 
 TEST(Init, TersoffAndStiwebLoad) {
   for (int nt : {1, 2}) {
-    ASSERT_TRUE(std::holds_alternative<TersoffForceCalculator>(
-        scaffold_and_load("ters" + std::to_string(nt),
+    ASSERT_TRUE(((scaffold_and_load("ters" + std::to_string(nt),
                           {"--model", "tersoff", "--ntypes",
-                           std::to_string(nt)})));
-    ASSERT_TRUE(std::holds_alternative<StiwebForceCalculator>(
-        scaffold_and_load("sw" + std::to_string(nt),
+                           std::to_string(nt)})).target<TersoffForceCalculator>() != nullptr));
+    ASSERT_TRUE(((scaffold_and_load("sw" + std::to_string(nt),
                           {"--model", "stiweb", "--ntypes",
-                           std::to_string(nt)})));
+                           std::to_string(nt)})).target<StiwebForceCalculator>() != nullptr));
   }
 }
 
@@ -152,8 +147,8 @@ TEST(Init, SoapHeadsSizedToDescriptor) {
                                {"--model", "soap", "--ntypes",
                                 std::to_string(nt), "--n-max", "4", "--l-max",
                                 "3"});
-    ASSERT_TRUE(std::holds_alternative<SoapModel>(m));
-    const auto &s = std::get<SoapModel>(m);
+    ASSERT_TRUE(((m).target<SoapModel>() != nullptr));
+    const auto &s = (*(m).target<SoapModel>());
     EXPECT_EQ(s.heads.size(), static_cast<std::size_t>(nt));
   }
 }
@@ -161,13 +156,12 @@ TEST(Init, SoapHeadsSizedToDescriptor) {
 TEST(Init, AcsfRequiresChannelsAndLoads) {
   auto m = scaffold_and_load(
       "acsf", {"--model", "acsf", "--g2-eta", "0.5", "1.2"});
-  ASSERT_TRUE(std::holds_alternative<ACSF>(m));
-  EXPECT_EQ(std::get<ACSF>(m).radial.size(), 2u);
+  ASSERT_TRUE(((m).target<ACSF>() != nullptr));
+  EXPECT_EQ((*(m).target<ACSF>()).radial.size(), 2u);
 }
 
 TEST(Init, LmbtrLoads) {
-  ASSERT_TRUE(std::holds_alternative<LMBTR>(
-      scaffold_and_load("lmbtr", {"--model", "lmbtr"})));
+  ASSERT_TRUE(((scaffold_and_load("lmbtr", {"--model", "lmbtr"})).target<LMBTR>() != nullptr));
 }
 
 // ── the "same by definition" guarantee ──────────────────────────────────────

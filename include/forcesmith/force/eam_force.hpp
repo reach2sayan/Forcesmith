@@ -13,16 +13,18 @@ namespace forcesmith {
 
 // EAM force calculator.
 //
-// Potential tables for ntypes element types:
+// RadialPotential tables for ntypes element types:
 //   pair      — φ_{ij}(r)  pair repulsion,  paircol = ntypes*(ntypes+1)/2
 //   entries density   — g_i(r)     electron density, ntypes entries embedding —
 //   F_i(ρ)     cohesive energy,  ntypes entries
-struct EAMForceCalculator : ForceCalculatorBase<EAMForceCalculator>, WithGlobals {
-  PotentialPair pair;
-  PotentialArray density;
-  PotentialArray embedding;
+struct EAMForceCalculator : ForceCalculatorBase<EAMForceCalculator>::with_globals<> {
+  using Base = ForceCalculatorBase<EAMForceCalculator>::with_globals<>;
+  RadialPotentialPair pair;
+  RadialPotentialArray density;
+  RadialPotentialArray embedding;
 
   void eval_forces(Configuration &cfg) const;
+  using Base::eval_forces; // indexed (no-cache) overload
 
   void prepare(std::span<Configuration> configs) const;
 
@@ -39,6 +41,6 @@ struct EAMForceCalculator : ForceCalculatorBase<EAMForceCalculator>, WithGlobals
   void finalize_globals();
 };
 
-static_assert(ForceCalculatorModel<EAMForceCalculator>);
+static_assert(CForceCalculator<EAMForceCalculator>);
 
 } // namespace forcesmith

@@ -7,9 +7,10 @@ using namespace forcesmith;
 
 // ── Minimal analytic LJ potential for testing ─────────────────────────────────
 
-struct LJPotential {
+struct LJPotential : NoBounds<LJPotential> {
     double eps   = 1.0;
     double sigma = 1.0;
+    LJPotential(double e = 1.0, double s = 1.0) : eps(e), sigma(s) {}
 
     double eval(double r) const {
         const double sr6 = std::pow(sigma / r, 6);

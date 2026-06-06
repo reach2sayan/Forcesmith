@@ -6,7 +6,6 @@
 
 #include <cmath>
 #include <span>
-#include <variant>
 #include <vector>
 
 using namespace forcesmith;
@@ -47,7 +46,7 @@ double force_rmse(ForceCalculator &model, std::vector<Configuration> &cfgs) {
   double ss = 0.0;
   int n = 0;
   for (auto &cfg : cfgs) {
-    std::visit([&](auto &m) { m.eval_forces(cfg); }, model);
+    model.eval_forces(cfg);
     for (const auto &a : cfg.atoms) {
       ss += (a.calc_force - a.ref.force).squaredNorm();
       n += 3;

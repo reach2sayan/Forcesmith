@@ -15,15 +15,25 @@
 
 namespace forcesmith {
 
-// Any type satisfying the following concept can be stored in a Potential:
-//   eval(double)->double, deriv(double)->double, span()->pair<double,double>
-//   param_count()->int, gather_params(VectorXd&,int), scatter_params(const
-//   VectorXd&,int), gather_bounds(VectorXd&,VectorXd&,int)
+// The leaf-side contract for a type stored in a RadialPotential: the CFittable
+// optimizer trio plus the eval/deriv/span maths Model forwards to
+// unconditionally. gather_bounds is supplied-by-default (see CFittable), so it
+// is not demanded here. The remaining Model<T> methods stay probed for a real
+// reason rather than boilerplate-avoidance: set_param/fixed/bounds and the
+// prepare_site/eval_at/eval_and_deriv site-cache family are a genuine
+// capability split (analytic potentials have no site cache; tabulated ones do),
+// so they are intentionally NOT part of this contract.
+template <class T>
+concept CRadialPotential = CFittable<T> && requires(const T &t, double r) {
+  { t.eval(r) } -> std::convertible_to<double>;
+  { t.deriv(r) } -> std::convertible_to<double>;
+  { t.span() } -> std::convertible_to<std::pair<double, double>>;
+};
 
 namespace detail {
 // Inherits the optimizer param-plumbing virtuals (param_count, gather_params,
 // scatter_params, gather_bounds) from FittableConcept (core/fit_params.hpp).
-struct PotentialConcept : FittableConcept {
+struct RadialPotentialConcept : FittableConcept {
   virtual double eval(double r) const = 0;
   virtual double deriv(double r) const = 0;
   virtual int prepare_site(double r) const = 0;
@@ -42,16 +52,20 @@ struct PotentialConcept : FittableConcept {
   virtual std::size_t smoothness_count() const = 0;
   virtual void write_smoothness(Eigen::VectorXd &x, std::size_t off,
                                 double weight) const = 0;
-  virtual std::unique_ptr<PotentialConcept> clone() const = 0;
+  virtual std::unique_ptr<RadialPotentialConcept> clone() const = 0;
 };
 } // namespace detail
 
-class Potential : private detail::ErasedValue<detail::PotentialConcept> {
-  template <typename T>
-  struct Model final : detail::FittableModel<T, detail::PotentialConcept> {
-    using Base = detail::FittableModel<T, detail::PotentialConcept>;
-    using Base::Base;     // inherit the impl_-forwarding constructor
-    using Base::impl_;    // bring impl_ into scope for the bodies below
+class RadialPotential
+    : private detail::ErasedValue<detail::RadialPotentialConcept> {
+  template <CRadialPotential T>
+  struct Model final
+      : detail::CloningModel<Model<T>, T, detail::RadialPotentialConcept> {
+    using Base =
+        detail::CloningModel<Model<T>, T, detail::RadialPotentialConcept>;
+    using Base::Base;  // inherit the impl_-forwarding constructor
+    using Base::impl_; // bring impl_ into scope for the bodies below
+    // clone() supplied by CloningModel.
     constexpr double eval(double r) const override { return impl_.eval(r); }
     constexpr double deriv(double r) const override { return impl_.deriv(r); }
 
@@ -126,31 +140,22 @@ class Potential : private detail::ErasedValue<detail::PotentialConcept> {
                           double weight) const override {
       write_curvature(impl_, x, off, weight);
     }
-    std::unique_ptr<detail::PotentialConcept> clone() const override {
-      return std::make_unique<Model>(*this);
-    }
   };
 
-  using Base = detail::ErasedValue<detail::PotentialConcept>;
+  using Base = detail::ErasedValue<detail::RadialPotentialConcept>;
 
 public:
   template <typename T>
-    requires(!std::same_as<std::decay_t<T>, Potential>)
-  constexpr explicit Potential(T &&t)
+    requires(!std::same_as<std::decay_t<T>, RadialPotential> &&
+             CRadialPotential<std::decay_t<T>>)
+  constexpr explicit RadialPotential(T &&t)
       : Base(std::make_unique<Model<std::decay_t<T>>>(std::forward<T>(t))) {}
 
-  Potential(const Potential &) = default;
-  Potential(Potential &&) noexcept = default;
-  Potential &operator=(const Potential &) = default;
-  Potential &operator=(Potential &&) noexcept = default;
+  RadialPotential(const RadialPotential &) = default;
+  RadialPotential(RadialPotential &&) noexcept = default;
+  RadialPotential &operator=(const RadialPotential &) = default;
+  RadialPotential &operator=(RadialPotential &&) noexcept = default;
 
-  // Recover the concrete impl if this Potential holds a T, else nullptr.
-  // Mirrors std::function::target<T>() — the sanctioned escape hatch from the
-  // value-erasure for a typed fast path. dynamic_cast is self-checking, so an
-  // analytic potential yields nullptr (caller falls back to the virtual path);
-  // hoist it out of hot loops so its RTTI cost is amortized to ~once per table.
-  // Instantiated where T is complete (e.g. the force calculators), keeping the
-  // concrete potential types out of this core header.
   template <class T> const T *target() const noexcept {
     auto *m = dynamic_cast<const Model<T> *>(self_.get());
     return m ? &m->impl_ : nullptr;
@@ -158,6 +163,7 @@ public:
 
   constexpr double eval(double r) const { return self_->eval(r); }
   constexpr double deriv(double r) const { return self_->deriv(r); }
+
   // Public fit-cache API is typed: prepare_site hands back an opaque SiteId
   // (cacheable() for spline potentials, "none" for analytic ones — the caller
   // then uses eval/deriv(r)), and the eval/deriv_at family consume it. The raw
@@ -211,9 +217,9 @@ public:
   // an object with a "knots" array is a tabulated SplinePotential. Defined in
   // src/io/potential_reader.cpp (keeps nlohmann + the registry out of core).
   // Leaf-returning, not a throwing ctor — see feedback_error_handling.
-  [[nodiscard]] static boost::leaf::result<Potential>
+  [[nodiscard]] static boost::leaf::result<RadialPotential>
   from_text(std::string_view json_spec);
-  [[nodiscard]] static boost::leaf::result<Potential>
+  [[nodiscard]] static boost::leaf::result<RadialPotential>
   from_file(const std::filesystem::path &path);
 };
 
@@ -221,15 +227,15 @@ public:
 // loops: when a bond was primed by prepare() (site >= 0) evaluate via the
 // cached site — no binary search; otherwise (rescale/tests that never call
 // prepare()) fall back to a direct evaluation at r.
-inline double eval_cached(const Potential &p, SiteId site, double r) {
+inline double eval_cached(const RadialPotential &p, SiteId site, double r) {
   return site.cacheable() ? p.eval_at(site) : p.eval(r);
 }
-inline double deriv_cached(const Potential &p, SiteId site, double r) {
+inline double deriv_cached(const RadialPotential &p, SiteId site, double r) {
   return site.cacheable() ? p.deriv_at(site) : p.deriv(r);
 }
 // Fused value+derivative variant of the above: one dispatch returns both,
 // reusing the cached site (or the single interval search on the fallback path).
-inline std::pair<double, double> eval_deriv_cached(const Potential &p,
+inline std::pair<double, double> eval_deriv_cached(const RadialPotential &p,
                                                    SiteId site, double r) {
   return site.cacheable() ? p.eval_and_deriv_at(site) : p.eval_and_deriv(r);
 }

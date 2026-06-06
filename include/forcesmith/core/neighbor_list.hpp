@@ -3,7 +3,7 @@
 // Step 7: O(N²) build, cell-list upgrade later.
 
 #include "forcesmith/core/atom.hpp"
-#include "forcesmith/core/potential_base.hpp"
+#include "forcesmith/core/radial_potential.hpp"
 #include "forcesmith/force/potential_table.hpp"
 
 #include <span>
@@ -13,12 +13,12 @@ namespace forcesmith {
 // Geometry-only overload: all NeighborEntry::pot are left nullptr.
 void build_neighbor_list(Configuration &cfg, double rcut);
 
-// Potential-assigning overload: each NeighborEntry::pot is resolved from pots
+// RadialPotential-assigning overload: each NeighborEntry::pot is resolved from pots
 // using the (ai.type, aj.type) pair index.  Entries whose type exceeds
 // pots.ntypes() get pot = nullptr.  pots must outlive the Configuration's
 // neighbour list (NeighborEntry::pot stores raw pointers into pots).
 void build_neighbor_list(Configuration &cfg, double rcut,
-                         const PotentialPair &pots);
+                         const RadialPotentialPair &pots);
 
 // Build every config's neighbour list in parallel (geometry-only overload).
 // Each config is disjoint — it writes only its own atoms and nl_* cache fields —

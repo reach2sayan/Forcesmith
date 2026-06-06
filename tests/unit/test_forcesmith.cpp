@@ -10,7 +10,6 @@
 
 #include <array>
 #include <string>
-#include <variant>
 #include <vector>
 
 namespace leaf = boost::leaf;
@@ -47,9 +46,9 @@ static Mat3 cubic(double a) {
   return m;
 }
 
-// A Morse pair Potential with fixed reference parameters.
-static Potential morse_cu() {
-  return Potential(Morse(0.5, 1.5, 2.5, 0.1, 6.0)); // De, a, re, rmin, rmax
+// A Morse pair RadialPotential with fixed reference parameters.
+static RadialPotential morse_cu() {
+  return RadialPotential(Morse(0.5, 1.5, 2.5, 0.1, 6.0)); // De, a, re, rmin, rmax
 }
 
 // ── Programmatic build → evaluate, and parity with the loader-style path ──────
@@ -98,7 +97,7 @@ TEST(Forcesmith, ProgrammaticMatchesSeeded) {
 
     Forcesmith seed;
     BOOST_LEAF_AUTO(cs, build_cfg(seed));
-    BOOST_LEAF_AUTO(pot, Potential::from_text(
+    BOOST_LEAF_AUTO(pot, RadialPotential::from_text(
                              R"({"type":"morse","rmin":0.1,"rmax":6.0,)"
                              R"("De":0.5,"a":1.5,"re":2.5})"));
     BOOST_LEAF_CHECK(seed.set_pair_potential("Cu", "Cu", std::move(pot)));
@@ -212,7 +211,7 @@ TEST(Forcesmith, TersoffProgrammaticMatchesSeeded) {
     BOOST_LEAF_AUTO(rp, prog.evaluate(cp));
     e_prog = rp.energy;
     BOOST_LEAF_AUTO(m, prog.model());
-    EXPECT_TRUE(std::holds_alternative<TersoffForceCalculator>(*m));
+    EXPECT_TRUE(((*m).target<TersoffForceCalculator>() != nullptr));
 
     Forcesmith seed;
     BOOST_LEAF_AUTO(cs, si_triangle(seed));
@@ -257,7 +256,7 @@ TEST(Forcesmith, StiwebProgrammaticMatchesSeeded) {
     BOOST_LEAF_AUTO(rp, prog.evaluate(cp));
     e_prog = rp.energy;
     BOOST_LEAF_AUTO(m, prog.model());
-    EXPECT_TRUE(std::holds_alternative<StiwebForceCalculator>(*m));
+    EXPECT_TRUE(((*m).target<StiwebForceCalculator>() != nullptr));
 
     Forcesmith seed;
     BOOST_LEAF_AUTO(cs, si_triangle(seed, 2.5));
@@ -281,11 +280,11 @@ TEST(Forcesmith, StiwebProgrammaticMatchesSeeded) {
 // spec) and re-materializes. Re-setting one table to its same value must leave
 // the energy unchanged — proving every ADP table survived the round-trip.
 TEST(Forcesmith, AdpSeededDecomposeRoundTrip) {
-  auto phi = [] { return Potential(Morse(0.5, 1.5, 2.5, 0.1, 6.0)); };
-  auto dens = [] { return Potential(ExpDecay(1.0, 1.0, 0.1, 6.0)); };
-  auto emb = [] { return Potential(ConstFunc(-2.0, 0.0, 100.0)); };
-  auto dip = [] { return Potential(ExpDecay(0.3, 0.8, 0.1, 6.0)); };
-  auto quad = [] { return Potential(ExpDecay(0.2, 0.9, 0.1, 6.0)); };
+  auto phi = [] { return RadialPotential(Morse(0.5, 1.5, 2.5, 0.1, 6.0)); };
+  auto dens = [] { return RadialPotential(ExpDecay(1.0, 1.0, 0.1, 6.0)); };
+  auto emb = [] { return RadialPotential(ConstFunc(-2.0, 0.0, 100.0)); };
+  auto dip = [] { return RadialPotential(ExpDecay(0.3, 0.8, 0.1, 6.0)); };
+  auto quad = [] { return RadialPotential(ExpDecay(0.2, 0.9, 0.1, 6.0)); };
 
   double e_seed = 0.0;
   double e_after = 0.0;
@@ -321,7 +320,7 @@ TEST(Forcesmith, AdpSeededDecomposeRoundTrip) {
     e_after = r1.energy;
 
     BOOST_LEAF_AUTO(m, s.model());
-    EXPECT_TRUE(std::holds_alternative<ADPForceCalculator>(*m));
+    EXPECT_TRUE(((*m).target<ADPForceCalculator>() != nullptr));
     return {};
   });
 

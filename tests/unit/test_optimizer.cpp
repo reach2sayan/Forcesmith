@@ -39,7 +39,7 @@ static double eval_residual(std::vector<Configuration>& configs,
                              double                      energy_weight) {
     ForcesmithFunctor functor(configs, model, energy_weight);
     Eigen::VectorXd x(functor.inputs());
-    std::visit([&](const auto& m){ m.gather_params(x, std::size_t{0}); }, model);
+    model.gather_params(x, std::size_t{0});
 
     Eigen::VectorXd fvec(functor.values());
     functor(x, fvec);
@@ -49,9 +49,9 @@ static double eval_residual(std::vector<Configuration>& configs,
 // Gather the model's current free-parameter values (post-optimization).
 static Eigen::VectorXd current_params(ForceCalculator& model) {
     const std::size_t n =
-        std::visit([](const auto& m) { return m.param_count(); }, model);
+        model.param_count();
     Eigen::VectorXd x(static_cast<Eigen::Index>(n));
-    std::visit([&](const auto& m){ m.gather_params(x, std::size_t{0}); }, model);
+    model.gather_params(x, std::size_t{0});
     return x;
 }
 
@@ -64,7 +64,7 @@ TEST(Optimizer, ZeroResidualAtGroundTruth) {
     auto cfg = make_lj_dimer(eps, sigma, r);
     std::vector<Configuration> configs = {cfg};
 
-    std::vector<Potential> pots;
+    std::vector<RadialPotential> pots;
     pots.emplace_back(LennardJones(eps, sigma, sigma * 0.5, sigma * 5.0));
     ForceCalculator model = make_pair_force_calculator(std::move(pots));
 
@@ -81,7 +81,7 @@ TEST(Optimizer, ConvergesFromPerturbedEpsilon) {
     std::vector<Configuration> configs = {cfg};
 
     // Start from eps = 0.5 (significantly perturbed).
-    std::vector<Potential> pots;
+    std::vector<RadialPotential> pots;
     pots.emplace_back(LennardJones(0.5, sigma, sigma * 0.5, sigma * 5.0));
     ForceCalculator model = make_pair_force_calculator(std::move(pots));
 
@@ -112,7 +112,7 @@ TEST(Optimizer, IpoptConvergesFromPerturbedEpsilon) {
     std::vector<Configuration> configs = {cfg};
 
     // Start from eps = 0.5 (significantly perturbed).
-    std::vector<Potential> pots;
+    std::vector<RadialPotential> pots;
     pots.emplace_back(LennardJones(0.5, sigma, sigma * 0.5, sigma * 5.0));
     ForceCalculator model = make_pair_force_calculator(std::move(pots));
 
@@ -140,7 +140,7 @@ TEST(Optimizer, ResidualDecreasesOrStays) {
     auto cfg = make_lj_dimer(eps, sigma, r);
     std::vector<Configuration> configs = {cfg};
 
-    std::vector<Potential> pots;
+    std::vector<RadialPotential> pots;
     pots.emplace_back(LennardJones(0.7, sigma * 1.05, sigma * 0.5, sigma * 6.0));
     ForceCalculator model = make_pair_force_calculator(std::move(pots));
 
@@ -160,17 +160,16 @@ TEST(Optimizer, ResidualDecreasesOrStays) {
 // gather_bounds yields ±∞ for a potential built without explicit bounds, so the
 // legacy (bare-value) path stays unconstrained.
 TEST(Optimizer, UnboundedParamsGatherInfiniteBounds) {
-    Potential lj{LennardJones(1.0, 2.0, 1.0, 10.0)};
-    std::vector<Potential> pots;
+    RadialPotential lj{LennardJones(1.0, 2.0, 1.0, 10.0)};
+    std::vector<RadialPotential> pots;
     pots.push_back(std::move(lj));
     ForceCalculator model = make_pair_force_calculator(std::move(pots));
 
     const std::size_t n =
-        std::visit([](const auto& m) { return m.param_count(); }, model);
+        model.param_count();
     Eigen::VectorXd lo(static_cast<Eigen::Index>(n)),
         hi(static_cast<Eigen::Index>(n));
-    std::visit([&](const auto& m){ m.gather_bounds(lo, hi, std::size_t{0}); },
-               model);
+    model.gather_bounds(lo, hi, std::size_t{0});
 
     for (Eigen::Index i = 0; i < lo.size(); ++i) {
         EXPECT_FALSE(std::isfinite(lo[i])) << "lower[" << i << "] should be -inf";
@@ -184,10 +183,10 @@ TEST(Optimizer, UnboundedParamsGatherInfiniteBounds) {
 // the bound never binds. With sigma pinned the unconstrained optimum is exactly
 // eps=1.0, so a bound-honoring solver must sit at the upper bound 0.8.
 static ForceCalculator make_eps_bounded_model(double sigma) {
-    Potential lj{LennardJones(0.7, sigma, sigma * 0.5, sigma * 5.0)};
+    RadialPotential lj{LennardJones(0.7, sigma, sigma * 0.5, sigma * 5.0)};
     lj.set_bounds(0, 0.6, 0.8); // index 0 = epsilon
     lj.set_fixed(1, true);      // index 1 = sigma (held at its true value)
-    std::vector<Potential> pots;
+    std::vector<RadialPotential> pots;
     pots.push_back(std::move(lj));
     return make_pair_force_calculator(std::move(pots));
 }

@@ -1,6 +1,6 @@
 #pragma once
 
-#include "forcesmith/core/potential_base.hpp"
+#include "forcesmith/core/radial_potential.hpp"
 
 #include <boost/stl_interfaces/iterator_interface.hpp>
 
@@ -172,7 +172,7 @@ public:
   bool empty() const noexcept { return data_.empty(); }
 };
 
-using PotentialPair = SymmetricMatrix<Potential>;
-using PotentialArray = TypeArray<Potential>;
+using RadialPotentialPair = SymmetricMatrix<RadialPotential>;
+using RadialPotentialArray = TypeArray<RadialPotential>;
 
 } // namespace forcesmith

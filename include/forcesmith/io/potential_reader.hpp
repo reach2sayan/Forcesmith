@@ -1,6 +1,6 @@
 #pragma once
 
-#include "forcesmith/core/potential_base.hpp"
+#include "forcesmith/core/radial_potential.hpp"
 #include "forcesmith/io/config_reader.hpp" // ParseError
 
 #include <boost/leaf/result.hpp>
@@ -11,7 +11,7 @@
 
 namespace forcesmith::io {
 
-boost::leaf::result<std::vector<Potential>>
+boost::leaf::result<std::vector<RadialPotential>>
 parse_potential(std::string_view input);
 
 // Index of parameter `param` within analytic function `type` (registry order,

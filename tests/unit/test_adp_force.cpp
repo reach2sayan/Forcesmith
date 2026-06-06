@@ -9,7 +9,7 @@ using namespace forcesmith;
 
 // ── Minimal analytic potential types ─────────────────────────────────────────
 
-struct RepulsivePair {
+struct RepulsivePair : NoBounds<RepulsivePair> {
     double A = 1.0;
     double eval(double r)  const { return A / std::pow(r, 12); }
     double deriv(double r) const { return -12.0 * A / std::pow(r, 13); }
@@ -19,7 +19,7 @@ struct RepulsivePair {
     void scatter_params(const Eigen::VectorXd&, int) {}
 };
 
-struct ExpDensity {
+struct ExpDensity : NoBounds<ExpDensity> {
     double beta = 1.0;
     double eval(double r)  const { return std::exp(-beta * r); }
     double deriv(double r) const { return -beta * std::exp(-beta * r); }
@@ -29,7 +29,7 @@ struct ExpDensity {
     void scatter_params(const Eigen::VectorXd&, int) {}
 };
 
-struct SqrtEmbedding {
+struct SqrtEmbedding : NoBounds<SqrtEmbedding> {
     double c = 1.0;
     double eval(double rho)  const { return -c * std::sqrt(rho); }
     double deriv(double rho) const { return -c / (2.0 * std::sqrt(rho)); }
@@ -40,7 +40,7 @@ struct SqrtEmbedding {
 };
 
 // Dipole: u(r) = exp(-r)
-struct ExpDipole {
+struct ExpDipole : NoBounds<ExpDipole> {
     double alpha = 1.0;
     double eval(double r)  const { return std::exp(-alpha * r); }
     double deriv(double r) const { return -alpha * std::exp(-alpha * r); }
@@ -51,7 +51,7 @@ struct ExpDipole {
 };
 
 // Quadrupole: w(r) = exp(-2r) (faster decay)
-struct ExpQuadrupole {
+struct ExpQuadrupole : NoBounds<ExpQuadrupole> {
     double gamma = 2.0;
     double eval(double r)  const { return std::exp(-gamma * r); }
     double deriv(double r) const { return -gamma * std::exp(-gamma * r); }
@@ -61,7 +61,7 @@ struct ExpQuadrupole {
     void scatter_params(const Eigen::VectorXd&, int) {}
 };
 
-struct ZeroPot {
+struct ZeroPot : NoBounds<ZeroPot> {
     double eval(double)  const { return 0.0; }
     double deriv(double) const { return 0.0; }
     std::pair<double,double> span() const { return {0.0, 100.0}; }

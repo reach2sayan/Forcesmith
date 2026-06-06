@@ -46,14 +46,12 @@ struct SoapModel : MLBase<SoapModel> {
   double rcut = 6.0;  // environment cutoff (Å)
   double sigma = 0.5; // atomic Gaussian width (Å)
 
-  // n_max × n_max radial orthonormalisation matrix β = S^{-1/2}. Optional
-  // cache: get_descriptor auto-computes β on demand if this is empty, so
-  // callers never need to. init_radial_basis() just precomputes it once
-  // (single-threaded) as a performance optimisation.
-  mutable Eigen::MatrixXd beta;
+  // get_descriptor auto-computes β on demand if this is empty, so
+  // callers never need to. init_radial_basis() precomputes it.
+  mutable Eigen::MatrixXd beta; // β = S^{-1/2} (n_max × n_max)
 
-  // Lazily-built radial spline table (see SoapRadialTable). Auto-built on first
-  // get_descriptor; init_radial_basis() also builds it up front.
+  // get_descriptor auto-computes radial spline table. Built on  get_descriptor;
+  // init_radial_basis() precomputes it.
   mutable std::shared_ptr<const SoapRadialTable> radial_;
   void init_radial_basis();
 
@@ -92,22 +90,22 @@ private:
                        double K) const;
 
   // Step 2 — rotationally-invariant power spectrum p^{αβ}_{n n' l}, flattened
-  // in the canonical order. Returns the raw (un-normalised) descriptor vector;
-  // the caller computes ‖p‖ and L2-normalises (the gradient step needs that
+  // in the canonical order. Returns the raw (un-normalized) descriptor vector;
+  // the caller computes ‖p‖ and L2-normalizes (the gradient step needs that
   // norm).
   [[nodiscard]] Eigen::VectorXd
   power_spectrum(const Eigen::VectorXcd &c,
                  const std::vector<double> &wl) const;
 
   // Step 3 — analytic position gradient dD/dr. Fills out.grad_self /
-  // out.grad_neigh given the coefficients c, the already-normalised descriptor
-  // out.values and its pre-normalisation norm.
+  // out.grad_neigh given the coefficients c, the already-normalized descriptor
+  // out.values and its pre-normalization norm.
   void position_gradient(const Atom &a, const Eigen::VectorXcd &c,
                          const SoapRadialTable &tab, double K,
                          const std::vector<double> &wl, double norm,
                          DescriptorValue &out) const;
 };
 
-static_assert(ForceCalculatorModel<SoapModel>);
+static_assert(CForceCalculator<SoapModel>);
 
 } // namespace forcesmith

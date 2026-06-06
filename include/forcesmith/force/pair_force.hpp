@@ -12,7 +12,7 @@ namespace forcesmith {
 
 struct PairBond {
   Atom *ai;                  // central atom
-  const Potential *pot;      // i–j pair potential φ
+  const RadialPotential *pot;      // i–j pair potential φ
   Vec3 d;                    // pos_j − pos_i
   double r, inv_r;           // |d| and 1/|d|
   double phi = 0.0;          // pair energy φ(r)
@@ -20,12 +20,12 @@ struct PairBond {
   SiteId site{};             // φ cache handle (NeighborEntry::sites[kSitePhi])
 };
 
-struct PairForceCalculator : WithGlobals {
-  std::size_t ntypes = 1;
-  std::uint64_t conf_index = 0;
-  PotentialPair pair;
+struct PairForceCalculator : ForceCalculatorBase<PairForceCalculator>::with_globals<> {
+  using Base = ForceCalculatorBase<PairForceCalculator>::with_globals<>;
+  RadialPotentialPair pair;
 
   void eval_forces(Configuration &cfg) const;
+  using Base::eval_forces; // indexed (no-cache) overload
   void prepare(std::span<Configuration> configs) const;
 
   std::size_t param_count() const;
@@ -42,18 +42,18 @@ private:
   // global max_cutoff(); gate each contribution on this potential's own range
   // [rmin, rmax). Empty for coincident atoms or out-of-range separations.
   static std::optional<PairBond>
-  make_pair_bond(Atom &ai, const NeighborEntry &nb, const Potential &pot);
+  make_pair_bond(Atom &ai, const NeighborEntry &nb, const RadialPotential &pot);
   // Stage 2 — radial force φ′(r).
   static PairBond add_pair_force(PairBond &&pb);
   // Stage 3 — commit energy / force / virial (0.5 for the full neighbor list).
   static PairBond accumulate_pair(Configuration &cfg, PairBond &&pb);
 };
 
-static_assert(ForceCalculatorModel<PairForceCalculator>);
+static_assert(CForceCalculator<PairForceCalculator>);
 
 // Build a PairForceCalculator that owns the given flat potential list.
 // ntypes is inferred from paircol = ntypes*(ntypes+1)/2.
 PairForceCalculator
-make_pair_force_calculator(std::vector<Potential> potentials);
+make_pair_force_calculator(std::vector<RadialPotential> potentials);
 
 } // namespace forcesmith

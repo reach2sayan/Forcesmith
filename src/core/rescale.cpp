@@ -77,7 +77,8 @@ double rescale_rho_axis(EAMForceCalculator &calc,
   }
 
   const auto [emb_lo, emb_hi] = calc.embedding[dom].span();
-  const double pad = 0.003 * (emb_hi - emb_lo); // ≈ forcesmith's 0.3·step padding
+  const double pad =
+      0.003 * (emb_hi - emb_lo); // ≈ forcesmith's 0.3·step padding
   const double upper = sign_pos ? emb_hi : emb_lo;
   const double right = sign_pos ? maxrho[dom] + pad : minrho[dom] - pad;
   if (std::abs(right) < 1e-30) {
@@ -104,8 +105,8 @@ double rescale_rho_axis(EAMForceCalculator &calc,
   // Apply one global factor: density × a, embedding argument / a.
   for (auto &&[density, embedding] :
        std::views::zip(calc.density, calc.embedding)) {
-    density = Potential(ScaledOutputPotential{std::move(density), a});
-    embedding = Potential(ScaledArgPotential{std::move(embedding), a});
+    density = RadialPotential(ScaledOutputPotential{std::move(density), a});
+    embedding = RadialPotential(ScaledArgPotential{std::move(embedding), a});
   }
   return a;
 }
@@ -127,7 +128,7 @@ void embed_shift(EAMForceCalculator &calc, std::span<const double> rho_ref) {
       continue;
     }
     auto &emb = calc.embedding[static_cast<int>(t)];
-    emb = Potential(LinearAdjustedPotential{std::move(emb), s, 0.0});
+    emb = RadialPotential(LinearAdjustedPotential{std::move(emb), s, 0.0});
   }
 
   // Compensate pairs: φ_{αβ}(r) → φ_{αβ}(r) + slope_α × g_β(r) + slope_β ×
@@ -138,7 +139,7 @@ void embed_shift(EAMForceCalculator &calc, std::span<const double> rho_ref) {
     if (std::abs(ca) < 1e-14 && std::abs(cb) < 1e-14) {
       continue;
     }
-    calc.pair[ti, tj] = Potential(CompensatedPairPotential{
+    calc.pair[ti, tj] = RadialPotential(CompensatedPairPotential{
         std::move(calc.pair[ti, tj]),
         calc.density[ti], // g_alpha: density contributed by type ti
         calc.density[tj], // g_beta:  density contributed by type tj
@@ -167,7 +168,7 @@ void rescale_eam(EAMForceCalculator &calc, std::span<Configuration> configs) {
     if (std::abs(F0) < 1e-14) {
       continue;
     }
-    emb = Potential(LinearAdjustedPotential{std::move(emb), 0.0, F0});
+    emb = RadialPotential(LinearAdjustedPotential{std::move(emb), 0.0, F0});
   }
 }
 

@@ -1,7 +1,7 @@
 #pragma once
 
-#include "forcesmith/core/types.hpp"
 #include "forcesmith/core/atom.hpp"
+#include "forcesmith/core/types.hpp"
 
 #include <boost/multi_index/global_fun.hpp>
 #include <boost/multi_index/mem_fun.hpp>
@@ -177,8 +177,8 @@ configs_in_energy_band(const ConfigIndex &idx, double lo, double hi) {
 }
 
 // The config with the given unique name, or nullptr if none matches.
-[[nodiscard]] FORCE_INLINE Configuration *config_by_name(const ConfigIndex &idx,
-                                                   std::string_view name) {
+[[nodiscard]] FORCE_INLINE Configuration *
+config_by_name(const ConfigIndex &idx, std::string_view name) {
   const auto &by_name = idx.get<detail::by_name>();
   const auto it = by_name.find(name);
   return it == by_name.end() ? nullptr : const_cast<Configuration *>(it->cfg());

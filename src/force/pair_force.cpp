@@ -15,7 +15,7 @@ namespace forcesmith {
 
 std::optional<PairBond>
 PairForceCalculator::make_pair_bond(Atom &ai, const NeighborEntry &nb,
-                                    const Potential &pot) {
+                                    const RadialPotential &pot) {
   const double r = nb.dist.norm();
   if (r < 1e-14) {
     return std::nullopt;
@@ -154,7 +154,7 @@ void PairForceCalculator::prepare(std::span<Configuration> configs) const {
 }
 
 PairForceCalculator
-make_pair_force_calculator(std::vector<Potential> potentials) {
+make_pair_force_calculator(std::vector<RadialPotential> potentials) {
   const std::size_t n = potentials.size();
   const std::size_t ntypes = static_cast<std::size_t>(std::lround(
       (-1.0 + std::sqrt(1.0 + 8.0 * static_cast<double>(n))) / 2.0));

@@ -1,6 +1,6 @@
 #pragma once
 
-#include "forcesmith/core/potential_base.hpp"
+#include "forcesmith/core/radial_potential.hpp"
 #include "forcesmith/force/adp_force.hpp"
 #include "forcesmith/force/angular_force.hpp"
 #include "forcesmith/force/eam_force.hpp"
@@ -18,13 +18,13 @@ namespace forcesmith::io {
 
 static constexpr int kDefaultKnots = 500;
 boost::leaf::result<void> write_lammps(const std::filesystem::path &path,
-                                       const std::vector<Potential> &potentials);
+                                       const std::vector<RadialPotential> &potentials);
 
 boost::leaf::result<void> write_imd(const std::filesystem::path &path,
-                                    const std::vector<Potential> &potentials);
+                                    const std::vector<RadialPotential> &potentials);
 
 boost::leaf::result<void> write_native(const std::filesystem::path &path,
-                                       const std::vector<Potential> &potentials,
+                                       const std::vector<RadialPotential> &potentials,
                                        int nknots = kDefaultKnots);
 
 // Write a fitted EAM model as structured tabulated JSON

@@ -6,7 +6,6 @@
 
 #include <cmath>
 #include <numbers>
-#include <variant>
 
 using namespace forcesmith;
 
@@ -188,14 +187,14 @@ TEST(MLForce, ReaderBuildsAndEvaluates) {
 
   auto r = io::parse_force_model(json);
   ASSERT_TRUE(r) << "parse failed";
-  ASSERT_TRUE(std::holds_alternative<ACSF>(*r));
+  ASSERT_TRUE(((*r).target<ACSF>() != nullptr));
 
-  const auto &m = std::get<ACSF>(*r);
+  const auto &m = (*(*r).target<ACSF>());
   EXPECT_EQ(m.radial.size(), 2u);
   EXPECT_EQ(m.param_count(), 2u); // bias fixed by default
 
   auto cfg = make_cluster();
-  std::get<ACSF>(*r).eval_forces(cfg);
+  (*(*r).target<ACSF>()).eval_forces(cfg);
   EXPECT_TRUE(std::isfinite(cfg.calc_energy));
 }
 

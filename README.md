@@ -6,11 +6,17 @@ set of reference configurations — atomic positions, forces, energies, and
 optionally stresses, typically from DFT — Forcesmith optimises a potential's
 parameters until the model reproduces the reference data.
 
-## Potential families
+This document covers the **command-line tool** and the **`forcesmith::Forcesmith`
+programmatic interface**. For the internals — the value-semantic type erasure,
+the CRTP bases, the customisation points, and how the optimiser is wired — see
+[`docs/design.md`](docs/design.md). For how to plug in your own potentials,
+solvers, heads, and force calculators, see [`docs/extension.md`](docs/extension.md).
+
+## Model families
 
 | Family       | Description                                                       |
 |--------------|-------------------------------------------------------------------|
-| **pair**     | Two-body radial potentials φ(r)                                   |
+| **pair**     | Two-body radial potentials φ(r)                                  |
 | **eam**      | Embedded Atom Method: pair + electron density + embedding F(ρ)    |
 | **adp**      | Angular-Dependent Potential: EAM + dipole/quadrupole tensors      |
 | **angular**  | EAM-style with a radial modulation f(r) and angular term g(cosθ)  |
@@ -23,27 +29,6 @@ Buckingham, …; see the registry in `src/io/potential_reader.cpp`) or
 **tabulated** (cubic splines over knot values). The fit is driven by one of
 several optimisers — Levenberg–Marquardt, Powell dogleg, differential evolution,
 Ipopt (L-BFGS), or a Powell direction-set line search.
-
-## Design
-
-Forcesmith is layered as three artifacts:
-
-- **`forcesmith_engine`** — a static engine library holding everything below the
-  public API (force models, neighbour lists, optimisers, I/O).
-- **`libforcesmith`** — a first-class shared library exposing the
-  `forcesmith::Forcesmith` facade; this is the product's public surface.
-- **`forcesmith`** — a thin CLI that is just another client of that API.
-
-Polymorphic surfaces (potentials, solvers) use Sean-Parent-style
-**value-semantic type erasure**, so a library client can supply new potentials
-and solvers without touching the engine — see [`docs/extension.md`](docs/extension.md).
-Errors are propagated with `boost::leaf::result<T>` rather than exceptions.
-
-### Dependencies
-
-Eigen, Boost (parser, serialization, program_options, math, LEAF), nlohmann_json,
-oneTBB, Ipopt (+MUMPS, built as an ExternalProject), and spdlog. See
-`cmake/Dependencies.cmake`.
 
 ## Building
 
@@ -59,6 +44,10 @@ Targets produced:
 - `forcesmith` — the CLI binary (target `forcesmith_cli`, output `forcesmith`)
 - `libforcesmith.so` — the shared programmatic API library
 - `forcesmith_tests` / `forcesmith_integration_tests` — GoogleTest suites (run via `ctest`)
+
+Dependencies (fetched/built by `cmake/Dependencies.cmake`): Eigen, Boost
+(parser, serialization, program_options, math, LEAF), nlohmann_json, oneTBB,
+Ipopt (+MUMPS, built as an ExternalProject), and spdlog.
 
 ## Command-line usage
 
@@ -104,6 +93,33 @@ Global optimisation with differential evolution, then local refinement:
 ```sh
 forcesmith -c train.json -s start.json -e de_fit.json -a de --de-gen 2000 --seed 42
 forcesmith -c train.json -s de_fit.json -e final.json -a lm
+```
+
+### Scaffolding a start potential — `forcesmith init`
+
+`forcesmith init` is a JSON-native `makeapot`: it writes a fresh, immediately
+fittable `--startpot` for any of the nine model types.
+
+```
+forcesmith init --model <type> --out <file> [--ntypes N] [--cutoff Å] [...]
+```
+
+| Flag                  | Applies to        | Meaning                                                          |
+|-----------------------|-------------------|------------------------------------------------------------------|
+| `--model`, `-m`       | all               | `pair`\|`eam`\|`adp`\|`angular`\|`tersoff`\|`stiweb`\|`acsf`\|`soap`\|`lmbtr` |
+| `--out`, `-o`         | all               | output startpot file                                             |
+| `--ntypes`, `-n`      | all               | number of atom types (default 1)                                 |
+| `--cutoff`, `-c`      | all               | cutoff radius in Å (default 6.0)                                 |
+| `--functions`, `-f`   | analytic families | makeapot-style list, e.g. `"3*lj"` or `"lj,exp_decay,sqrt"`      |
+| `--n-max`/`--l-max`/`--sigma` | soap      | radial basis size / angular degree / atomic Gaussian width       |
+| `--g1`/`--g2-eta`/`--g2-rs`   | acsf      | G1 channel count / G2 η widths / G2 rₛ centres                   |
+| `--k2-n`/`--k3-n`/`--drop-k2`/`--drop-k3` | lmbtr | k2/k3 grid points; drop either term                          |
+| `--bias-free`         | ml                | leave the head bias free (default fixed, for forces-first fits)  |
+| `--seed`              | ml                | RNG seed for the small-Gaussian head-coefficient init            |
+
+```sh
+forcesmith init -m eam -n 1 -c 6.0 -o cu_eam_start.json     # analytic EAM scaffold
+forcesmith init -m soap --n-max 6 --l-max 6 -o soap_start.json
 ```
 
 ## File formats
@@ -162,8 +178,12 @@ sub-tables, and `data/` for complete worked examples.
 
 ## Programmatic API
 
-The CLI is a thin client of `forcesmith::Forcesmith`; the same fit can be built
-entirely in memory. Every fallible call returns `boost::leaf::result<T>`.
+The CLI is a thin client of `forcesmith::Forcesmith`
+(`include/forcesmith/api/forcesmith.hpp`); the same fit can be built entirely in
+memory. The facade owns the whole fit — configurations, atoms, reference
+data, and potentials — and runs the expensive invariant-establishing build
+("freeze") lazily on the first call that needs it, so there is no explicit
+setup phase. Every fallible call returns `boost::leaf::result<T>`.
 
 ```cpp
 #include "forcesmith/api/forcesmith.hpp"
@@ -179,16 +199,49 @@ session.set_ref_force("config-0", /*atom*/ 0, {fx, fy, fz});
 
 // Place a potential — any value satisfying the potential contract.
 session.set_pair_potential("Cu", "Cu",
-    forcesmith::Potential{forcesmith::Morse(0.34, 1.36, 2.87, 2.0, 6.0)});
+    forcesmith::RadialPotential{forcesmith::Morse(0.34, 1.36, 2.87, 2.0, 6.0)});
 
 session.options().energy_weight = 1.0;
 BOOST_LEAF_CHECK(session.optimize());
 BOOST_LEAF_CHECK(session.write("cu_fit.json", "native"));
 ```
 
-A custom solver is injected the same way potentials are
-(`session.set_solver(forcesmith::Solver{MySolver{...}})`). Both extension points
-are documented in [`docs/extension.md`](docs/extension.md).
+### What the facade gives you
+
+- **Configurations & atoms** — `add_configuration` / `add_configurations`
+  (a whole range at once) / `add_atom` / `remove_atom` / `set_position` /
+  `set_element`. Atoms are held by element *identity* (symbol); the compact
+  Z-sorted table slot is assigned at freeze, so adding an atom of a new element
+  just re-ranks the model at the next freeze.
+- **Reference data** — `set_ref_force`, `set_ref_energy`, `set_ref_stress`,
+  `set_weight`, each selectable by index, config name, or a handle. These write
+  straight through to the live data and do **not** dirty the session.
+- **Potentials** — `set_pair_potential` / `set_density` / `set_embedding`, plus
+  the richer-family tables `set_dipole` / `set_quadrupole` (ADP),
+  `set_radial` / `set_angular` (angular), and `set_tersoff_params` /
+  `set_stiweb_params` / `set_stiweb_lambda` (bond-order). `set_global` links one
+  optimiser slot across several potentials; `set_pair_param` edits a placed
+  potential in place.
+- **A pre-built model** — `seed_force_model(ForceCalculator{...})` adopts a fully
+  assembled model (this is how `io::load_model` and the checkpoint reload work).
+- **Run & inspect** — `evaluate(cfg)` for a single configuration, `optimize()`
+  for the fit, `write(path, format)` for output, and read-only accessors
+  (`configurations()`, `species()`, `model()`, `index()`).
+
+### Injecting a custom solver
+
+A custom solver is supplied the same way a potential is — wrap it in the
+type-erased `Solver` value and hand it over:
+
+```cpp
+session.set_solver(forcesmith::Solver{MySolver{ /* tuning */ }});
+BOOST_LEAF_CHECK(session.optimize());   // uses MySolver; default LM if none set
+```
+
+Custom **potentials**, **solvers**, **ML energy heads**, and whole
+**force calculators** are all injected through this facade without recompiling
+the engine — the contracts are documented in [`docs/extension.md`](docs/extension.md),
+and the design behind them in [`docs/design.md`](docs/design.md).
 
 ## License
 

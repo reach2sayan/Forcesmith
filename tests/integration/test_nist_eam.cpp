@@ -147,7 +147,7 @@ TEST(NIST_EAM, Cu_FCC_CohesiveEnergy_IsPhysical) {
     leaf::try_handle_all(
         [&]() -> leaf::result<void> {
             BOOST_LEAF_AUTO(fm, parse_force_model(kCuTrue));
-            auto& eam = std::get<EAMForceCalculator>(fm);
+            auto& eam = (*(fm).target<EAMForceCalculator>());
             auto cfg = make_fcc_cell(3.615);
             eam.eval_forces(cfg);
             e_per_atom = cfg.calc_energy / static_cast<double>(cfg.atoms.size());
@@ -167,7 +167,7 @@ TEST(NIST_EAM, Al_FCC_CohesiveEnergy_IsPhysical) {
     leaf::try_handle_all(
         [&]() -> leaf::result<void> {
             BOOST_LEAF_AUTO(fm, parse_force_model(kAlTrue));
-            auto& eam = std::get<EAMForceCalculator>(fm);
+            auto& eam = (*(fm).target<EAMForceCalculator>());
             auto cfg = make_fcc_cell(4.046);
             eam.eval_forces(cfg);
             e_per_atom = cfg.calc_energy / static_cast<double>(cfg.atoms.size());
@@ -196,7 +196,7 @@ TEST(NIST_EAM, Cu_Optimizer_Recovers_Predictive_Quality_From_Perturbed_Pair) {
     leaf::try_handle_all(
         [&]() -> leaf::result<void> {
             BOOST_LEAF_AUTO(fm_true, parse_force_model(kCuTrue));
-            auto& eam_true = std::get<EAMForceCalculator>(fm_true);
+            auto& eam_true = (*(fm_true).target<EAMForceCalculator>());
 
             std::mt19937 rng_disp(42), rng_noise(99);
             auto cfgs = make_training_set(3.615, 3, 0.05, eam_true,
@@ -216,7 +216,7 @@ TEST(NIST_EAM, Cu_Optimizer_Recovers_Predictive_Quality_From_Perturbed_Pair) {
             fx_true = cfg_val.atoms[0].calc_force[0];
             e_true  = cfg_val.calc_energy / static_cast<double>(cfg_val.atoms.size());
 
-            auto& eam_opt = std::get<EAMForceCalculator>(fm_pert);
+            auto& eam_opt = (*(fm_pert).target<EAMForceCalculator>());
             eam_opt.eval_forces(cfg_val);
             fx_opt = cfg_val.atoms[0].calc_force[0];
             e_opt  = cfg_val.calc_energy / static_cast<double>(cfg_val.atoms.size());
@@ -241,7 +241,7 @@ TEST(NIST_EAM, Al_Optimizer_Recovers_Predictive_Quality_From_Perturbed_Pair) {
     leaf::try_handle_all(
         [&]() -> leaf::result<void> {
             BOOST_LEAF_AUTO(fm_true, parse_force_model(kAlTrue));
-            auto& eam_true = std::get<EAMForceCalculator>(fm_true);
+            auto& eam_true = (*(fm_true).target<EAMForceCalculator>());
 
             std::mt19937 rng_disp(42), rng_noise(99);
             auto cfgs = make_training_set(4.046, 3, 0.05, eam_true,
@@ -260,7 +260,7 @@ TEST(NIST_EAM, Al_Optimizer_Recovers_Predictive_Quality_From_Perturbed_Pair) {
             fx_true = cfg_val.atoms[0].calc_force[0];
             e_true  = cfg_val.calc_energy / static_cast<double>(cfg_val.atoms.size());
 
-            auto& eam_opt = std::get<EAMForceCalculator>(fm_pert);
+            auto& eam_opt = (*(fm_pert).target<EAMForceCalculator>());
             eam_opt.eval_forces(cfg_val);
             fx_opt = cfg_val.atoms[0].calc_force[0];
             e_opt  = cfg_val.calc_energy / static_cast<double>(cfg_val.atoms.size());

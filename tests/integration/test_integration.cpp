@@ -169,7 +169,7 @@ TEST(Integration, EAMDimer_EnergyIsNegative) {
               }
             })"));
 
-            auto &eam = std::get<EAMForceCalculator>(fm);
+            auto &eam = (*(fm).target<EAMForceCalculator>());
             auto cfg = make_dimer({0.0, 0.0, 0.0}, {2.0, 0.0, 0.0});
             build_neighbor_list(cfg, 6.0);
             eam.eval_forces(cfg);
@@ -204,7 +204,7 @@ TEST(Integration, TersoffSi_ForceEnergyFDConsistency) {
               }]
             })"));
 
-            auto &tc = std::get<TersoffForceCalculator>(fm);
+            auto &tc = (*(fm).target<TersoffForceCalculator>());
             const double rcut = 3.5;
 
             auto energy_at = [&](double x0) -> double {
@@ -263,7 +263,7 @@ TEST(Integration, StiwebSi_TetAngleMinimizesEnergy) {
               "lambda":[21.0]
             })"));
 
-            auto &sw = std::get<StiwebForceCalculator>(fm);
+            auto &sw = (*(fm).target<StiwebForceCalculator>());
             const double rcut = 4.0;
 
             auto cfg_tet = make_trimer({0.0,0.0,0.0}, {d,0.0,0.0}, pos_tet);
@@ -364,7 +364,7 @@ TEST(Integration, OptimizerLJ_ConvergesFromWrongParams) {
             run_optimizer(parsed.configs, model, opts,
                           Solver{EigenLMSolver{500}});
 
-            const auto& pair_calc = std::get<PairForceCalculator>(model);
+            const auto& pair_calc = (*(model).target<PairForceCalculator>());
             Eigen::VectorXd x(pair_calc.pair[std::size_t{0}, std::size_t{0}].param_count());
             pair_calc.pair[std::size_t{0}, std::size_t{0}].gather_params(x, 0);
             eps_final = x[0]; // epsilon
@@ -398,7 +398,7 @@ TEST(Integration, EAMDimer_ForceConsistency) {
                            {"type":"sqrt","rmin":0.0,"rmax":5.0,
                             "A":-1.0,"B":1.0}]}
             })"));
-            auto &eam = std::get<EAMForceCalculator>(fm);
+            auto &eam = (*(fm).target<EAMForceCalculator>());
 
             const double h = 1e-5;
             auto energy_at = [&](double x0) {
@@ -439,7 +439,7 @@ TEST(Integration, EAM_ThreeAtom_NewtonThirdLaw) {
                            {"type":"sqrt","rmin":0.0,"rmax":5.0,
                             "A":-1.0,"B":1.0}]}
             })"));
-            auto &eam = std::get<EAMForceCalculator>(fm);
+            auto &eam = (*(fm).target<EAMForceCalculator>());
 
             // 3 distinct pairwise distances — embedding gradient couples all atoms
             auto cfg = make_trimer({0.0,0.0,0.0}, {2.0,0.0,0.0}, {0.0,2.5,0.0});
@@ -473,7 +473,7 @@ TEST(Integration, TersoffSi_TetCluster_MoreBoundThanDimer) {
                 "R":2.7,"S":3.0
               }]
             })"));
-            auto &tc = std::get<TersoffForceCalculator>(fm);
+            auto &tc = (*(fm).target<TersoffForceCalculator>());
             const double r = 2.35;
 
             auto cfg_dimer = make_dimer({0.0,0.0,0.0}, {r,0.0,0.0});
@@ -526,7 +526,7 @@ TEST(Integration, OptimizerEAM_ConvergesFromWrongParams) {
         [&]() -> leaf::result<void> {
             // Build reference data from true model
             BOOST_LEAF_AUTO(fm_true, parse_force_model(kEAMTrue));
-            auto &eam_true = std::get<EAMForceCalculator>(fm_true);
+            auto &eam_true = (*(fm_true).target<EAMForceCalculator>());
 
             std::vector<Configuration> configs = {
                 make_dimer({0.0,0.0,0.0}, {2.0,0.0,0.0}),
@@ -557,7 +557,7 @@ TEST(Integration, OptimizerEAM_ConvergesFromWrongParams) {
                           Solver{EigenLMSolver{300}});
 
             // Evaluate with optimised params
-            auto &eam_opt = std::get<EAMForceCalculator>(fm_pert);
+            auto &eam_opt = (*(fm_pert).target<EAMForceCalculator>());
             auto cfg_opt = make_dimer({0.0,0.0,0.0}, {2.5,0.0,0.0});
             eam_opt.eval_forces(cfg_opt);
             fx_opt = cfg_opt.atoms[0].calc_force[0];
@@ -622,7 +622,7 @@ TEST(Integration, OptimizerTersoff_ConvergesFromWrongParams) {
 
     // Recover A and B
     Eigen::VectorXd x(2);
-    std::visit([&](const auto &m) { m.gather_params(x, std::size_t{0}); }, fc);
+    fc.gather_params(x, std::size_t{0});
     const double A_rec = x[0];
     const double B_rec = x[1];
 

@@ -17,7 +17,6 @@
 
 #include <cmath>
 #include <span>
-#include <variant>
 #include <vector>
 
 using namespace forcesmith;
@@ -67,7 +66,7 @@ double eval_residual(std::vector<Configuration> &configs, ForceCalculator &model
                      double energy_weight) {
   ForcesmithFunctor functor(configs, model, energy_weight);
   Eigen::VectorXd x(functor.inputs());
-  std::visit([&](const auto &m) { m.gather_params(x, std::size_t{0}); }, model);
+  model.gather_params(x, std::size_t{0});
 
   Eigen::VectorXd fvec(functor.values());
   functor(x, fvec);
@@ -80,7 +79,7 @@ void expect_reduces(ForceCalculator truth, ForceCalculator start,
                     std::vector<Configuration> configs, double energy_weight,
                     Solver solver, const char *tag) {
   for (auto &cfg : configs) {
-    std::visit([&](auto &m) { m.eval_forces(cfg); }, truth);
+    truth.eval_forces(cfg);
     for (auto &a : cfg.atoms) {
       a.ref.force = a.calc_force;
     }

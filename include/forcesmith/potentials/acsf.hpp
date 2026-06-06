@@ -35,7 +35,13 @@ namespace forcesmith {
 // families (G1-G3) channel over the neighbour species s; angular families
 // (G4-G5) channel over unordered species pairs. The underlying values double as
 // the block ids in AcsfLayout's DescriptorLayout (pushed in this order).
-enum class SymmetryFunctionFamily : std::size_t { G1, G2, G3, G4, G5 };
+enum class SymmetryFunctionFamily : std::size_t {
+  G1 = 0,
+  G2 = 1,
+  G3 = 2,
+  G4 = 3,
+  G5 = 5
+};
 
 // Flat layout of the ACSF descriptor vector — the contiguous blocks
 //   [G1 per species][G2 per species][G3 per species][G4 per pair][G5 per pair]
@@ -117,7 +123,7 @@ struct ACSF : MLBase<ACSF> {
 
 private:
   // A valid neighbour after distance/species filtering (collect_neighbours).
-  // `orig` is the index into atom.neighbors so the analytic gradients scatter
+  // `orig` index to atom.neighbors so the analytic gradients scatter
   // into the full-length, neighbour-parallel grad_neigh array.
   struct Neighbor {
     std::size_t orig_index;
@@ -135,6 +141,6 @@ private:
                           const AcsfLayout &L) const; // G4/G5
 };
 
-static_assert(ForceCalculatorModel<ACSF>);
+static_assert(CForceCalculator<ACSF>);
 
 } // namespace forcesmith
