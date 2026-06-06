@@ -15,6 +15,7 @@
 #include <filesystem>
 #include <functional>
 #include <numeric>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -83,6 +84,13 @@ struct Atom : Serializable<Atom> {
   void ZeroForce() { calc_force = Vec3::Zero(); }
 };
 
+struct NeighborListKey {
+  double rcut = -1.0;         // cutoff the list was built for
+  const void *pots = nullptr; // potential-table identity (pointer)
+  std::size_t sig = 0;        // geometry_signature(cfg)
+  bool operator==(const NeighborListKey &) const = default;
+};
+
 struct Configuration : Serializable<Configuration> {
   std::vector<Atom> atoms;
   BoundaryConditions bc = PeriodicBC(Mat3::Identity());
@@ -98,11 +106,9 @@ struct Configuration : Serializable<Configuration> {
   SymTens calc_stress = SymTens::Zero();
   double calc_limit = 0.0; // F(ρ) out-of-range penalty (RESCALE-style)
 
-  // TODO : A proper ting for a key
-  bool nl_valid = false;
-  double nl_rcut = -1.0;
-  const void *nl_pots = nullptr;
-  std::size_t nl_sig = 0;
+  // Neighbour-list cache key; none ⇒ no valid cached list. Transient (not
+  // serialized); a structural edit changes `sig`/`pots` and forces a rebuild.
+  std::optional<NeighborListKey> nl_key;
 
   [[nodiscard]] static boost::leaf::result<Configuration>
   from_text(std::string_view json_record);

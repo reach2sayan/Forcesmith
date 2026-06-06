@@ -37,16 +37,16 @@ std::size_t geometry_signature(const Configuration &cfg) {
   return h;
 }
 
-const RadialPotential *resolve_pot(const RadialPotentialPair *pots, const Atom &ai,
-                             const Atom &aj) {
+const RadialPotential *resolve_pot(const RadialPotentialPair *pots,
+                                   const Atom &ai, const Atom &aj) {
   if (pots && ai.type < pots->ntypes() && aj.type < pots->ntypes()) {
     return &(*pots)[ai.type, aj.type];
   }
   return nullptr;
 }
 
-void add_neighbor(Configuration &cfg, const RadialPotentialPair *pots, std::size_t i,
-                  std::size_t j, const Vec3 &d, double rcut2) {
+void add_neighbor(Configuration &cfg, const RadialPotentialPair *pots,
+                  std::size_t i, std::size_t j, const Vec3 &d, double rcut2) {
   if (d.squaredNorm() > rcut2) {
     return;
   }
@@ -110,14 +110,14 @@ void build_infinite(Configuration &cfg, double rcut2,
     }
 }
 
-void build_impl(Configuration &cfg, double rcut, const RadialPotentialPair *pots) {
+void build_impl(Configuration &cfg, double rcut,
+                const RadialPotentialPair *pots) {
   // Cache hit: an identical list was already built for THIS configuration
   // object (parent stamp rules out copies/loads, whose neighbour pointers would
   // dangle into the source) with the same cutoff, potential table and geometry.
-  const std::size_t sig = geometry_signature(cfg);
-  const void *pots_key = static_cast<const void *>(pots);
-  if (cfg.nl_valid && cfg.nl_rcut == rcut && cfg.nl_pots == pots_key &&
-      cfg.nl_sig == sig && !cfg.atoms.empty() &&
+  const NeighborListKey key{rcut, static_cast<const void *>(pots),
+                            geometry_signature(cfg)};
+  if (cfg.nl_key == key && !cfg.atoms.empty() &&
       cfg.atoms.front().parent == &cfg) {
     return;
   }
@@ -134,10 +134,7 @@ void build_impl(Configuration &cfg, double rcut, const RadialPotentialPair *pots
     build_infinite(cfg, rcut2, pots);
   }
 
-  cfg.nl_valid = true;
-  cfg.nl_rcut = rcut;
-  cfg.nl_pots = pots_key;
-  cfg.nl_sig = sig;
+  cfg.nl_key = key;
 }
 
 } // anonymous namespace
