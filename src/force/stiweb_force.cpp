@@ -20,7 +20,8 @@ auto sw_fields(const SWParams &p) {
 }
 
 // SW 2-body: v2(r) = (A·r^{−p} − B·r^{−q}) exp(δ/(r − a1)), r < a1
-// Matches forcesmith stiweb_2_value. Returns {v2, dv2/dr}; both zero for r ≥ a1.
+// Matches forcesmith stiweb_2_value. Returns {v2, dv2/dr}; both zero for r ≥
+// a1.
 std::pair<double, double> v2_dv2(double r, const SWParams &p) noexcept {
   if (r >= p.a1) {
     return {0.0, 0.0};
@@ -289,7 +290,7 @@ void StiwebForceCalculator::eval_forces(Configuration &cfg) const {
                         [](auto &a) { a.calc_force = Vec3::Zero(); });
 
   // 2-body loop
-  // Full neighbor list: each pair counted twice, factor 0.5 per entry. Each
+  // Full neighbour list: each pair counted twice, factor 0.5 per entry. Each
   // i–j bond flows: geometry → radial force → commit.
   for (auto &ai : cfg.atoms) {
     for (const auto &nb : ai.neighbors) {

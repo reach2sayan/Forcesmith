@@ -20,8 +20,8 @@ void init(const std::string &file) {
       file, max_size, max_files);
 
   std::vector<spdlog::sink_ptr> sinks{console, rotating};
-  auto logger =
-      std::make_shared<spdlog::logger>("forcesmith", sinks.begin(), sinks.end());
+  auto logger = std::make_shared<spdlog::logger>("forcesmith", sinks.begin(),
+                                                 sinks.end());
   logger->set_level(spdlog::level::info);
   logger->set_pattern("[%H:%M:%S.%e] [%^%l%$] %v");
 

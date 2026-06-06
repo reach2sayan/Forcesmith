@@ -13,13 +13,13 @@ remap_layout(const DescriptorLayout &old_L, const DescriptorLayout &new_L,
   std::vector<std::optional<Eigen::Index>> map(
       static_cast<std::size_t>(new_L.size()));
 
-  for (auto [b, blk] : std::views::enumerate(new_L.blocks_)) {
+  for (auto [b, blk] : new_L.blocks_ | std::views::enumerate) {
     const auto block = static_cast<std::size_t>(b);
     const std::size_t count = blk.count;
     const bool per_species = blk.nchan == S_new;
 
     if (per_species) {
-      for (auto [s, s_old] : std::views::enumerate(old_of_new)) {
+      for (auto [s, s_old] : old_of_new | std::views::enumerate) {
         if (!s_old) {
           continue;
         }

@@ -40,11 +40,11 @@ tbb::task_arena &shared_arena() {
   return arena;
 }
 
-// Pure residual evaluation: scatter params into `model`, evaluate every config
-// in parallel into its own disjoint slice of `fvec`, then append the (serial)
-// smoothness block. No shared-state mutation beyond `model`/`fvec`/`configs`,
-// so it is safe to call on per-thread copies from df(). Does NOT touch iter_ or
-// fire on_iteration — that is the caller's concern. Must run inside an arena.
+// Pure residual evaluation: scatter params into `model`,
+// (a) evaluate every config into its own disjoint slice of `fvec`,
+// then append the (serial) smoothness block.
+// No shared-state mutation beyond `model`/`fvec`/`configs`,
+// so it is safe to call on per-thread copies from df().
 void eval_into(std::span<Configuration> configs, ForceCalculator &model,
                const Eigen::VectorXd &x, Eigen::VectorXd &fvec,
                double energy_weight, double stress_weight, double smooth_weight,
@@ -60,11 +60,6 @@ void eval_into(std::span<Configuration> configs, ForceCalculator &model,
       [&](Configuration &cfg) {
         // Contiguous span → index of this config is its offset from the base.
         const std::size_t c = static_cast<std::size_t>(&cfg - configs.data());
-        // eval_forces mutates only this config (forces/energy/stress/limit +
-        // its own neighbour list); the model is read-only here. ML models serve
-        // config `c` from the descriptor cache built in prepare() via the
-        // indexed overload; the value type forwards to the plain eval_forces for
-        // calculators (analytic) that recompute from scratch.
         model.eval_forces(cfg, c);
 
         int row = row_offset[c];
@@ -89,8 +84,8 @@ void eval_into(std::span<Configuration> configs, ForceCalculator &model,
               stress_weight * (cfg.calc_stress(1, 2) - cfg.ref.stress(1, 2));
         }
         // EAM/ADP out-of-range ρ punishment (already weighted; squared by the
-        // LM objective → matches forcesmith's dsquare(limit_p)). Zero for models
-        // without an embedding term.
+        // LM objective
+        // Zero for models without an embedding term.
         fvec[row++] = cfg.calc_limit;
       });
 
@@ -102,13 +97,6 @@ void eval_into(std::span<Configuration> configs, ForceCalculator &model,
   }
 }
 
-// Parallel central-difference Jacobian on the cached path. Each parameter
-// column is independent: it perturbs a PRIVATE copy of the model (heads
-// deep-copied, the big descriptor cache shared read-only via shared_ptr) and
-// writes into its own disjoint fjac column and private force buffer — zero
-// shared mutable state, so the column loop fills every core. Residual layout
-// mirrors eval_into exactly (ML models carry no smoothness block, so values ==
-// row_offset.back()).
 void df_cached_parallel(ForceCalculator &m0, const Eigen::VectorXd &x,
                         Eigen::MatrixXd &fjac, std::span<Configuration> configs,
                         const std::vector<int> &row_offset, int values,
@@ -161,12 +149,6 @@ void df_cached_parallel(ForceCalculator &m0, const Eigen::VectorXd &x,
   });
 }
 
-// Exact analytic Jacobian for cache-backed ML models whose heads supply
-// parameter derivatives. ONE pass over atoms (parallel over configs) instead of
-// the FD path's 2·P passes: scatter θ once, then each config contracts its
-// cached descriptor gradients with the heads' ∂E/∂θ and ∂(∂E/∂D)/∂θ. Configs
-// own disjoint fjac row blocks, so no locking. Drop-in replacement for
-// df_cached_parallel — same residual layout, far cheaper for P≫1.
 void df_cached_analytic(ForceCalculator &m0, const Eigen::VectorXd &x,
                         Eigen::MatrixXd &fjac, std::span<Configuration> configs,
                         const std::vector<int> &row_offset,
@@ -194,8 +176,9 @@ void df_cached_analytic(ForceCalculator &m0, const Eigen::VectorXd &x,
 } // namespace
 
 ForcesmithFunctor::ForcesmithFunctor(std::span<Configuration> configs,
-                             ForceCalculator model, double energy_weight,
-                             double stress_weight, double smooth_weight)
+                                     ForceCalculator model,
+                                     double energy_weight, double stress_weight,
+                                     double smooth_weight)
     : configs_(configs), model_(std::move(model)),
       energy_weight_(energy_weight), stress_weight_(stress_weight),
       smooth_weight_(smooth_weight),
@@ -221,7 +204,7 @@ ForcesmithFunctor::ForcesmithFunctor(std::span<Configuration> configs,
 }
 
 int ForcesmithFunctor::operator()(const Eigen::VectorXd &x,
-                              Eigen::VectorXd &fvec) const {
+                                  Eigen::VectorXd &fvec) const {
   shared_arena().execute([&] {
     eval_into(configs_, model_, x, fvec, energy_weight_, stress_weight_,
               smooth_weight_, row_offset_, smooth_count_);
@@ -233,7 +216,7 @@ int ForcesmithFunctor::operator()(const Eigen::VectorXd &x,
 }
 
 bool ForcesmithFunctor::df_cached(const Eigen::VectorXd &x,
-                              Eigen::MatrixXd &fjac) const {
+                                  Eigen::MatrixXd &fjac) const {
   bool handled = false;
   shared_arena().execute([&] {
     if (!model_.has_cache()) {
@@ -251,7 +234,8 @@ bool ForcesmithFunctor::df_cached(const Eigen::VectorXd &x,
   return handled;
 }
 
-int ForcesmithFunctor::df(const Eigen::VectorXd &x, Eigen::MatrixXd &fjac) const {
+int ForcesmithFunctor::df(const Eigen::VectorXd &x,
+                          Eigen::MatrixXd &fjac) const {
   if (!df_cached(x, fjac)) {
     constexpr double delta = 1e-5;
     Eigen::VectorXd fp(values_), fm(values_), xp = x;

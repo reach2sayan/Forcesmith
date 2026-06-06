@@ -33,8 +33,8 @@ leaf::error_id fail(std::string_view label, std::string msg) {
 
 // Parse a sub-object of shape {"format": ..., "potentials": [...]}
 // into a flat vector<RadialPotential>. Mirrors the logic in parse_potential.
-leaf::result<std::vector<RadialPotential>> parse_pot_list(const json &sub,
-                                                    std::string_view label) {
+leaf::result<std::vector<RadialPotential>>
+parse_pot_list(const json &sub, std::string_view label) {
   if (!sub.contains("format")) {
     return fail(label, "missing 'format' key");
   }
@@ -72,7 +72,8 @@ leaf::result<void> fill_pair(RadialPotentialPair &mat, const json &sub,
   return {};
 }
 
-// Load ntypes potentials from sub into a RadialPotentialArray (TypeArray<RadialPotential>).
+// Load ntypes potentials from sub into a RadialPotentialArray
+// (TypeArray<RadialPotential>).
 leaf::result<void> fill_arr(RadialPotentialArray &arr, const json &sub,
                             std::size_t ntypes, std::string_view label) {
   auto r = parse_pot_list(sub, label);
@@ -338,8 +339,9 @@ leaf::result<ForceCalculator> build_tersoff(json &j, std::size_t ntypes) {
     tp.S = p.at("S").get<double>();
     // Optional bond-order mixing weight (forcesmith's omega). Absent → 1.0,
     // fixed (diagonal/same-type pairs); present → free for fitting.
-    if (p.contains("omega"))
+    if (p.contains("omega")) {
       tp.omega = Param{p.at("omega").get<double>(), false};
+    }
     calc.params.emplace_back(tp);
   }
 
@@ -396,9 +398,9 @@ leaf::result<ForceCalculator> build_stiweb(json &j, std::size_t ntypes) {
   return ForceCalculator{std::move(calc)};
 }
 
-// Per-head JSON parser: linear (coeffs + bias). The symmetric counterpart of the
-// build_json_from_head writer CPO; adding a head type means adding a parser like
-// this plus a dispatch branch in parse_head.
+// Per-head JSON parser: linear (coeffs + bias). The symmetric counterpart of
+// the build_json_from_head writer CPO; adding a head type means adding a parser
+// like this plus a dispatch branch in parse_head.
 leaf::result<EnergyHead> parse_linear_head(const json &h, std::size_t S) {
   if (!h.contains("coeffs") || !h["coeffs"].is_array()) {
     return fail("ml", "linear head missing 'coeffs' array");
@@ -431,8 +433,8 @@ leaf::result<EnergyHead> parse_head(const json &h, std::size_t S) {
 // Attach the per-type heads (positional, one per element slot) to an MLBase
 // model and wrap it as a ForceCalculator. S is the model's descriptor size.
 template <class Model>
-leaf::result<ForceCalculator> finish_ml(Model calc, json &j,
-                                        std::size_t ntypes, std::size_t S) {
+leaf::result<ForceCalculator> finish_ml(Model calc, json &j, std::size_t ntypes,
+                                        std::size_t S) {
   if (!j.contains("heads") || !j["heads"].is_array()) {
     return fail("ml", "missing 'heads' array");
   }
@@ -449,9 +451,10 @@ leaf::result<ForceCalculator> finish_ml(Model calc, json &j,
     }
     calc.heads.emplace_back(std::move(*rh));
   }
-  // Optional per-feature standardization (one {mean, inv_std} per type), written
-  // by output_writer's add_standardization. Absent → identity transform (older
-  // startpot files still load). Each vector is empty (type had no atoms) or S long.
+  // Optional per-feature standardization (one {mean, inv_std} per type),
+  // written by output_writer's add_standardization. Absent → identity transform
+  // (older startpot files still load). Each vector is empty (type had no atoms)
+  // or S long.
   if (j.contains("standardization")) {
     const auto &st = j["standardization"];
     if (!st.is_array() || st.size() != ntypes) {
@@ -497,14 +500,13 @@ leaf::result<ForceCalculator> build_ml(json &j, std::size_t ntypes) {
     // G1: accept either a count ("g1": 1) or an array of empty objects.
     if (desc.contains("g1")) {
       const json &g1 = desc["g1"];
-      calc.g1 = g1.is_number() ? g1.get<std::size_t>()
+      calc.g1 = g1.is_number()  ? g1.get<std::size_t>()
                 : g1.is_array() ? g1.size()
                                 : std::size_t{0};
     }
     if (desc.contains("g2") && desc["g2"].is_array()) {
       for (const auto &g : desc["g2"]) {
-        calc.radial.push_back(
-            {g.at("eta").get<double>(), g.value("rs", 0.0)});
+        calc.radial.push_back({g.at("eta").get<double>(), g.value("rs", 0.0)});
       }
     }
     if (desc.contains("g3") && desc["g3"].is_array()) {
@@ -569,9 +571,9 @@ leaf::result<ForceCalculator> build_ml(json &j, std::size_t ntypes) {
     // neither is given), so an empty descriptor never slips through.
     if (desc.contains("k2") || desc.contains("k3")) {
       calc.k2 = desc.contains("k2") ? std::optional(read_grid("k2", def_k2))
-                                     : std::nullopt;
+                                    : std::nullopt;
       calc.k3 = desc.contains("k3") ? std::optional(read_grid("k3", def_k3))
-                                     : std::nullopt;
+                                    : std::nullopt;
     } else {
       calc.k2 = read_grid("k2", def_k2);
       calc.k3 = read_grid("k3", def_k3);
@@ -587,8 +589,8 @@ leaf::result<ForceCalculator> build_ml(json &j, std::size_t ntypes) {
 }
 
 // Error policy for the force-model factory: an unknown "model" string maps to
-// forcesmith's existing "unsupported model" message. (The generic ForcesmithFactory
-// lives in forcesmith/io/factory.hpp.)
+// forcesmith's existing "unsupported model" message. (The generic
+// ForcesmithFactory lives in forcesmith/io/factory.hpp.)
 template <class IdentifierType, class AbstractProduct>
 struct UnsupportedModelError {
   static leaf::result<AbstractProduct> OnUnknownType(const IdentifierType &id) {
@@ -600,8 +602,8 @@ struct UnsupportedModelError {
 // The concrete force-model factory: "model" string → per-model builder.
 using ModelFactory =
     ForcesmithFactory<ForceCalculator, std::string,
-                  leaf::result<ForceCalculator> (*)(json &, std::size_t),
-                  UnsupportedModelError>;
+                      leaf::result<ForceCalculator> (*)(json &, std::size_t),
+                      UnsupportedModelError>;
 
 const ModelFactory &model_factory() {
   static const ModelFactory factory = [] {

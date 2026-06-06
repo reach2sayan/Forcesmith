@@ -8,8 +8,7 @@
 
 namespace forcesmith {
 
-// ---- LinearHead
-// --------------------------------------------------------------
+// LinearHead
 
 double LinearHead::energy(const Eigen::VectorXd &D) const {
   Eigen::VectorXd c(coeffs.size());

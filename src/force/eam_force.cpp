@@ -155,8 +155,6 @@ double EAMForceCalculator::max_cutoff() const {
 
 void EAMForceCalculator::eval_forces(Configuration &cfg) const {
   build_neighbor_list(cfg, max_cutoff());
-
-  // ── Zero all scratch and output fields ──────────────────────────────────
   cfg.calc_energy = 0.0;
   cfg.calc_stress = SymTens::Zero();
   cfg.calc_limit = 0.0;
@@ -178,7 +176,7 @@ void EAMForceCalculator::eval_forces(Configuration &cfg) const {
     return p.template target<SplinePotential>();
   });
 
-  // ── Pass 1: accumulate electron density ρ_i ─────────────────────────────
+  // Pass 1: accumulate electron density ρ_i
   // ρ_i = Σ_{j∈neighbors(i)} g_{t(j)}(r_ij)
   for (auto &ai : cfg.atoms) {
     for (const auto &nb : ai.neighbors) {
@@ -190,11 +188,9 @@ void EAMForceCalculator::eval_forces(Configuration &cfg) const {
     }
   }
 
-  // ── After pass 1: embedding energy + gradF_i = dF_i/dρ_i ────────────────
+  // After pass 1: embedding energy + gradF_i = dF_i/dρ_i
   // Out-of-range ρ is clamped to the embedding table's [begin,end] and the
-  // overshoot is punished via cfg.calc_limit (matches forcesmith's RESCALE
-  // branch, force_eam.c:334-358): F(ρ) is evaluated at the clamped ρ, never
-  // extrapolated.
+  // overshoot is punished via cfg.calc_limit
   for (auto &ai : cfg.atoms) {
     const auto [rho_begin, rho_end] = embedding[ai].span();
     if (ai.rho > rho_end) {
@@ -211,7 +207,7 @@ void EAMForceCalculator::eval_forces(Configuration &cfg) const {
     ai.gradF = emb_dF;
   }
 
-  // ── Pass 2: pair + embedding-gradient forces ─────────────────────────────
+  // Pass 2: pair + embedding-gradient forces
   // Force on atom i from neighbor j:
   //   F_ij = [dφ_{ij}/dr + gradF_i × dg_{t(j)}/dr + gradF_j × dg_{t(i)}/dr] ×
   //   r̂_{ij}
@@ -261,10 +257,10 @@ void EAMForceCalculator::prepare(std::span<Configuration> configs) const {
   // Phase 1 — build every neighbour list in parallel (disjoint per config).
   build_all_neighbor_lists(configs, max_cutoff());
   // Phase 2 — single-threaded: prime the spline-cache hints for the three
-  // radial-table roles a bond drives (φ, g_j, g_i). prepare_site mutates shared
-  // spline objects, so it stays serial. The bond distances are frozen for the
-  // rest of the fit, so every later eval_forces reuses these hints (the
-  // neighbour-list cache keeps the primed entries alive).
+  // radial-table roles a bond drives (φ, g_j, g_i). Thread Unsafe. The bond
+  // distances are frozen for the rest of the fit, so every later eval_forces
+  // reuses these hints (the neighbour-list cache keeps the primed entries
+  // alive).
   for (Configuration &cfg : configs) {
     for (Atom &ai : cfg.atoms) {
       const auto &g_i = density[ai];

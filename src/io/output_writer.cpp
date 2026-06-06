@@ -38,9 +38,8 @@ static leaf::result<json> sample_one(const RadialPotential &p, int nknots) {
     const double v = p.eval(r);
     if (!std::isfinite(v)) {
       return leaf::new_error(ParseError{
-          "non-finite potential value (" + std::to_string(v) +
-              ") at r=" + std::to_string(r) +
-              "; cannot tabulate potential for output",
+          "non-finite potential value (" + std::to_string(v) + ") at r=" +
+              std::to_string(r) + "; cannot tabulate potential for output",
           0});
     }
     pot["knots"].push_back(v);
@@ -308,8 +307,9 @@ leaf::result<void> write_native_lmbtr(const std::filesystem::path &path,
   return {};
 }
 
-leaf::result<void> write_lammps(const std::filesystem::path &path,
-                                const std::vector<RadialPotential> &potentials) {
+leaf::result<void>
+write_lammps(const std::filesystem::path &path,
+             const std::vector<RadialPotential> &potentials) {
   OPEN_FILE_WITH_HANDLE(f, path);
 
   for (auto [idx, p] : std::views::enumerate(potentials)) {

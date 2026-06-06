@@ -152,11 +152,12 @@ void ADPForceCalculator::eval_forces(Configuration &cfg) const {
       const auto &g = density[aj];
       const auto &dip = dipole[ai, aj];
       const auto &quad = quadrupole[ai, aj];
-      // eval_gated returns 0 outside each table's own cutoff (the += then no-ops).
+      // eval_gated returns 0 outside each table's own cutoff (the += then
+      // no-ops).
       rho += eval_gated(g, nb.sites[kSiteGj], r);
       mu += eval_gated(dip, nb.sites[kSiteDipole], r) * nb.dist;
-      lambda +=
-          eval_gated(quad, nb.sites[kSiteQuad], r) * (nb.dist * nb.dist.transpose());
+      lambda += eval_gated(quad, nb.sites[kSiteQuad], r) *
+                (nb.dist * nb.dist.transpose());
     }
 
     ai.rho += rho;
@@ -240,8 +241,10 @@ void ADPForceCalculator::prepare(std::span<Configuration> configs) const {
             in_range(phi_pot, r) ? phi_pot.prepare_site(r) : SiteId{};
         nb.sites[kSiteGj] = in_range(g_j, r) ? g_j.prepare_site(r) : SiteId{};
         nb.sites[kSiteGi] = in_range(g_i, r) ? g_i.prepare_site(r) : SiteId{};
-        nb.sites[kSiteDipole] = in_range(dip, r) ? dip.prepare_site(r) : SiteId{};
-        nb.sites[kSiteQuad] = in_range(quad, r) ? quad.prepare_site(r) : SiteId{};
+        nb.sites[kSiteDipole] =
+            in_range(dip, r) ? dip.prepare_site(r) : SiteId{};
+        nb.sites[kSiteQuad] =
+            in_range(quad, r) ? quad.prepare_site(r) : SiteId{};
       }
     }
   }

@@ -27,18 +27,19 @@ namespace leaf = boost::leaf;
 
 namespace {
 
-using Maker = std::function<RadialPotential(std::span<const double>, double, double)>;
+using RadialPotentialMaker =
+    std::function<RadialPotential(std::span<const double>, double, double)>;
 struct Entry {
   int nparams;
   std::vector<std::string> param_names;
-  Maker maker;
+  RadialPotentialMaker maker;
 };
 using Registry = std::unordered_map<std::string_view, Entry>;
 
 template <typename... Names>
   requires(std::convertible_to<Names, std::string_view> && ...)
 void add(Registry &reg, int nparams, std::vector<std::string> pnames,
-         Maker maker, Names... names) {
+         RadialPotentialMaker maker, Names... names) {
   Entry e{nparams, std::move(pnames), std::move(maker)};
   (reg.try_emplace(std::string_view{names}, e), ...);
 }
@@ -128,8 +129,8 @@ struct ParamSpec {
 };
 
 // Each named parameter may be either a bare number (→ value only, unbounded) or
-// an object {"value": x, "min": lo, "max": hi, "fixed": bool}. Bare numbers keep
-// the legacy format working unchanged.
+// an object {"value": x, "min": lo, "max": hi, "fixed": bool}. Bare numbers
+// keep the legacy format working unchanged.
 leaf::result<std::vector<ParamSpec>>
 gather_param_specs(const json &p, const std::vector<std::string> &names,
                    const std::string &type_name) {
@@ -178,8 +179,8 @@ leaf::result<std::vector<double>> knot_values(const json &p) {
 }
 
 // ── Per-spec creators ─────────────────────────────────────────────────────
-// Each builds ONE RadialPotential from a single self-describing JSON spec object;
-// these are the concrete products the format factory hands out.
+// Each builds ONE RadialPotential from a single self-describing JSON spec
+// object; these are the concrete products the format factory hands out.
 
 // analytic: read "type" → its registry entry → radial range → its named
 // parameters (value + optional per-parameter [min,max] box and fixed flag).
@@ -238,8 +239,8 @@ struct UnsupportedFormatError {
 // The concrete potential-format factory: format string → per-spec creator.
 using PotentialFactory =
     ForcesmithFactory<RadialPotential, std::string,
-                  leaf::result<RadialPotential> (*)(const json &),
-                  UnsupportedFormatError>;
+                      leaf::result<RadialPotential> (*)(const json &),
+                      UnsupportedFormatError>;
 
 const PotentialFactory &format_factory() {
   static const PotentialFactory factory = [] {
@@ -270,8 +271,10 @@ leaf::result<RadialPotential> one_potential(const json &p) {
 
 } // anonymous namespace
 
-leaf::result<std::vector<RadialPotential>> parse_potential(std::string_view input) {
-  auto fail = [](std::string msg) -> leaf::result<std::vector<RadialPotential>> {
+leaf::result<std::vector<RadialPotential>>
+parse_potential(std::string_view input) {
+  auto fail =
+      [](std::string msg) -> leaf::result<std::vector<RadialPotential>> {
     return leaf::new_error(ParseError{std::move(msg), 0});
   };
 
@@ -289,8 +292,8 @@ leaf::result<std::vector<RadialPotential>> parse_potential(std::string_view inpu
     const auto &pots_arr = j["potentials"];
 
     if (!format_factory().IsRegistered(fmt)) {
-      return UnsupportedFormatError<std::string,
-                                    std::vector<RadialPotential>>::OnUnknownType(fmt);
+      return UnsupportedFormatError<
+          std::string, std::vector<RadialPotential>>::OnUnknownType(fmt);
     }
 
     std::vector<RadialPotential> potentials;
@@ -321,7 +324,8 @@ std::optional<std::size_t> analytic_param_index(std::string_view type,
 
 namespace forcesmith {
 
-boost::leaf::result<RadialPotential> RadialPotential::from_text(std::string_view text) {
+boost::leaf::result<RadialPotential>
+RadialPotential::from_text(std::string_view text) {
   return io::catch_json([&] {
     auto j = nlohmann::json::parse(text);
     return io::one_potential(j);

@@ -25,8 +25,9 @@ namespace {
 // Required key present → sub-json by pointer (avoids result<T&>).
 [[nodiscard]] leaf::result<const json *>
 require_key(const json &obj, const char *key, std::string_view ctx) {
-  if (!obj.contains(key))
+  if (!obj.contains(key)) {
     return err(std::string(ctx) + ": missing key '" + key + "'");
+  }
   return &obj[key];
 }
 
@@ -38,10 +39,8 @@ get_array_n(const json &arr, std::string_view ctx) {
     return err(std::string(ctx) + ": must be an array of " + std::to_string(N) +
                " doubles");
   std::array<double, N> out{};
-  std::ranges::transform(arr, out.begin(),
-                         [](const auto& x) {
-                             return x.template get<double>();
-                         });
+  std::ranges::transform(
+      arr, out.begin(), [](const auto &x) { return x.template get<double>(); });
   return out;
 }
 

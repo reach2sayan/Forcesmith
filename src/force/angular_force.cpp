@@ -137,7 +137,8 @@ void AngularForceCalculator::eval_forces(Configuration &cfg) const {
         const auto [f2, df2] = rad_k.eval_and_deriv(r2);
 
         const double c = d1.dot(d2) * inv_r1 * inv_r2;
-        // g indexed by the central atom's type (matches forcesmith force_ang.c).
+        // g indexed by the central atom's type (matches forcesmith
+        // force_ang.c).
         const auto [g, dg] = angular[ai.type].eval_and_deriv(c);
 
         cfg.calc_energy += f1 * f2 * g;
