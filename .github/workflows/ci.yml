@@ -1,0 +1,108 @@
+name: CI
+
+# Builds Forcesmith with GCC, Clang and MSVC.
+#
+# NOTE on MSVC: the current CMake is Unix-oriented — IPOPT + MUMPS are built
+# from source with autotools/make into .so files (cmake/FetchIPOPT.cmake), the
+# warnings target hard-codes GCC/Clang flags (-march=native, -fsanitize, ...),
+# and $ORIGIN RPATH is ELF-only. The MSVC job is therefore best-effort and is
+# allowed to fail until the build is made portable. Remove `continue-on-error`
+# once Windows is supported.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  linux:
+    name: ${{ matrix.compiler }} (Ubuntu)
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - compiler: gcc
+            cc: gcc-14
+            cxx: g++-14
+          - compiler: clang
+            cc: clang-18
+            cxx: clang++-18
+    env:
+      CC: ${{ matrix.cc }}
+      CXX: ${{ matrix.cxx }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # Ubuntu 24.04 (noble) ships Boost 1.83, Eigen 3.4 and TBB — matching the
+      # minimums in cmake/Dependencies.cmake. IPOPT/MUMPS are built from source,
+      # so we also need a Fortran compiler, autotools and BLAS/LAPACK.
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            ninja-build ccache \
+            libeigen3-dev \
+            libboost-serialization1.83-dev libboost-program-options1.83-dev libboost-dev \
+            libtbb-dev \
+            gfortran pkg-config patch \
+            libblas-dev liblapack-dev \
+            ${{ matrix.cc }} ${{ matrix.cxx }}
+
+      - name: ccache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ccache
+          key: ccache-${{ matrix.compiler }}-${{ github.sha }}
+          restore-keys: ccache-${{ matrix.compiler }}-
+
+      # MKL is optional (FORCESMITH_USE_MKL) and not available on the runner, so
+      # disable it and fall back to Eigen's built-in kernels.
+      - name: Configure
+        run: >
+          cmake --preset ci
+          -DFORCESMITH_USE_MKL=OFF
+
+      - name: Build
+        run: cmake --build --preset ci
+
+      - name: Test
+        run: ctest --preset ci
+
+  windows:
+    name: MSVC (Windows)
+    runs-on: windows-2022
+    # Best-effort: the build is not yet portable to MSVC (see header note).
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ilammy/msvc-dev-cmd@v1
+
+      # vcpkg (preinstalled at VCPKG_INSTALLATION_ROOT) supplies the manifest-less
+      # dependencies. ipopt is available as a vcpkg port, so MKL/IPOPT from-source
+      # are not used on this platform.
+      - name: Install dependencies (vcpkg)
+        shell: bash
+        run: |
+          vcpkg install eigen3 tbb boost-serialization boost-program-options ipopt --triplet x64-windows
+
+      - name: Configure
+        shell: bash
+        run: >
+          cmake -S . -B build/ci -G Ninja
+          -DCMAKE_BUILD_TYPE=Release
+          -DFORCESMITH_USE_MKL=OFF
+          -DCMAKE_TOOLCHAIN_FILE="$VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake"
+
+      - name: Build
+        run: cmake --build build/ci
+
+      - name: Test
+        run: ctest --test-dir build/ci --output-on-failure
