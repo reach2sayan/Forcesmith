@@ -1,5 +1,7 @@
 # Forcesmith
 
+[![CI](https://github.com/reach2sayan/Potfit/actions/workflows/ci.yml/badge.svg)](https://github.com/reach2sayan/Potfit/actions/workflows/ci.yml)
+
 A modern **C++23** reimplementation of [potfit](https://www.potfit.net/), the
 open-source force-matching tool for constructing interatomic potentials. Given a
 set of reference configurations — atomic positions, forces, energies, and
