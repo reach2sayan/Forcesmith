@@ -57,5 +57,7 @@ data/
 *.log
 *.sh
 *.txt
+!CMakeLists.txt
+!**/CMakeLists.txt
 __pycache__/
 *.data
