@@ -10,22 +10,64 @@ namespace forcesmith {
 
 namespace {
 
-FORCE_INLINE double grid_point(const LMBTR::Grid &g, int b) {
-  if (g.n <= 1) {
-    return g.min;
-  }
-  return g.min + (g.max - g.min) * static_cast<double>(b) / (g.n - 1);
+// Per-grid Gaussian broadening constants. These depend only on the grid, so we
+// build them once per descriptor (in accumulate_k2/k3) and reuse across every
+// neighbour/pair, instead of recomputing them — and re-calling exp() for the
+// recurrence constant — on every broaden() call.
+struct GaussKernel {
+  double inv;   // 1 / (sigma * sqrt(2*pi)) — peak normalisation
+  double s2;    // 2 * sigma^2
+  double step;  // uniform grid spacing
+  double c;     // exp(-2*step^2/s2) — constant ratio of the recurrence
+  double cut;   // truncation radius (geometry units): Gaussian treated as 0
+                // beyond |grid - geom| > cut
+};
+
+GaussKernel make_kernel(const LMBTR::Grid &g) {
+  GaussKernel k{};
+  k.inv = 1.0 / (g.sigma * std::sqrt(2.0 * std::numbers::pi));
+  k.s2 = 2.0 * g.sigma * g.sigma;
+  k.step = (g.n > 1) ? (g.max - g.min) / (g.n - 1) : 0.0;
+  k.c = std::exp(-2.0 * k.step * k.step / k.s2);
+  // Beyond 5 sigma the unit-area Gaussian's remaining tail is ~3e-7, well below
+  // the descriptor's fitting tolerance; truncating there skips the bulk of grid
+  // points (and their mul-adds) for each broaden.
+  k.cut = 5.0 * g.sigma;
+  return k;
 }
 
 // Accumulate a unit-area Gaussian centred at `geom`, scaled by `w`, onto the
-// `g.n` grid points of `block`.
+// grid points of `block`. Only points within `k.cut` of `geom` are touched, and
+// the Gaussian over that uniform window is evaluated with an exact 3-term
+// recurrence (f(b+1) = f(b)*u(b), u(b+1) = u(b)*c), so just two exp() calls are
+// made regardless of window width. Result matches the per-point exp() form up to
+// floating-point rounding of the multiply chain plus the truncated tail.
 void broaden(Eigen::Ref<Eigen::VectorXd> block, const LMBTR::Grid &g,
-             double geom, double w) {
-  const double inv = 1.0 / (g.sigma * std::sqrt(2.0 * std::numbers::pi));
-  const double s2 = 2.0 * g.sigma * g.sigma;
-  for (int b : std::views::iota(0, g.n)) {
-    const double dx = grid_point(g, b) - geom;
-    block[b] += w * inv * std::exp(-dx * dx / s2);
+             const GaussKernel &k, double geom, double w) {
+  const double a = w * k.inv;
+  if (g.n <= 1) {
+    const double dx = g.min - geom;
+    block[0] += a * std::exp(-dx * dx / k.s2);
+    return;
+  }
+  // Index range [b0, b1] of grid points within the truncation window, where
+  // grid(b) = g.min + b*step, so the fractional index of `geom` is below.
+  const double center = (geom - g.min) / k.step;
+  const double rad = k.cut / k.step;
+  const int b0 = std::max(0, static_cast<int>(std::ceil(center - rad)));
+  const int b1 = std::min(g.n - 1, static_cast<int>(std::floor(center + rad)));
+  if (b0 > b1) {
+    return; // entire Gaussian falls outside the grid
+  }
+  // Seed the recurrence at b0: dx(b) = (g.min + b*step) - geom.
+  const double dx0 = g.min + static_cast<double>(b0) * k.step - geom;
+  double f = std::exp(-dx0 * dx0 / k.s2);                              // f(b0)
+  double u =
+      std::exp(-(2.0 * dx0 * k.step + k.step * k.step) / k.s2);        // ratio
+  for (int b = b0; b <= b1; ++b) {
+    block[b] += a * f;
+    f *= u;
+    u *= k.c;
   }
 }
 
@@ -61,9 +103,10 @@ void LMBTR::accumulate_k2(Eigen::VectorXd &values,
                           const std::vector<Neighbor> &nb, const Grid &g,
                           const LmbtrLayout &L) const {
   const auto n = static_cast<Eigen::Index>(g.n);
+  const GaussKernel k = make_kernel(g);
   for (const Neighbor &j : nb) {
     const double w = std::exp(-j.r / weight_scale);
-    broaden(values.segment(L.k2(j.s), n), g, j.r, w);
+    broaden(values.segment(L.k2(j.s), n), g, k, j.r, w);
   }
 }
 
@@ -73,6 +116,7 @@ void LMBTR::accumulate_k3(Eigen::VectorXd &values,
                           const LmbtrLayout &L) const {
   const std::size_t S = ntypes;
   const auto n = static_cast<Eigen::Index>(g.n);
+  const GaussKernel kern = make_kernel(g);
   for (auto [j, k] : strict_upper_triangle(nb.size())) {
     const double rij = nb[j].r, rik = nb[k].r;
     const double costh =
@@ -80,7 +124,7 @@ void LMBTR::accumulate_k3(Eigen::VectorXd &values,
     const double rjk = (nb[k].d - nb[j].d).norm();
     const double w = std::exp(-(rij + rik + rjk) / weight_scale);
     const std::size_t po = pair_ordinal(nb[j].s, nb[k].s, S);
-    broaden(values.segment(L.k3(po), n), g, costh, w);
+    broaden(values.segment(L.k3(po), n), g, kern, costh, w);
   }
 }
 
