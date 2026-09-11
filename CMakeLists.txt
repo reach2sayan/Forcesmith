@@ -143,7 +143,9 @@ add_executable(forcesmith_cli
         src/cli/init.cpp
         src/cli/solver_registry.cpp
         src/cli/app.cpp)
-set_target_properties(forcesmith_cli PROPERTIES OUTPUT_NAME forcesmith)
+# MSVC gives every exe an import lib; keep it off the static forcesmith.lib.
+set_target_properties(forcesmith_cli PROPERTIES OUTPUT_NAME forcesmith
+        ARCHIVE_OUTPUT_NAME forcesmith_cli)
 target_include_directories(forcesmith_cli PRIVATE
         "${CMAKE_CURRENT_SOURCE_DIR}/include")
 target_link_libraries(forcesmith_cli PRIVATE forcesmith_warnings forcesmith Boost::program_options)
