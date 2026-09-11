@@ -15,6 +15,8 @@
 #include <ranges>
 #include <vector>
 
+// MSVC has no weak symbols.
+#if !defined(_MSC_VER)
 namespace {
 extern "C" void openblas_set_num_threads(int) __attribute__((weak));
 
@@ -24,6 +26,7 @@ const int kThreadingHygiene = [] {
   return 0;
 }();
 } // namespace
+#endif
 
 namespace forcesmith {
 

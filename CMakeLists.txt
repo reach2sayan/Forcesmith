@@ -33,12 +33,16 @@ else ()
 endif ()
 
 add_library(forcesmith_warnings INTERFACE)
-target_compile_options(forcesmith_warnings INTERFACE
-        -Wall -Wextra -Wpedantic -Wshadow -Wnon-virtual-dtor
-        $<$<CONFIG:Debug>:-g -fsanitize=address,undefined>
-        $<$<CONFIG:Release>:-O3 -march=native -DNDEBUG>)
+if (MSVC)
+    target_compile_options(forcesmith_warnings INTERFACE /W4 /permissive-)
+else ()
+    target_compile_options(forcesmith_warnings INTERFACE
+            -Wall -Wextra -Wpedantic -Wshadow -Wnon-virtual-dtor
+            $<$<CONFIG:Debug>:-g -fsanitize=address,undefined>
+            $<$<CONFIG:Release>:-O3 -march=native -DNDEBUG>)
 
-target_link_options(forcesmith_warnings INTERFACE $<$<CONFIG:Debug>:-fsanitize=address,undefined>)
+    target_link_options(forcesmith_warnings INTERFACE $<$<CONFIG:Debug>:-fsanitize=address,undefined>)
+endif ()
 
 set(FORCESMITH_ENGINE_SOURCES
         src/core/checkpoint.cpp
@@ -116,7 +120,14 @@ endif ()
 set_target_properties(forcesmith_engine PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 # The programmatic Forcesmith API (forcesmith::Forcesmith)
-add_library(forcesmith SHARED src/api/forcesmith.cpp src/io/loaders.cpp)
+# The API carries no dllexport annotations, so a Windows DLL would export
+# nothing and produce no import library to link against.
+if (WIN32)
+    set(FORCESMITH_LIBRARY_TYPE STATIC)
+else ()
+    set(FORCESMITH_LIBRARY_TYPE SHARED)
+endif ()
+add_library(forcesmith ${FORCESMITH_LIBRARY_TYPE} src/api/forcesmith.cpp src/io/loaders.cpp)
 target_include_directories(forcesmith PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include")
 target_link_libraries(forcesmith PUBLIC forcesmith_engine)
 target_link_libraries(forcesmith PRIVATE forcesmith_warnings)

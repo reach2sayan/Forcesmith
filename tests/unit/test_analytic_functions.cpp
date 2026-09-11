@@ -2,6 +2,7 @@
 
 #include <gtest/gtest.h>
 #include <cmath>
+#include <numbers>
 
 using namespace forcesmith;
 
@@ -278,7 +279,7 @@ void expect_value(double got, double want, const char *what, double r) {
 double ref_fc(double r, double R, double S) {
     if (r <= R) return 1.0;
     if (r >= S) return 0.0;
-    return 0.5 + 0.5 * std::cos(M_PI * (r - R) / (S - R));
+    return 0.5 + 0.5 * std::cos(std::numbers::pi * (r - R) / (S - R));
 }
 double ref_sc(double r, double r0, double h) {
     if (r >= r0) return 0.0;

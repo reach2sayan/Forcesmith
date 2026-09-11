@@ -119,7 +119,7 @@ FetchContent_MakeAvailable(nlohmann_json)
 
 FetchContent_Declare(spdlog
         GIT_REPOSITORY https://github.com/gabime/spdlog.git
-        GIT_TAG v1.14.1
+        GIT_TAG v1.15.3  # bundled fmt < 11 fails consteval format strings on Clang >= 19
         GIT_SHALLOW TRUE
 )
 FetchContent_GetProperties(spdlog)

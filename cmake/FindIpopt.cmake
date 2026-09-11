@@ -10,7 +10,8 @@ if (PKG_CONFIG_FOUND)
 endif ()
 
 find_path(IPOPT_INCLUDE_DIR
-        NAMES coin/IpIpoptApplication.hpp IpIpoptApplication.hpp
+        NAMES IpIpoptApplication.hpp
+        PATH_SUFFIXES coin-or coin
         HINTS
         ${IPOPT_ROOT}/include
         ${PC_IPOPT_INCLUDE_DIRS}
@@ -20,8 +21,9 @@ find_path(IPOPT_INCLUDE_DIR
         /usr/local/include/coin-or
 )
 
+# ipopt.dll / ipopt-3: the import-library names of conda-forge's Windows build.
 find_library(IPOPT_LIBRARY
-        NAMES ipopt
+        NAMES ipopt ipopt.dll ipopt-3
         HINTS
         ${IPOPT_ROOT}/lib
         ${PC_IPOPT_LIBRARY_DIRS}

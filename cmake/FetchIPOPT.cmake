@@ -8,6 +8,24 @@
 # libipopt.so / libcoinmumps.so will be produced by the external build,
 # so the linker step is not considered broken when they don't yet exist.
 
+# The sh/make build below cannot run under MSVC, so Windows links an installed
+# IPOPT (conda-forge in CI) instead.
+if (WIN32)
+    set(_forcesmith_system_ipopt_default ON)
+else ()
+    set(_forcesmith_system_ipopt_default OFF)
+endif ()
+option(FORCESMITH_SYSTEM_IPOPT "Link an installed IPOPT instead of building it from source"
+        ${_forcesmith_system_ipopt_default})
+if (FORCESMITH_SYSTEM_IPOPT)
+    find_package(Ipopt REQUIRED)
+    add_library(IPOPT::ipopt INTERFACE IMPORTED)
+    target_link_libraries(IPOPT::ipopt INTERFACE Ipopt::Ipopt)
+    # forcesmith_engine add_dependencies() on it.
+    add_custom_target(IpoptProject)
+    return()
+endif ()
+
 include(ExternalProject)
 
 set(IPOPT_LOCAL_PREFIX "${CMAKE_BINARY_DIR}/ipopt_local")

@@ -8,6 +8,8 @@ include(FetchContent)
 # The GoogleTest pin is declared in cmake/Dependencies.cmake, ahead of ddx —
 # which declares a googletest of its own, and the first declaration wins.
 set(INSTALL_GTEST OFF CACHE BOOL "" FORCE)
+# MSVC: gtest otherwise swaps /MD for /MT and the link fails on a CRT mismatch.
+set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
 FetchContent_MakeAvailable(googletest)
 
 set(UNIT_TEST_SOURCES

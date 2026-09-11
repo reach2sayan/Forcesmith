@@ -1,13 +1,7 @@
 name: CI
 
-# Builds Forcesmith with GCC, Clang and MSVC.
-#
-# NOTE on MSVC: the current CMake is Unix-oriented — IPOPT + MUMPS are built
-# from source with autotools/make into .so files (cmake/FetchIPOPT.cmake), the
-# warnings target hard-codes GCC/Clang flags (-march=native, -fsanitize, ...),
-# and $ORIGIN RPATH is ELF-only. The MSVC job is therefore best-effort and is
-# allowed to fail until the build is made portable. Remove `continue-on-error`
-# once Windows is supported.
+# Builds Forcesmith with GCC, Clang and MSVC. Linux builds IPOPT + MUMPS from
+# source (cmake/FetchIPOPT.cmake); Windows links conda-forge's IPOPT instead.
 
 on:
   push:
@@ -85,31 +79,41 @@ jobs:
   windows:
     name: MSVC (Windows)
     runs-on: windows-2022
-    # Best-effort: the build is not yet portable to MSVC (see header note).
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
 
       - uses: ilammy/msvc-dev-cmd@v1
 
-      # vcpkg's IPOPT port is coin-or-ipopt; Boost 1.92 is fetched by CMake. Still
-      # not enough: cmake/FetchIPOPT.cmake always builds IPOPT with sh/make and
-      # never looks for an installed one, so the Build step fails on MSVC.
-      - name: Install dependencies (vcpkg)
+      # conda-forge ships an MSVC-ABI IPOPT built with MUMPS (vcpkg's
+      # coin-or-ipopt has no linear solver), plus Eigen and TBB. Boost 1.92 is
+      # fetched by CMake; FORCESMITH_SYSTEM_IPOPT defaults ON under WIN32.
+      - uses: mamba-org/setup-micromamba@v3
+        with:
+          micromamba-root-path: ${{ runner.temp }}/micromamba
+          environment-name: deps
+          create-args: eigen=3.4 tbb-devel ipopt
+          cache-environment: true
+
+      # Library/bin on PATH: the test binaries (and gtest discovery, which runs
+      # them at build time) need ipopt/tbb/openblas DLLs.
+      - name: Expose dependencies
         shell: bash
         run: |
-          vcpkg install eigen3 tbb coin-or-ipopt --triplet x64-windows
+          lib="$(cygpath -m '${{ runner.temp }}/micromamba/envs/deps/Library')"
+          echo "DEPS_PREFIX=$lib" >> "$GITHUB_ENV"
+          cygpath -w "$lib/bin" >> "$GITHUB_PATH"
 
+      # pwsh, not Git bash: its /usr/bin/link shadows MSVC's link.exe.
       - name: Configure
-        shell: bash
         run: >
           cmake -S . -B build/ci -G Ninja
           -DCMAKE_BUILD_TYPE=Release
+          -DCMAKE_C_COMPILER=cl -DCMAKE_CXX_COMPILER=cl
+          "-DCMAKE_PREFIX_PATH=$env:DEPS_PREFIX"
           -DFORCESMITH_USE_MKL=OFF
-          -DCMAKE_TOOLCHAIN_FILE="$VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake"
 
       - name: Build
-        run: cmake --build build/ci
+        run: cmake --build build/ci -j 2
 
       - name: Test
         run: ctest --test-dir build/ci --output-on-failure
