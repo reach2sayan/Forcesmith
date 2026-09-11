@@ -277,9 +277,10 @@ private:
   FORCE_INLINE std::array<double, N> all_dderiv_dparam(double r) const {
     return at_point(detail::equation<Derived>, r,
                     [](const auto &e, auto... v) {
-                      constexpr std::size_t R = detail::r_slot<Derived>;
                       const auto t = e.template derivative_tensor<2>(v...);
-                      return by_param([&](std::size_t k) { return t[R, k]; });
+                      return by_param([&](std::size_t k) {
+                        return t[detail::r_slot<Derived>, k];
+                      });
                     });
   }
 

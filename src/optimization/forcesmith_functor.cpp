@@ -209,7 +209,7 @@ ForcesmithFunctor::ForcesmithFunctor(std::span<Configuration> configs,
   int acc = 0;
   row_offset_.push_back(0);
   for (const auto &cfg : configs_) {
-    acc += config_residual_count(cfg, stress_weight_);
+    acc += static_cast<int>(config_residual_count(cfg, stress_weight_));
     row_offset_.push_back(acc);
   }
 

@@ -43,6 +43,10 @@ else ()
 
     target_link_options(forcesmith_warnings INTERFACE $<$<CONFIG:Debug>:-fsanitize=address,undefined>)
 endif ()
+# windows.h (pulled in by Boost) defines min/max macros that break std::min.
+if (WIN32)
+    target_compile_definitions(forcesmith_warnings INTERFACE NOMINMAX)
+endif ()
 
 set(FORCESMITH_ENGINE_SOURCES
         src/core/checkpoint.cpp
