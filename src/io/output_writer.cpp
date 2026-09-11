@@ -77,7 +77,10 @@ leaf::result<void> write_tabulated(const std::filesystem::path &path,
     }
     auto section = sample_section(table, nknots);
     if (!section) {
-      status = leaf::result<void>{section.error()};
+      // Copy-init only: direct-init is ambiguous on MSVC (error_result
+      // converts to both result<U> and error_id).
+      leaf::result<void> err = section.error();
+      status = std::move(err);
       return;
     }
     if (key.empty()) {

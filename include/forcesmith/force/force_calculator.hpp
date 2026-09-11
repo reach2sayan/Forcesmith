@@ -163,10 +163,10 @@ ForceCalculator::remap(const SpeciesRegistry &old_reg,
                        const SpeciesRegistry &new_reg) const {
   std::optional<boost::leaf::result<ForceCalculator>> out;
   const bool is_ml = visit_family<MLFamilies>(*this, [&](const auto &ml) {
-    auto r = ml.remap(old_reg, new_reg);
-    out = r ? boost::leaf::result<ForceCalculator>{ForceCalculator{
-                  std::move(r.value())}}
-            : boost::leaf::result<ForceCalculator>{r.error()};
+    out = [&]() -> boost::leaf::result<ForceCalculator> {
+      BOOST_LEAF_AUTO(m, ml.remap(old_reg, new_reg));
+      return ForceCalculator{std::move(m)};
+    }();
   });
   if (!is_ml) {
     return boost::leaf::new_error(); // not an ML model
