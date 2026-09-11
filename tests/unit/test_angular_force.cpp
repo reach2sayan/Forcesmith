@@ -21,9 +21,9 @@ struct LJPair : NoBounds<LJPair>, NoSiteCache<LJPair>, NoRawParamAccess,
         return 4.0*eps*(-12.0*sr6*sr6 + 6.0*sr6)/r;
     }
     std::pair<double,double> span() const { return {0.1, 20.0}; }
-    int  param_count() const { return 0; }
-    void gather_params(Eigen::VectorXd&, int) const {}
-    void scatter_params(const Eigen::VectorXd&, int) {}
+    std::size_t  param_count() const { return 0; }
+    void gather_params(Eigen::VectorXd&, std::size_t) const {}
+    void scatter_params(const Eigen::VectorXd&, std::size_t) {}
 };
 
 // f(r) = exp(-r): smooth radial modulation that goes to 0 at large r
@@ -33,9 +33,9 @@ struct ExpMod : NoBounds<ExpMod>, NoSiteCache<ExpMod>, NoRawParamAccess,
     double eval(double r)  const { return std::exp(-alpha * r); }
     double deriv(double r) const { return -alpha * std::exp(-alpha * r); }
     std::pair<double,double> span() const { return {0.0, 20.0}; }
-    int  param_count() const { return 0; }
-    void gather_params(Eigen::VectorXd&, int) const {}
-    void scatter_params(const Eigen::VectorXd&, int) {}
+    std::size_t  param_count() const { return 0; }
+    void gather_params(Eigen::VectorXd&, std::size_t) const {}
+    void scatter_params(const Eigen::VectorXd&, std::size_t) {}
 };
 
 // g(cos θ) = (cos θ − cos θ₀)²: penalises deviation from preferred angle
@@ -46,9 +46,9 @@ struct CosAngle : NoBounds<CosAngle>, NoSiteCache<CosAngle>, NoRawParamAccess,
     double eval(double c)  const { return k * (c - cos0) * (c - cos0); }
     double deriv(double c) const { return 2.0 * k * (c - cos0); }
     std::pair<double,double> span() const { return {-1.0, 1.0}; }
-    int  param_count() const { return 0; }
-    void gather_params(Eigen::VectorXd&, int) const {}
-    void scatter_params(const Eigen::VectorXd&, int) {}
+    std::size_t  param_count() const { return 0; }
+    void gather_params(Eigen::VectorXd&, std::size_t) const {}
+    void scatter_params(const Eigen::VectorXd&, std::size_t) {}
 };
 
 struct ZeroPot : NoBounds<ZeroPot>, NoSiteCache<ZeroPot>, NoRawParamAccess,
@@ -56,9 +56,9 @@ struct ZeroPot : NoBounds<ZeroPot>, NoSiteCache<ZeroPot>, NoRawParamAccess,
     double eval(double)  const { return 0.0; }
     double deriv(double) const { return 0.0; }
     std::pair<double,double> span() const { return {0.0, 100.0}; }
-    int  param_count() const { return 0; }
-    void gather_params(Eigen::VectorXd&, int) const {}
-    void scatter_params(const Eigen::VectorXd&, int) {}
+    std::size_t  param_count() const { return 0; }
+    void gather_params(Eigen::VectorXd&, std::size_t) const {}
+    void scatter_params(const Eigen::VectorXd&, std::size_t) {}
 };
 
 // ── Helpers ───────────────────────────────────────────────────────────────────

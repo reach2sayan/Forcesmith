@@ -28,9 +28,9 @@ struct ConstPot : NoBounds<ConstPot>, NoSiteCache<ConstPot>, NoRawParamAccess,
     double eval(double)  const { return 0.0; }
     double deriv(double) const { return 0.0; }
     std::pair<double,double> span() const { return {0.0, 100.0}; }
-    int    param_count() const { return 0; }
-    void   gather_params(Eigen::VectorXd&, int) const {}
-    void   scatter_params(const Eigen::VectorXd&, int) {}
+    std::size_t    param_count() const { return 0; }
+    void   gather_params(Eigen::VectorXd&, std::size_t) const {}
+    void   scatter_params(const Eigen::VectorXd&, std::size_t) {}
 };
 
 // ── Basic dimer ───────────────────────────────────────────────────────────────

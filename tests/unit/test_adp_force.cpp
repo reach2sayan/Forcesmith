@@ -15,9 +15,9 @@ struct RepulsivePair : NoBounds<RepulsivePair>, NoSiteCache<RepulsivePair>, NoRa
     double eval(double r)  const { return A / std::pow(r, 12); }
     double deriv(double r) const { return -12.0 * A / std::pow(r, 13); }
     std::pair<double,double> span() const { return {0.1, 20.0}; }
-    int  param_count() const { return 0; }
-    void gather_params(Eigen::VectorXd&, int) const {}
-    void scatter_params(const Eigen::VectorXd&, int) {}
+    std::size_t  param_count() const { return 0; }
+    void gather_params(Eigen::VectorXd&, std::size_t) const {}
+    void scatter_params(const Eigen::VectorXd&, std::size_t) {}
 };
 
 struct ExpDensity : NoBounds<ExpDensity>, NoSiteCache<ExpDensity>, NoRawParamAccess,
@@ -26,9 +26,9 @@ struct ExpDensity : NoBounds<ExpDensity>, NoSiteCache<ExpDensity>, NoRawParamAcc
     double eval(double r)  const { return std::exp(-beta * r); }
     double deriv(double r) const { return -beta * std::exp(-beta * r); }
     std::pair<double,double> span() const { return {0.1, 20.0}; }
-    int  param_count() const { return 0; }
-    void gather_params(Eigen::VectorXd&, int) const {}
-    void scatter_params(const Eigen::VectorXd&, int) {}
+    std::size_t  param_count() const { return 0; }
+    void gather_params(Eigen::VectorXd&, std::size_t) const {}
+    void scatter_params(const Eigen::VectorXd&, std::size_t) {}
 };
 
 struct SqrtEmbedding : NoBounds<SqrtEmbedding>, NoSiteCache<SqrtEmbedding>, NoRawParamAccess,
@@ -37,9 +37,9 @@ struct SqrtEmbedding : NoBounds<SqrtEmbedding>, NoSiteCache<SqrtEmbedding>, NoRa
     double eval(double rho)  const { return -c * std::sqrt(rho); }
     double deriv(double rho) const { return -c / (2.0 * std::sqrt(rho)); }
     std::pair<double,double> span() const { return {1e-10, 1e6}; }
-    int  param_count() const { return 0; }
-    void gather_params(Eigen::VectorXd&, int) const {}
-    void scatter_params(const Eigen::VectorXd&, int) {}
+    std::size_t  param_count() const { return 0; }
+    void gather_params(Eigen::VectorXd&, std::size_t) const {}
+    void scatter_params(const Eigen::VectorXd&, std::size_t) {}
 };
 
 // Dipole: u(r) = exp(-r)
@@ -49,9 +49,9 @@ struct ExpDipole : NoBounds<ExpDipole>, NoSiteCache<ExpDipole>, NoRawParamAccess
     double eval(double r)  const { return std::exp(-alpha * r); }
     double deriv(double r) const { return -alpha * std::exp(-alpha * r); }
     std::pair<double,double> span() const { return {0.1, 20.0}; }
-    int  param_count() const { return 0; }
-    void gather_params(Eigen::VectorXd&, int) const {}
-    void scatter_params(const Eigen::VectorXd&, int) {}
+    std::size_t  param_count() const { return 0; }
+    void gather_params(Eigen::VectorXd&, std::size_t) const {}
+    void scatter_params(const Eigen::VectorXd&, std::size_t) {}
 };
 
 // Quadrupole: w(r) = exp(-2r) (faster decay)
@@ -61,9 +61,9 @@ struct ExpQuadrupole : NoBounds<ExpQuadrupole>, NoSiteCache<ExpQuadrupole>, NoRa
     double eval(double r)  const { return std::exp(-gamma * r); }
     double deriv(double r) const { return -gamma * std::exp(-gamma * r); }
     std::pair<double,double> span() const { return {0.1, 20.0}; }
-    int  param_count() const { return 0; }
-    void gather_params(Eigen::VectorXd&, int) const {}
-    void scatter_params(const Eigen::VectorXd&, int) {}
+    std::size_t  param_count() const { return 0; }
+    void gather_params(Eigen::VectorXd&, std::size_t) const {}
+    void scatter_params(const Eigen::VectorXd&, std::size_t) {}
 };
 
 struct ZeroPot : NoBounds<ZeroPot>, NoSiteCache<ZeroPot>, NoRawParamAccess,
@@ -71,9 +71,9 @@ struct ZeroPot : NoBounds<ZeroPot>, NoSiteCache<ZeroPot>, NoRawParamAccess,
     double eval(double)  const { return 0.0; }
     double deriv(double) const { return 0.0; }
     std::pair<double,double> span() const { return {0.0, 100.0}; }
-    int  param_count() const { return 0; }
-    void gather_params(Eigen::VectorXd&, int) const {}
-    void scatter_params(const Eigen::VectorXd&, int) {}
+    std::size_t  param_count() const { return 0; }
+    void gather_params(Eigen::VectorXd&, std::size_t) const {}
+    void scatter_params(const Eigen::VectorXd&, std::size_t) {}
 };
 
 // ── Helpers ───────────────────────────────────────────────────────────────────

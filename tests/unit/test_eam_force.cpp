@@ -16,9 +16,9 @@ struct RepulsivePair : NoBounds<RepulsivePair>, NoSiteCache<RepulsivePair>, NoRa
     double eval(double r)  const { return A / std::pow(r, 12); }
     double deriv(double r) const { return -12.0 * A / std::pow(r, 13); }
     std::pair<double,double> span() const { return {0.1, 20.0}; }
-    int  param_count() const { return 0; }
-    void gather_params(Eigen::VectorXd&, int) const {}
-    void scatter_params(const Eigen::VectorXd&, int) {}
+    std::size_t  param_count() const { return 0; }
+    void gather_params(Eigen::VectorXd&, std::size_t) const {}
+    void scatter_params(const Eigen::VectorXd&, std::size_t) {}
 };
 
 // Density: g(r) = exp(-β r)  (decay, always non-negative)
@@ -29,9 +29,9 @@ struct ExpDensity : NoBounds<ExpDensity>, NoSiteCache<ExpDensity>, NoRawParamAcc
     double eval(double r)  const { return std::exp(-beta * r); }
     double deriv(double r) const { return -beta * std::exp(-beta * r); }
     std::pair<double,double> span() const { return {0.1, 20.0}; }
-    int  param_count() const { return 0; }
-    void gather_params(Eigen::VectorXd&, int) const {}
-    void scatter_params(const Eigen::VectorXd&, int) {}
+    std::size_t  param_count() const { return 0; }
+    void gather_params(Eigen::VectorXd&, std::size_t) const {}
+    void scatter_params(const Eigen::VectorXd&, std::size_t) {}
 };
 
 // Embedding: F(ρ) = -c × √ρ   (attractive, like Finnis-Sinclair style)
@@ -42,9 +42,9 @@ struct SqrtEmbedding : NoBounds<SqrtEmbedding>, NoSiteCache<SqrtEmbedding>, NoRa
     double eval(double rho)  const { return -c * std::sqrt(rho); }
     double deriv(double rho) const { return -c / (2.0 * std::sqrt(rho)); }
     std::pair<double,double> span() const { return {1e-10, 1e6}; }
-    int  param_count() const { return 0; }
-    void gather_params(Eigen::VectorXd&, int) const {}
-    void scatter_params(const Eigen::VectorXd&, int) {}
+    std::size_t  param_count() const { return 0; }
+    void gather_params(Eigen::VectorXd&, std::size_t) const {}
+    void scatter_params(const Eigen::VectorXd&, std::size_t) {}
 };
 
 // ── Test helpers ──────────────────────────────────────────────────────────────

@@ -24,9 +24,9 @@ struct LJPotential : NoBounds<LJPotential>, NoSiteCache<LJPotential>, NoRawParam
     }
 
     std::pair<double, double> span() const { return {0.1, 20.0}; }
-    int    param_count() const { return 0; }
-    void   gather_params(Eigen::VectorXd&, int) const {}
-    void   scatter_params(const Eigen::VectorXd&, int) {}
+    std::size_t    param_count() const { return 0; }
+    void   gather_params(Eigen::VectorXd&, std::size_t) const {}
+    void   scatter_params(const Eigen::VectorXd&, std::size_t) {}
 };
 
 // ── Test helpers ──────────────────────────────────────────────────────────────
