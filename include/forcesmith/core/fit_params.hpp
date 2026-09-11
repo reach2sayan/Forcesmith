@@ -43,7 +43,10 @@ template <class Derived> struct NoBounds {
 namespace detail {
 
 constexpr std::size_t count_params_impl(ParamRange auto &&params) {
-  return std::ranges::count_if(params, [](const Param &p) { return !p.fixed; });
+  // Explicit: MSVC's iota_view<size_t> difference_type is an integer-class
+  // type (_Signed128) that does not convert implicitly.
+  return static_cast<std::size_t>(
+      std::ranges::count_if(params, [](const Param &p) { return !p.fixed; }));
 }
 
 constexpr void gather_params_impl(ParamRange auto &&params,
