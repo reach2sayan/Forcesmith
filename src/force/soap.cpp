@@ -24,10 +24,10 @@ struct SoapRadialTable {
   int nm = 0;
   int lm1 = 0; // l_max + 1
   std::vector<boost::math::interpolators::cardinal_cubic_b_spline<double>> spl;
-  constexpr double J(int a, int l, double r) const {
+  double J(int a, int l, double r) const {
     return spl[static_cast<std::size_t>(a) * lm1 + l](r);
   }
-  constexpr double dJdr(int a, int l, double r) const {
+  double dJdr(int a, int l, double r) const {
     return spl[static_cast<std::size_t>(a) * lm1 + l].prime(r);
   }
 };
