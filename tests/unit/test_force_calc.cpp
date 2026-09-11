@@ -7,7 +7,8 @@ using namespace forcesmith;
 
 // ── Minimal analytic LJ potential for testing ─────────────────────────────────
 
-struct LJPotential : NoBounds<LJPotential> {
+struct LJPotential : NoBounds<LJPotential>, NoSiteCache<LJPotential>, NoRawParamAccess,
+                     NoParamJacobian {
     double eps   = 1.0;
     double sigma = 1.0;
     LJPotential(double e = 1.0, double s = 1.0) : eps(e), sigma(s) {}

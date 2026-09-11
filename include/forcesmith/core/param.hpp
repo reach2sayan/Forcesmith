@@ -11,9 +11,9 @@ struct Param {
   double max = std::numeric_limits<double>::infinity();
 
   constexpr Param() = default;
-  constexpr Param(double v, bool f = false) noexcept : value(v), fixed(f) {}
+  constexpr Param(double v, bool f = false) noexcept : value{v}, fixed{f} {}
   constexpr Param(double v, double lo, double hi, bool f = false) noexcept
-      : value(v), fixed(f), min(lo), max(hi) {}
+      : value{v}, fixed{f}, min{lo}, max{hi} {}
   constexpr operator double() const noexcept { return value; }
   constexpr Param &operator=(double v) noexcept {
     value = v;

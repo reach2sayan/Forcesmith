@@ -1,6 +1,7 @@
 #include "forcesmith/force/tersoff_force.hpp"
 #include "forcesmith/core/neighbor_list.hpp"
 #include "forcesmith/events/signals.hpp"
+#include "forcesmith/force/eval_scope.hpp"
 
 #include <cmath>
 #include <functional>
@@ -131,10 +132,8 @@ Bond TersoffForceCalculator::accumulate_pair(Atom &ai, std::size_t jj,
                                              Configuration &cfg, Bond &&bond) {
   Atom &aj = const_cast<Atom &>(*ai.neighbors[jj].neighbor);
 
-  // Energy: (1/2) f_c [VR − b VA].
   cfg.calc_energy += 0.5 * bond.fc * (bond.VR - bond.b * bond.VA);
 
-  // F_i += (1/2)[f_c'(VR − b VA) + f_c(VR' − b VA')] d1 / r1.
   const double pair_coeff = 0.5 *
                             (bond.dfc * (bond.VR - bond.b * bond.VA) +
                              bond.fc * (bond.VRp - bond.b * bond.VAp)) /
@@ -147,9 +146,6 @@ Bond TersoffForceCalculator::accumulate_pair(Atom &ai, std::size_t jj,
   return std::move(bond);
 }
 
-// Three-body force from ∂b_ij/∂ζ × ∂ζ/∂r_n. Empty when ζ = 0.
-//   E = (1/2) f_c [VR − b VA] ⇒ ∂E/∂b = −(1/2) f_c VA, so
-//   F_n = −∂E/∂b × db/dζ × ∂ζ/∂r_n = (1/2) f_c VA (db/dζ) ∂ζ/∂r_n ≡ P ∂ζ/∂r_n.
 std::optional<Bond> TersoffForceCalculator::accumulate_three_body(
     Atom &ai, std::size_t jj, Configuration &cfg, Bond &&bond) const {
   if (bond.zeta == 0.0) {
@@ -184,13 +180,9 @@ std::optional<Bond> TersoffForceCalculator::accumulate_three_body(
     const double gv = g_val(cos_theta, *bond.p);
     const double dgv = dg_val(cos_theta, *bond.p);
 
-    // Gradient of cos θ w.r.t. each atom position:
-    //   ∂c/∂r_i = Ac d1 + Bc d2   ∂c/∂r_j = d2/(r1 r2) − c d1/r1²
-    //   ∂c/∂r_k = d1/(r1 r2) − c d2/r2²
     const double Ac = cos_theta * inv_r1 * inv_r1 - inv_r1 * inv_r2;
     const double Bc = cos_theta * inv_r2 * inv_r2 - inv_r1 * inv_r2;
 
-    // Mixing weight ω for the i–k pair carries through every ζ-gradient term.
     const double w_ik = p_ik.omega;
 
     const Vec3 dz_dri =
@@ -211,7 +203,6 @@ std::optional<Bond> TersoffForceCalculator::accumulate_three_body(
     aj.calc_force += Fj_3b;
     ak.calc_force += Fk_3b;
 
-    // Virial: bond ⊗ force-on-partner (the 0.5 already lives in P).
     cfg.calc_stress += d1 * Fj_3b.transpose() + d2 * Fk_3b.transpose();
   }
   return std::move(bond);
@@ -270,42 +261,28 @@ double TersoffForceCalculator::max_cutoff() const {
 }
 
 void TersoffForceCalculator::eval_forces(Configuration &cfg) const {
-  build_neighbor_list(cfg, max_cutoff());
+  force::with_eval_scope(cfg, max_cutoff(), conf_index, [&] {
+    std::ranges::for_each(cfg.atoms, [&](Atom &ai) {
+      const std::size_t ti = ai.type;
+      const std::size_t nn = ai.neighbors.size();
 
-  cfg.calc_energy = 0.0;
-  cfg.calc_stress = SymTens::Zero();
-  std::for_each(cfg.atoms.begin(), cfg.atoms.end(),
-                [](auto &a) { a.calc_force = Vec3::Zero(); });
+      for (std::size_t jj = 0; jj < nn; ++jj) {
+        const NeighborEntry &nb_j = ai.neighbors[jj];
+        const Vec3 &d1 = nb_j.dist;
+        const TersoffParams &p = params[ti, nb_j.neighbor->type];
 
-  // For each i–j bond, run the pipeline:
-  //   pair terms → ζ → bond order → energy + pair force → 3-body force
-  // std::optional short-circuits bonds outside the cutoff (make_bond) or with
-  // no angular neighbours (ζ = 0, accumulate_three_body), so each step reads as
-  // one clear stage rather than a deeply nested loop body.
-  std::ranges::for_each(cfg.atoms, [&](Atom &ai) {
-    const std::size_t ti = ai.type;
-    const std::size_t nn = ai.neighbors.size();
-
-    for (std::size_t jj = 0; jj < nn; ++jj) {
-      const NeighborEntry &nb_j = ai.neighbors[jj];
-      const Vec3 &d1 = nb_j.dist;
-      const TersoffParams &p = params[ti, nb_j.neighbor->type];
-
-      make_bond(p, d1, d1.norm())
-          .and_then(std::bind_front(&TersoffForceCalculator::add_zeta, this,
-                                    std::cref(ai), jj))
-          .transform(add_bond_order)
-          .transform(std::bind_front(&TersoffForceCalculator::accumulate_pair,
-                                     std::ref(ai), jj, std::ref(cfg)))
-          .and_then(
-              std::bind_front(&TersoffForceCalculator::accumulate_three_body,
-                              this, std::ref(ai), jj, std::ref(cfg)));
-    }
+        make_bond(p, d1, d1.norm())
+            .and_then(std::bind_front(&TersoffForceCalculator::add_zeta, this,
+                                      std::cref(ai), jj))
+            .transform(add_bond_order)
+            .transform(std::bind_front(&TersoffForceCalculator::accumulate_pair,
+                                       std::ref(ai), jj, std::ref(cfg)))
+            .and_then(
+                std::bind_front(&TersoffForceCalculator::accumulate_three_body,
+                                this, std::ref(ai), jj, std::ref(cfg)));
+      }
+    });
   });
-
-  cfg.calc_stress /= bc_volume(cfg.bc); // virial → stress (per unit volume)
-  events::on_force_eval(
-      events::ForceEvalStats{conf_index, force_rms(cfg), cfg});
 }
 
 } // namespace forcesmith

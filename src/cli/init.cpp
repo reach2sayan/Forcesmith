@@ -1,39 +1,33 @@
-// `forcesmith init` — a JSON-native makeapot. Scaffolds a fresh startpot for any of
-// the nine model types so the user can immediately fit it (forcesmith -s <out>).
-//
-// Two output mechanisms, split by what the native writers round-trip:
-//   • analytic classical (pair/eam/adp/angular): emitted as analytic JSON
-//     directly — the pair/eam native writers TABULATE analytic potentials, so
-//     io::write_model would lose the type/params/bounds a startpot needs.
-//   • tersoff/stiweb/ml: built in memory and written via io::write_model, whose
-//     writers serialise those models' parameters verbatim.
-//
-// Analytic parameter names + defaults come from the shared macro table
-// (forcesmith/potentials/analytic_param_defs.hpp), the same single source the
-// reader registry uses — so a scaffolded file always reloads.
-
 #include "forcesmith/cli/init.hpp"
 
+#include "forcesmith/core/families.hpp"
 #include "forcesmith/force/force_calculator.hpp"
+#include "forcesmith/io/config_reader.hpp" // io::ParseError
+#include "forcesmith/io/grammar.hpp"
 #include "forcesmith/io/write_model.hpp"
-#include "forcesmith/potentials/acsf.hpp"
 #include "forcesmith/potentials/analytic_param_defs.hpp"
-#include "forcesmith/potentials/lmbtr.hpp"
-#include "forcesmith/potentials/soap.hpp"
 
+#include <boost/leaf/handle_errors.hpp>
+#include <boost/leaf/result.hpp>
+#include <boost/mp11/algorithm.hpp>
 #include <boost/program_options.hpp>
 #include <nlohmann/json.hpp>
 
-#include <cctype>
+#include <algorithm>
+#include <array>
 #include <cstdint>
 #include <fstream>
 #include <iostream>
-#include <optional>
 #include <random>
+#include <ranges>
+#include <span>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace po = boost::program_options;
+namespace leaf = boost::leaf;
+namespace mp11 = boost::mp11;
 using json = nlohmann::json;
 
 namespace forcesmith::cli::init {
@@ -46,65 +40,99 @@ struct Args {
   double cutoff = 6.0;
   std::string
       functions; // makeapot-style "N*name,…"; empty → per-region default
-  // SOAP
   int n_max = 6;
   int l_max = 6;
   double sigma = 0.5;
-  // ACSF
   int g1 = 0;
   std::vector<double> g2_eta;
   std::vector<double> g2_rs;
-  // LMBTR
   int k2_n = 50;
   int k3_n = 50;
   bool drop_k2 = false;
   bool drop_k3 = false;
-  // ML head
   bool bias_free = false;
   unsigned seed = 42; // RNG seed for coefficient init (reproducible startpot)
 };
 
-[[noreturn]] void die(const std::string &msg) {
-  std::cerr << "error: " << msg << "\n";
-  std::exit(1);
+struct InitError {
+  std::string message;
+};
+
+[[nodiscard]] leaf::error_id fail(std::string msg) {
+  return leaf::new_error(InitError{std::move(msg)});
 }
 
-// Expand a makeapot function list ("3*lj,morse" → [lj,lj,lj,morse]).
-std::vector<std::string> expand_functions(const std::string &spec) {
-  std::vector<std::string> out;
-  std::size_t i = 0;
-  while (i < spec.size()) {
-    std::size_t comma = spec.find(',', i);
-    std::string tok = spec.substr(i, comma - i);
-    i = (comma == std::string::npos) ? spec.size() : comma + 1;
-    if (tok.empty()) {
-      continue;
-    }
-    std::size_t star = tok.find('*');
-    int count = 1;
-    std::string name = tok;
-    if (star != std::string::npos) {
-      count = std::stoi(tok.substr(0, star));
-      name = tok.substr(star + 1);
-      if (count < 1) {
-        die("function multiplier must be ≥ 1 in '" + tok + "'");
-      }
-    }
-    for (int k = 0; k < count; ++k) {
-      out.push_back(name);
+namespace bp = boost::parser;
+const auto ident = +(bp::char_('a', 'z') | bp::char_('A', 'Z') |
+                     bp::char_('0', '9') | bp::char_('_'));
+const auto item = (bp::uint_ >> '*' | bp::attr(1u)) >> ident;
+const auto function_spec = item % ',';
+
+[[nodiscard]] leaf::result<std::vector<std::string>>
+expand_functions(std::string_view spec) {
+  BOOST_LEAF_AUTO(items,
+                  io::parse_or_error(function_spec, spec, "--functions"));
+  for (const auto &[count, name] : items) {
+    if (count < 1) {
+      return fail("function multiplier must be ≥ 1 in '" +
+                  std::to_string(count) + "*" + name + "'");
     }
   }
-  return out;
+  return items | std::views::transform([](const auto &it) {
+           const auto &[count, name] = it;
+           return std::views::repeat(name, count);
+         }) |
+         std::views::join | std::ranges::to<std::vector<std::string>>();
 }
 
-// One analytic potential as the JSON the reader expects: type + span + each
-// named parameter as {value,min,max}. Names/defaults come from the shared
-// table.
-json one_analytic(const std::string &fn, double rmin, double rmax) {
-  std::span<const AnalyticParamDef> defs = analytic_defaults(fn);
+enum class Count { PerPair, PerType };
+enum class Domain { Radial, Cosine }; // [0, rcut] or the g(cosθ) span [-1, 1]
+
+struct RegionSpec {
+  std::string_view key;
+  Count count;
+  std::string_view default_fn;
+  Domain domain = Domain::Radial;
+};
+
+template <class T> struct AnalyticLayout;
+
+using R = RegionSpec;
+inline constexpr Count kPer = Count::PerPair, kType = Count::PerType;
+
+template <> struct AnalyticLayout<PairForceCalculator> {
+  static constexpr std::array regions{R{"", kPer, "lj"}};
+};
+template <> struct AnalyticLayout<EAMForceCalculator> {
+  static constexpr std::array regions{R{"pair", kPer, "lj"},
+                                      R{"density", kType, "exp_decay"},
+                                      R{"embedding", kType, "sqrt"}};
+};
+template <> struct AnalyticLayout<ADPForceCalculator> {
+  static constexpr std::array regions{
+      R{"pair", kPer, "lj"}, R{"density", kType, "exp_decay"},
+      R{"embedding", kType, "sqrt"}, R{"dipole", kPer, "exp_decay"},
+      R{"quadrupole", kPer, "exp_decay"}};
+};
+template <> struct AnalyticLayout<AngularForceCalculator> {
+  static constexpr std::array regions{
+      R{"pair", kPer, "lj"}, R{"radial", kPer, "exp_decay"},
+      R{"angular", kType, "parabola", Domain::Cosine}};
+};
+
+template <class T>
+concept CAnalyticFamily = requires { AnalyticLayout<T>::regions; };
+
+template <class T>
+concept CBondOrderFamily = std::same_as<T, TersoffForceCalculator> ||
+                           std::same_as<T, StiwebForceCalculator>;
+
+[[nodiscard]] leaf::result<json> one_analytic(const std::string &fn,
+                                              double rmin, double rmax) {
+  const std::span<const AnalyticParamDef> defs = analytic_defaults(fn);
   if (defs.empty()) {
-    die("unknown analytic function '" + fn +
-        "' (no default-parameter table; see analytic_param_defs.hpp)");
+    return fail("unknown analytic function '" + fn +
+                "' (no default-parameter table; see analytic_param_defs.hpp)");
   }
   json o;
   o["type"] = fn;
@@ -117,67 +145,47 @@ json one_analytic(const std::string &fn, double rmin, double rmax) {
   return o;
 }
 
-// A region of an analytic model: how many functions, the default if -f is
-// omitted, and the domain its potentials live on ([0,rcut], or [-1,1] for the
-// angular g(cosθ) term).
-struct Region {
-  std::string key; // JSON section key; empty → inline at top level (pair model)
-  std::size_t count;
-  std::string default_fn;
-  double rmin;
-  double rmax;
-};
-
-std::vector<Region> analytic_layout(const Args &a, std::size_t paircol) {
-  const auto nt = static_cast<std::size_t>(a.ntypes);
-  const double rc = a.cutoff;
-  if (a.model == "pair") {
-    return {{"", paircol, "lj", 0.0, rc}};
-  }
-  if (a.model == "eam") {
-    return {{"pair", paircol, "lj", 0.0, rc},
-            {"density", nt, "exp_decay", 0.0, rc},
-            {"embedding", nt, "sqrt", 0.0, rc}};
-  }
-  if (a.model == "adp") {
-    return {{"pair", paircol, "lj", 0.0, rc},
-            {"density", nt, "exp_decay", 0.0, rc},
-            {"embedding", nt, "sqrt", 0.0, rc},
-            {"dipole", paircol, "exp_decay", 0.0, rc},
-            {"quadrupole", paircol, "exp_decay", 0.0, rc}};
-  }
-  // angular
-  return {{"pair", paircol, "lj", 0.0, rc},
-          {"radial", paircol, "exp_decay", 0.0, rc},
-          {"angular", nt, "parabola", -1.0, 1.0}};
+void report_written(const Args &a) {
+  std::cout << "wrote " << a.model << " startpot to " << a.out << "\n";
 }
 
-int write_json(const Args &a, const json &j) {
+[[nodiscard]] leaf::result<void> write_json_file(const Args &a, const json &j) {
   std::ofstream f(a.out);
   if (!f) {
-    die("cannot open output file '" + a.out + "'");
+    return fail("cannot open output file '" + a.out + "'");
   }
   f << j.dump(2) << "\n";
-  std::cout << "wrote " << a.model << " startpot to " << a.out << "\n";
-  return 0;
+  report_written(a);
+  return {};
 }
 
-int scaffold_analytic(const Args &a) {
-  const auto paircol = static_cast<std::size_t>(a.ntypes) * (a.ntypes + 1) / 2;
-  const std::vector<Region> regions = analytic_layout(a, paircol);
+[[nodiscard]] leaf::result<void> write_built_model(const Args &a,
+                                                   const ForceCalculator &m) {
+  BOOST_LEAF_CHECK(io::write_model(m, a.out, "native"));
+  report_written(a);
+  return {};
+}
 
-  std::size_t total = 0;
-  for (const Region &r : regions) {
-    total += r.count;
-  }
+template <CAnalyticFamily T>
+[[nodiscard]] leaf::result<void> scaffold(const Args &a) {
+  const auto nt = static_cast<std::size_t>(a.ntypes);
+  const std::size_t paircol = nt * (nt + 1) / 2;
+  constexpr auto &regions = AnalyticLayout<T>::regions;
+
+  const auto count_of = [&](const RegionSpec &r) {
+    return r.count == Count::PerPair ? paircol : nt;
+  };
+  const std::size_t total = std::ranges::fold_left(
+      regions | std::views::transform(count_of), std::size_t{0}, std::plus<>{});
 
   std::vector<std::string> flat;
   if (!a.functions.empty()) {
-    flat = expand_functions(a.functions);
+    BOOST_LEAF_ASSIGN(flat, expand_functions(a.functions));
     if (flat.size() != total) {
-      die("--functions has " + std::to_string(flat.size()) + " functions but " +
-          a.model + " (ntypes=" + std::to_string(a.ntypes) + ") needs " +
-          std::to_string(total));
+      return fail("--functions has " + std::to_string(flat.size()) +
+                  " functions but " + a.model +
+                  " (ntypes=" + std::to_string(a.ntypes) + ") needs " +
+                  std::to_string(total));
     }
   }
 
@@ -185,38 +193,55 @@ int scaffold_analytic(const Args &a) {
   j["model"] = a.model;
   j["ntypes"] = a.ntypes;
   std::size_t idx = 0;
-  for (const Region &r : regions) {
+  for (const RegionSpec &r : regions) {
+    const double rmin = r.domain == Domain::Cosine ? -1.0 : 0.0;
+    const double rmax = r.domain == Domain::Cosine ? 1.0 : a.cutoff;
     json pots = json::array();
-    for (std::size_t s = 0; s < r.count; ++s) {
-      const std::string &fn = flat.empty() ? r.default_fn : flat[idx++];
-      pots.push_back(one_analytic(fn, r.rmin, r.rmax));
+    for (std::size_t s = 0; s < count_of(r); ++s) {
+      const std::string &fn =
+          flat.empty() ? std::string(r.default_fn) : flat[idx++];
+      BOOST_LEAF_AUTO(p, one_analytic(fn, rmin, rmax));
+      pots.push_back(std::move(p));
     }
-    json section = {{"format", "analytic"}, {"potentials", std::move(pots)}};
     if (r.key.empty()) {
       j["format"] = "analytic";
-      j["potentials"] = std::move(section["potentials"]);
+      j["potentials"] = std::move(pots);
     } else {
-      j[r.key] = std::move(section);
+      j[std::string(r.key)] = {{"format", "analytic"},
+                               {"potentials", std::move(pots)}};
     }
   }
-  return write_json(a, j);
+  return write_json_file(a, j);
 }
 
-// ── ML: build the model in memory + small-Gaussian linear heads, write_model ─
+template <CBondOrderFamily T>
+[[nodiscard]] leaf::result<void> scaffold(const Args &a) {
+  const auto nt = static_cast<std::size_t>(a.ntypes);
+  const std::size_t paircol = nt * (nt + 1) / 2;
 
-// Stddev of the zero-mean Gaussian used to seed linear-head coefficients. Small
-// on purpose: the SOAP descriptor is L2-normalised (Σ D² = 1), so with
-// E = Σ coeffs·D this keeps the initial predicted energies sub-eV while still
-// breaking the all-zero symmetry of the start point.
+  T c;
+  c.ntypes = nt;
+  c.params.reserve(nt);
+  for (std::size_t s = 0; s < paircol; ++s) {
+    typename decltype(c.params)::value_type p;
+    if constexpr (std::same_as<T, TersoffForceCalculator>) {
+      p.R = Param{0.8 * a.cutoff};
+      p.S = Param{a.cutoff};
+    } else {
+      p.a1 = Param{a.cutoff};
+      p.a2 = Param{a.cutoff};
+    }
+    c.params.emplace_back(p);
+  }
+  if constexpr (std::same_as<T, StiwebForceCalculator>) {
+    c.lambda.assign(nt * paircol, Param{2.0});
+  }
+  return write_built_model(a, ForceCalculator{std::move(c)});
+}
+
 constexpr double kHeadInitStd = 0.01;
 
-// Attach one linear head per element type, sized to the descriptor, with
-// coefficients drawn from a small zero-mean Gaussian (kHeadInitStd). The bias
-// is fixed by default (forces-first fitting leaves its Jacobian column zero);
-// --bias-free frees it for energy-weighted fits. A fixed --seed makes the
-// scaffolded startpot reproducible; one shared rng gives each element type a
-// distinct draw.
-template <typename Model> void attach_init_heads(Model &m, const Args &a) {
+template <CMLFamily Model> void attach_init_heads(Model &m, const Args &a) {
   const auto D = static_cast<std::size_t>(m.descriptor_size());
   std::mt19937_64 rng(static_cast<std::uint64_t>(a.seed));
   std::normal_distribution<double> nd(0.0, kHeadInitStd);
@@ -232,92 +257,91 @@ template <typename Model> void attach_init_heads(Model &m, const Args &a) {
   }
 }
 
-int scaffold_ml(const Args &a) {
-  std::optional<ForceCalculator> model;
-  if (a.model == "soap") {
-    SoapModel m;
-    m.ntypes = static_cast<std::size_t>(a.ntypes);
+template <class T>
+  requires is_ml_family<T>
+[[nodiscard]] leaf::result<void> scaffold(const Args &a) {
+  T m;
+  m.ntypes = static_cast<std::size_t>(a.ntypes);
+  m.rcut = a.cutoff;
+
+  if constexpr (std::same_as<T, SoapModel>) {
     m.n_max = a.n_max;
     m.l_max = a.l_max;
-    m.rcut = a.cutoff;
     m.sigma = a.sigma;
     m.init_radial_basis();
-    attach_init_heads(m, a);
-    model = ForceCalculator{std::move(m)};
-  } else if (a.model == "acsf") {
-    ACSF m;
-    m.ntypes = static_cast<std::size_t>(a.ntypes);
-    m.rcut = a.cutoff;
+  } else if constexpr (std::same_as<T, ACSF>) {
     m.g1 = static_cast<std::size_t>(a.g1);
     for (std::size_t k = 0; k < a.g2_eta.size(); ++k) {
       const double rs = k < a.g2_rs.size() ? a.g2_rs[k] : 0.0;
       m.radial.push_back({a.g2_eta[k], rs});
     }
     if (m.descriptor_size() == 0) {
-      die("acsf needs at least one channel: set --g1 and/or --g2-eta");
+      return fail("acsf needs at least one channel: set --g1 and/or --g2-eta");
     }
-    attach_init_heads(m, a);
-    model = ForceCalculator{std::move(m)};
-  } else { // lmbtr
-    LMBTR m;
-    m.ntypes = static_cast<std::size_t>(a.ntypes);
-    m.rcut = a.cutoff;
+  } else {
     m.k2 = a.drop_k2 ? std::nullopt
                      : std::optional<LMBTR::Grid>{{0.0, a.cutoff, a.k2_n, 0.3}};
     m.k3 = a.drop_k3 ? std::nullopt
                      : std::optional<LMBTR::Grid>{{-1.0, 1.0, a.k3_n, 0.1}};
     if (m.descriptor_size() == 0) {
-      die("lmbtr needs k2 and/or k3 with n > 0");
+      return fail("lmbtr needs k2 and/or k3 with n > 0");
     }
-    attach_init_heads(m, a);
-    model = ForceCalculator{std::move(m)};
   }
 
-  auto r = io::write_model(*model, a.out, "native");
-  if (!r) {
-    die("failed to write '" + a.out + "'");
-  }
-  std::cout << "wrote " << a.model << " startpot to " << a.out << "\n";
-  return 0;
+  attach_init_heads(m, a);
+  return write_built_model(a, ForceCalculator{std::move(m)});
 }
 
-// ── bond-order: default-constructed parameter blocks + write_model ───────────
+template <class T>
+concept CScaffoldable =
+    CAnalyticFamily<T> || CBondOrderFamily<T> || is_ml_family<T>;
 
-int scaffold_bond_order(const Args &a) {
-  const auto paircol = static_cast<std::size_t>(a.ntypes) * (a.ntypes + 1) / 2;
-  ForceCalculator model = [&] {
-    if (a.model == "tersoff") {
-      TersoffForceCalculator c;
-      c.ntypes = static_cast<std::size_t>(a.ntypes);
-      c.params.reserve(static_cast<std::size_t>(a.ntypes));
-      for (std::size_t s = 0; s < paircol; ++s) {
-        TersoffParams tp;
-        tp.R = Param{0.8 * a.cutoff};
-        tp.S = Param{a.cutoff};
-        c.params.emplace_back(tp);
-      }
-      return ForceCalculator{std::move(c)};
-    }
-    // stiweb
-    StiwebForceCalculator c;
-    c.ntypes = static_cast<std::size_t>(a.ntypes);
-    c.params.reserve(static_cast<std::size_t>(a.ntypes));
-    for (std::size_t s = 0; s < paircol; ++s) {
-      SWParams sp;
-      sp.a1 = Param{a.cutoff};
-      sp.a2 = Param{a.cutoff};
-      c.params.emplace_back(sp);
-    }
-    c.lambda.assign(static_cast<std::size_t>(a.ntypes) * paircol, Param{2.0});
-    return ForceCalculator{std::move(c)};
-  }();
-
-  auto r = io::write_model(model, a.out, "native");
-  if (!r) {
-    die("failed to write '" + a.out + "'");
+[[nodiscard]] leaf::result<void> scaffold_named(const Args &a) {
+  leaf::result<void> r;
+  bool matched = false;
+  mp11::mp_for_each<mp11::mp_transform<mp11::mp_identity, ModelFamilies>>(
+      [&](auto tag) {
+        using T = typename decltype(tag)::type;
+        if constexpr (CScaffoldable<T>) {
+          if (!matched && a.model == family_name<T>) {
+            matched = true;
+            r = scaffold<T>(a);
+          }
+        }
+      });
+  if (!matched) {
+    return fail("unknown --model '" + a.model + "'");
   }
-  std::cout << "wrote " << a.model << " startpot to " << a.out << "\n";
-  return 0;
+  return r;
+}
+
+[[nodiscard]] std::string model_choices() {
+  std::string s;
+  mp11::mp_for_each<mp11::mp_transform<mp11::mp_identity, ModelFamilies>>(
+      [&](auto tag) {
+        using T = typename decltype(tag)::type;
+        if constexpr (CScaffoldable<T>) {
+          s += (s.empty() ? "" : " | ");
+          s += family_name<T>;
+        }
+      });
+  return s;
+}
+
+[[nodiscard]] leaf::result<void> validate(const Args &a) {
+  if (a.model.empty()) {
+    return fail("--model is required");
+  }
+  if (a.out.empty()) {
+    return fail("--out is required");
+  }
+  if (a.ntypes < 1) {
+    return fail("--ntypes must be ≥ 1");
+  }
+  if (a.cutoff <= 0.0) {
+    return fail("--cutoff must be > 0");
+  }
+  return {};
 }
 
 } // namespace
@@ -327,8 +351,7 @@ int run(int argc, char *argv[]) {
   po::options_description desc(
       "forcesmith init — scaffold a fresh startpot (a JSON-native makeapot)");
   desc.add_options()("help,h", "show this message")(
-      "model,m", po::value(&a.model),
-      "pair | eam | adp | angular | tersoff | stiweb | acsf | soap | lmbtr")(
+      "model,m", po::value(&a.model), model_choices().c_str())(
       "out,o", po::value(&a.out), "output startpot file")(
       "ntypes,n", po::value(&a.ntypes)->default_value(a.ntypes),
       "number of atom types")("cutoff,c",
@@ -358,7 +381,6 @@ int run(int argc, char *argv[]) {
 
   po::variables_map vm;
   try {
-    // argv[0] is "init"; skip it so program_options sees only init's flags.
     po::store(po::parse_command_line(argc, argv, desc), vm);
     if (vm.count("help") || argc == 1) {
       std::cout << desc << "\n";
@@ -370,30 +392,24 @@ int run(int argc, char *argv[]) {
     return 1;
   }
 
-  if (a.model.empty()) {
-    die("--model is required");
-  }
-  if (a.out.empty()) {
-    die("--out is required");
-  }
-  if (a.ntypes < 1) {
-    die("--ntypes must be ≥ 1");
-  }
-  if (a.cutoff <= 0.0) {
-    die("--cutoff must be > 0");
-  }
-
-  if (a.model == "pair" || a.model == "eam" || a.model == "adp" ||
-      a.model == "angular") {
-    return scaffold_analytic(a);
-  }
-  if (a.model == "tersoff" || a.model == "stiweb") {
-    return scaffold_bond_order(a);
-  }
-  if (a.model == "soap" || a.model == "acsf" || a.model == "lmbtr") {
-    return scaffold_ml(a);
-  }
-  die("unknown --model '" + a.model + "'");
+  return leaf::try_handle_all(
+      [&]() -> leaf::result<int> {
+        BOOST_LEAF_CHECK(validate(a));
+        BOOST_LEAF_CHECK(scaffold_named(a));
+        return 0;
+      },
+      [](const InitError &e) {
+        std::cerr << "error: " << e.message << "\n";
+        return 1;
+      },
+      [](const io::ParseError &e) {
+        std::cerr << "error: " << e.message << "\n";
+        return 1;
+      },
+      [] {
+        std::cerr << "error: unknown failure\n";
+        return 1;
+      });
 }
 
 } // namespace forcesmith::cli::init

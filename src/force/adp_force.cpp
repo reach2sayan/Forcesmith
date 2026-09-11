@@ -1,13 +1,18 @@
 #include "forcesmith/force/adp_force.hpp"
 #include "forcesmith/core/neighbor_list.hpp"
 #include "forcesmith/events/signals.hpp"
+#include "forcesmith/force/eval_scope.hpp"
+#include "forcesmith/force/kernels.hpp"
+#include "forcesmith/force/param_jacobian.hpp"
 
 #include <algorithm>
 #include <cmath>
 #include <functional>
 #include <numeric>
 #include <optional>
+#include <ranges>
 #include <utility>
+#include <vector>
 
 namespace forcesmith {
 
@@ -26,7 +31,6 @@ ADPForceCalculator::make_pair_force(const Atom &ai, const NeighborEntry &nb) {
 PairForce ADPForceCalculator::add_eam_force(PairForce &&pf) const {
   const Atom &ai = *pf.ai;
   const Atom &aj = *pf.aj;
-  // Gate each radial table on its own cutoff (see in_range).
   const auto &phi_pot = pair[ai, aj];
   const auto &g_j = density[aj];
   const auto &g_i = density[ai];
@@ -62,167 +66,325 @@ PairForce ADPForceCalculator::add_quadrupole_force(PairForce &&pf) const {
 
 PairForce ADPForceCalculator::accumulate(Atom &ai, Configuration &cfg,
                                          PairForce &&pf) {
-  ai.calc_force += pf.force;
-  cfg.calc_energy += 0.5 * pf.phi;
-  // Virial: bond ⊗ force-on-partner = d ⊗ (−fvec); 0.5 for the full list.
-  cfg.calc_stress -= 0.5 * pf.d * pf.force.transpose();
+  force::accumulate_pair(cfg, ai, pf.d, pf.force, pf.phi);
   return std::move(pf);
 }
 
-std::size_t ADPForceCalculator::param_count() const {
-  auto count_range = [](const auto &range) {
-    return std::transform_reduce(range.begin(), range.end(), std::size_t{0},
-                                 std::plus<>{},
-                                 [](const auto &p) { return p.param_count(); });
-  };
-  return count_range(pair) + count_range(density) + count_range(embedding) +
-         count_range(dipole) + count_range(quadrupole);
-}
-
-void ADPForceCalculator::gather_params(Eigen::VectorXd &dst,
-                                       std::size_t off) const {
-  gather_range(pair, dst, off);
-  gather_range(density, dst, off);
-  gather_range(embedding, dst, off);
-  gather_range(dipole, dst, off);
-  gather_range(quadrupole, dst, off);
-}
-
-void ADPForceCalculator::scatter_params(const Eigen::VectorXd &src,
-                                        std::size_t off) {
-  scatter_range(pair, src, off);
-  scatter_range(density, src, off);
-  scatter_range(embedding, src, off);
-  scatter_range(dipole, src, off);
-  scatter_range(quadrupole, src, off);
-}
-
-void ADPForceCalculator::gather_bounds(Eigen::VectorXd &lo, Eigen::VectorXd &hi,
-                                       std::size_t off) const {
-  gather_bounds_range(pair, lo, hi, off);
-  gather_bounds_range(density, lo, hi, off);
-  gather_bounds_range(embedding, lo, hi, off);
-  gather_bounds_range(dipole, lo, hi, off);
-  gather_bounds_range(quadrupole, lo, hi, off);
-}
-
-double ADPForceCalculator::max_cutoff() const {
-  auto max_cutoff = [](const auto &range) {
-    return std::transform_reduce(
-        range.begin(), range.end(), 0.0,
-        [](double a, double b) { return std::max(a, b); },
-        [](const auto &p) { return p.span().second; });
-  };
-
-  // Cover every radial table: dipole/quadrupole may reach farther than the
-  // pair/density tables, and those neighbours must not be truncated (forcesmith
-  // gates each contribution on its own per-table cutoff).
-  return std::max({max_cutoff(pair), max_cutoff(density), max_cutoff(dipole),
-                   max_cutoff(quadrupole)});
-}
-
 void ADPForceCalculator::eval_forces(Configuration &cfg) const {
+  force::with_eval_scope(cfg, max_cutoff(), conf_index, [&] {
+    std::ranges::for_each(cfg.atoms, [&](auto &ai) {
+      double rho = 0.0;
+      Vec3 mu = Vec3::Zero();
+      SymTens lambda = SymTens::Zero();
+
+      for (const auto &nb : ai.neighbors) {
+        const auto &aj = *nb.neighbor;
+        const double r = nb.dist.norm();
+        if (r < 1e-14) {
+          continue;
+        }
+
+        const auto &g = density[aj];
+        const auto &dip = dipole[ai, aj];
+        const auto &quad = quadrupole[ai, aj];
+        rho += eval_gated(g, nb.sites[kSiteGj], r);
+        mu += eval_gated(dip, nb.sites[kSiteDipole], r) * nb.dist;
+        lambda += eval_gated(quad, nb.sites[kSiteQuad], r) *
+                  (nb.dist * nb.dist.transpose());
+      }
+
+      ai.rho += rho;
+      ai.mu += mu;
+      ai.lambda += lambda;
+    });
+
+    const double energy = std::transform_reduce(
+        cfg.atoms.begin(), cfg.atoms.end(), 0.0, std::plus<>{}, [&](auto &ai) {
+          const auto &emb = embedding[ai];
+
+          force::clamp_embedding(cfg, ai, emb);
+
+          const auto [emb_F, emb_dF] = emb.eval_and_deriv(ai.rho);
+          ai.gradF = emb_dF;
+
+          double e = emb_F;
+          e += 0.5 * ai.mu.squaredNorm();
+
+          const double tr_lam = ai.lambda.trace();
+          e += 0.5 * (ai.lambda.squaredNorm() - tr_lam * tr_lam / 3.0);
+
+          return e;
+        });
+
+    cfg.calc_energy += energy;
+
+    for (Atom &ai : cfg.atoms) {
+      for (const NeighborEntry &nb : ai.neighbors) {
+        make_pair_force(ai, nb)
+            .transform(
+                std::bind_front(&ADPForceCalculator::add_eam_force, this))
+            .transform(
+                std::bind_front(&ADPForceCalculator::add_dipole_force, this))
+            .transform(std::bind_front(
+                &ADPForceCalculator::add_quadrupole_force, this))
+            .transform(std::bind_front(&ADPForceCalculator::accumulate,
+                                       std::ref(ai), std::ref(cfg)));
+      }
+    }
+  });
+}
+
+bool ADPForceCalculator::has_analytic_jacobian() const {
+  return force::analytic_jacobian_available(*this);
+}
+
+void ADPForceCalculator::write_param_jacobian(Configuration &cfg, int row0,
+                                              double energy_weight,
+                                              double stress_weight,
+                                              Eigen::MatrixXd &fjac) const {
   build_neighbor_list(cfg, max_cutoff());
+  const auto cols = force::table_columns(*this);
+  const force::JacRows rows(cfg, row0, stress_weight);
+  const double inv_volume = 1.0 / bc_volume(cfg.bc);
 
-  // Zero scratch + output
-  cfg.calc_energy = 0.0;
-  cfg.calc_stress = SymTens::Zero();
-  cfg.calc_limit = 0.0;
-  for (auto &atom : cfg.atoms) {
-    atom.ZeroForce();
-    atom.ZeroScratch();
-  }
+  const std::size_t na = cfg.atoms.size();
+  const int dens0 = cols.start[1], emb0 = cols.start[2];
+  const int dip0 = cols.start[3], quad0 = cols.start[4];
+  const auto ndens = static_cast<std::size_t>(cols.width(1));
+  const auto nemb = static_cast<std::size_t>(cols.width(2));
+  const auto ndip = static_cast<std::size_t>(cols.width(3));
+  const auto nquad = static_cast<std::size_t>(cols.width(4));
 
-  // Pass 1: accumulate per-atom moments ρ_i, μ_i, λ_i
-  std::ranges::for_each(cfg.atoms, [&](auto &ai) {
-    double rho = 0.0;
-    Vec3 mu = Vec3::Zero();
-    SymTens lambda = SymTens::Zero();
-
+  std::vector<double> rho(na, 0.0), drho(na * ndens, 0.0);
+  std::vector<Vec3> mu(na, Vec3::Zero()), dmu(na * ndip, Vec3::Zero());
+  std::vector<SymTens> lam(na, SymTens::Zero()),
+      dlam(na * nquad, SymTens::Zero());
+  std::vector<double> buf;
+  force::Partials part;
+  for (const auto &[i, ai] : cfg.atoms | std::views::enumerate) {
     for (const auto &nb : ai.neighbors) {
-      const auto &aj = *nb.neighbor;
       const double r = nb.dist.norm();
       if (r < 1e-14) {
         continue;
       }
-
-      // Gate each radial table on its own cutoff (see in_range): the neighbor
-      // list spans the global max_cutoff(), so a shorter table would otherwise
-      // extrapolate past its last knot here.
+      const Atom &aj = *nb.neighbor;
       const auto &g = density[aj];
       const auto &dip = dipole[ai, aj];
       const auto &quad = quadrupole[ai, aj];
-      // eval_gated returns 0 outside each table's own cutoff (the += then
-      // no-ops).
-      rho += eval_gated(g, nb.sites[kSiteGj], r);
-      mu += eval_gated(dip, nb.sites[kSiteDipole], r) * nb.dist;
-      lambda += eval_gated(quad, nb.sites[kSiteQuad], r) *
-                (nb.dist * nb.dist.transpose());
-    }
+      const SymTens dd = nb.dist * nb.dist.transpose();
 
-    ai.rho += rho;
-    ai.mu += mu;
-    ai.lambda += lambda;
-  });
-
-  // After pass 1: embedding + ADP self-energies, cache gradF_i
-  const double energy = std::transform_reduce(
-      cfg.atoms.begin(), cfg.atoms.end(), 0.0, std::plus<>{}, [&](auto &ai) {
-        const auto &emb = embedding[ai];
-
-        // Clamp out-of-range ρ to the embedding table and punish the overshoot
-        // (matches forcesmith's RESCALE branch, force_eam.c:334-358): F(ρ) is
-        // evaluated at the clamped ρ, never extrapolated.
-        const auto [rho_begin, rho_end] = emb.span();
-        if (ai.rho > rho_end) {
-          const double d = ai.rho - rho_end;
-          cfg.calc_limit += kDummyWeight * 10.0 * d * d;
-          ai.rho = rho_end;
-        } else if (ai.rho < rho_begin) {
-          const double d = rho_begin - ai.rho;
-          cfg.calc_limit += kDummyWeight * 10.0 * d * d;
-          ai.rho = rho_begin;
+      if (in_range(g, r)) {
+        rho[i] += g.eval(r);
+        if (const std::size_t n = g.param_count(); n > 0) {
+          buf.resize(n);
+          g.param_grad(r, buf);
+          const auto base =
+              static_cast<std::size_t>(cols.of[1][aj.type] - dens0) + i * ndens;
+          for (std::size_t k = 0; k < n; ++k) {
+            drho[base + k] += buf[k];
+          }
         }
-
-        const auto [emb_F, emb_dF] = emb.eval_and_deriv(ai.rho);
-        ai.gradF = emb_dF;
-
-        double e = emb_F;
-        e += 0.5 * ai.mu.squaredNorm();
-
-        const double tr_lam = ai.lambda.trace();
-        e += 0.5 * (ai.lambda.squaredNorm() - tr_lam * tr_lam / 3.0);
-
-        return e;
-      });
-
-  cfg.calc_energy += energy;
-
-  // Pass 2: forces
-  // Run each i–j bond through the pipeline:
-  //   geometry → EAM force → dipole force → quadrupole force → commit
-  // std::optional short-circuits coincident atoms (make_pair_force), so each
-  // step reads as one clear stage rather than a deeply nested loop body.
-  for (Atom &ai : cfg.atoms) {
-    for (const NeighborEntry &nb : ai.neighbors) {
-      make_pair_force(ai, nb)
-          .transform(std::bind_front(&ADPForceCalculator::add_eam_force, this))
-          .transform(
-              std::bind_front(&ADPForceCalculator::add_dipole_force, this))
-          .transform(
-              std::bind_front(&ADPForceCalculator::add_quadrupole_force, this))
-          .transform(std::bind_front(&ADPForceCalculator::accumulate,
-                                     std::ref(ai), std::ref(cfg)));
+      }
+      if (in_range(dip, r)) {
+        mu[i] += dip.eval(r) * nb.dist;
+        if (const std::size_t n = dip.param_count(); n > 0) {
+          buf.resize(n);
+          dip.param_grad(r, buf);
+          const auto base =
+              static_cast<std::size_t>(
+                  cols.of[3][pair_ordinal(ai.type, aj.type, dipole.ntypes())] -
+                  dip0) +
+              i * ndip;
+          for (std::size_t k = 0; k < n; ++k) {
+            dmu[base + k] += buf[k] * nb.dist;
+          }
+        }
+      }
+      if (in_range(quad, r)) {
+        lam[i] += quad.eval(r) * dd;
+        if (const std::size_t n = quad.param_count(); n > 0) {
+          buf.resize(n);
+          quad.param_grad(r, buf);
+          const auto base =
+              static_cast<std::size_t>(
+                  cols.of[4][pair_ordinal(ai.type, aj.type,
+                                          quadrupole.ntypes())] -
+                  quad0) +
+              i * nquad;
+          for (std::size_t k = 0; k < n; ++k) {
+            dlam[base + k] += buf[k] * dd;
+          }
+        }
+      }
     }
   }
 
-  cfg.calc_stress /= bc_volume(cfg.bc); // virial → stress (per unit volume)
-  events::on_force_eval(
-      events::ForceEvalStats{conf_index, force_rms(cfg), cfg});
+  std::vector<double> gradF(na, 0.0), curvF(na, 0.0);
+  std::vector<double> dgrad_demb(na * nemb, 0.0);
+  for (const auto &[i, ai] : cfg.atoms | std::views::enumerate) {
+    const auto &emb = embedding[ai];
+    const auto [rho_begin, rho_end] = emb.span();
+    double rho_bar = rho[i];
+    double over = 0.0;
+    if (rho_bar > rho_end) {
+      over = 2.0 * kDummyWeight * 10.0 * (rho_bar - rho_end);
+      rho_bar = rho_end;
+    } else if (rho_bar < rho_begin) {
+      over = -2.0 * kDummyWeight * 10.0 * (rho_begin - rho_bar);
+      rho_bar = rho_begin;
+    }
+    const bool clamped = over != 0.0;
+    gradF[i] = emb.deriv(rho_bar);
+    curvF[i] = emb.deriv2(rho_bar);
+
+    if (const std::size_t ne = emb.param_count(); ne > 0) {
+      buf.resize(ne);
+      emb.param_grad(rho_bar, buf);
+      for (std::size_t k = 0; k < ne; ++k) {
+        fjac(rows.energy, cols.of[2][ai.type] + static_cast<int>(k)) +=
+            energy_weight * buf[k];
+      }
+      emb.dderiv_dparam(rho_bar, buf);
+      const auto base =
+          static_cast<std::size_t>(cols.of[2][ai.type] - emb0) + i * nemb;
+      for (std::size_t k = 0; k < ne; ++k) {
+        dgrad_demb[base + k] = buf[k];
+      }
+    }
+    for (std::size_t m = 0; m < ndens; ++m) {
+      const double d = drho[i * ndens + m];
+      if (d == 0.0) {
+        continue;
+      }
+      if (clamped) {
+        fjac(rows.limit, dens0 + static_cast<int>(m)) += over * d;
+      } else {
+        fjac(rows.energy, dens0 + static_cast<int>(m)) +=
+            energy_weight * gradF[i] * d;
+      }
+    }
+    if (clamped) {
+      std::ranges::fill(std::span(drho).subspan(i * ndens, ndens), 0.0);
+    }
+
+    for (std::size_t m = 0; m < ndip; ++m) {
+      fjac(rows.energy, dip0 + static_cast<int>(m)) +=
+          energy_weight * mu[i].dot(dmu[i * ndip + m]);
+    }
+    for (std::size_t m = 0; m < nquad; ++m) {
+      const SymTens &dl = dlam[i * nquad + m];
+      fjac(rows.energy, quad0 + static_cast<int>(m)) +=
+          energy_weight *
+          ((lam[i].cwiseProduct(dl)).sum() - lam[i].trace() * dl.trace() / 3.0);
+    }
+  }
+
+  for (const auto &[i, ai] : cfg.atoms | std::views::enumerate) {
+    const int atom_row = rows.force0 + 3 * static_cast<int>(i);
+    for (const auto &nb : ai.neighbors) {
+      const double r = nb.dist.norm();
+      if (r < 1e-14) {
+        continue;
+      }
+      const Atom &aj = *nb.neighbor;
+      const Vec3 &d = nb.dist;
+      const double inv_r = 1.0 / r;
+      const std::size_t j = static_cast<std::size_t>(&aj - cfg.atoms.data());
+
+      const auto add_col = [&](int col, const Vec3 &df) {
+        force::add_force_column(fjac, rows, atom_row, col, d, df, 0.0,
+                                energy_weight, stress_weight, inv_volume);
+      };
+
+      const auto &phi_pot = pair[ai, aj];
+      if (in_range(phi_pot, r)) {
+        part.take(phi_pot, r);
+        force::add_radial_bond(
+            fjac, rows, atom_row,
+            cols.of[0][pair_ordinal(ai.type, aj.type, pair.ntypes())], d,
+            inv_r, part, 1.0, /*with_energy=*/true, energy_weight,
+            stress_weight, inv_volume);
+      }
+
+      const auto &g_j = density[aj];
+      const auto &g_i = density[ai];
+      const bool gj_in = in_range(g_j, r);
+      const bool gi_in = in_range(g_i, r);
+      const double dg_j = gj_in ? g_j.deriv(r) : 0.0;
+      const double dg_i = gi_in ? g_i.deriv(r) : 0.0;
+      if (gj_in) {
+        part.take(g_j, r);
+        force::add_radial_bond(fjac, rows, atom_row, cols.of[1][aj.type], d,
+                               inv_r, part, gradF[i], /*with_energy=*/false,
+                               energy_weight, stress_weight, inv_volume);
+      }
+      if (gi_in) {
+        part.take(g_i, r);
+        force::add_radial_bond(fjac, rows, atom_row, cols.of[1][ai.type], d,
+                               inv_r, part, gradF[j], /*with_energy=*/false,
+                               energy_weight, stress_weight, inv_volume);
+      }
+      for (std::size_t m = 0; m < ndens; ++m) {
+        const double chain = curvF[i] * drho[i * ndens + m] * dg_j +
+                             curvF[j] * drho[j * ndens + m] * dg_i;
+        if (chain != 0.0) {
+          add_col(dens0 + static_cast<int>(m), (chain * inv_r) * d);
+        }
+      }
+      for (std::size_t m = 0; m < nemb; ++m) {
+        const double chain = dgrad_demb[i * nemb + m] * dg_j +
+                             dgrad_demb[j * nemb + m] * dg_i;
+        if (chain != 0.0) {
+          add_col(emb0 + static_cast<int>(m), (chain * inv_r) * d);
+        }
+      }
+
+      const auto &dip = dipole[ai, aj];
+      if (in_range(dip, r)) {
+        const auto [u, du] = dip.eval_and_deriv(r);
+        const double dot = mu[i].dot(d) - mu[j].dot(d);
+        part.take(dip, r);
+        const int ucol =
+            cols.of[3][pair_ordinal(ai.type, aj.type, dipole.ntypes())];
+        for (const std::size_t k : part.slots()) {
+          add_col(ucol + static_cast<int>(k),
+                  (part.deriv[k] * inv_r * dot) * d +
+                      part.value[k] * (mu[i] - mu[j]));
+        }
+        for (std::size_t m = 0; m < ndip; ++m) {
+          const Vec3 dm = dmu[i * ndip + m] - dmu[j * ndip + m];
+          if (!dm.isZero()) {
+            add_col(dip0 + static_cast<int>(m),
+                    (du * inv_r * dm.dot(d)) * d + u * dm);
+          }
+        }
+      }
+
+      const auto &quad = quadrupole[ai, aj];
+      if (in_range(quad, r)) {
+        const auto [w, dw] = quad.eval_and_deriv(r);
+        const double nu = quad_nu(lam[i], d) + quad_nu(lam[j], d);
+        const Vec3 xi = quad_xi(lam[i], d) + quad_xi(lam[j], d);
+        part.take(quad, r);
+        const int wcol =
+            cols.of[4][pair_ordinal(ai.type, aj.type, quadrupole.ntypes())];
+        for (const std::size_t k : part.slots()) {
+          add_col(wcol + static_cast<int>(k),
+                  (part.deriv[k] * inv_r * nu) * d + (2.0 * part.value[k]) * xi);
+        }
+        for (std::size_t m = 0; m < nquad; ++m) {
+          const SymTens dl = dlam[i * nquad + m] + dlam[j * nquad + m];
+          if (!dl.isZero()) {
+            add_col(quad0 + static_cast<int>(m),
+                    (dw * inv_r * quad_nu(dl, d)) * d + (2.0 * w) * quad_xi(dl, d));
+          }
+        }
+      }
+    }
+  }
 }
 
 void ADPForceCalculator::prepare(std::span<Configuration> configs) const {
-  // Phase 1 — build every neighbour list in parallel (disjoint per config).
   build_all_neighbor_lists(configs, max_cutoff());
   // Phase 2 — single-threaded: prime the spline-cache hints for all five
   // radial-table roles a bond drives (φ, g_j, g_i, dipole u, quadrupole w).
@@ -233,18 +395,11 @@ void ADPForceCalculator::prepare(std::span<Configuration> configs) const {
       for (NeighborEntry &nb : ai.neighbors) {
         const Atom &aj = *nb.neighbor;
         const double r = nb.dist.norm();
-        const auto &phi_pot = pair[ai, aj];
-        const auto &g_j = density[aj];
-        const auto &dip = dipole[ai, aj];
-        const auto &quad = quadrupole[ai, aj];
-        nb.sites[kSitePhi] =
-            in_range(phi_pot, r) ? phi_pot.prepare_site(r) : SiteId{};
-        nb.sites[kSiteGj] = in_range(g_j, r) ? g_j.prepare_site(r) : SiteId{};
-        nb.sites[kSiteGi] = in_range(g_i, r) ? g_i.prepare_site(r) : SiteId{};
-        nb.sites[kSiteDipole] =
-            in_range(dip, r) ? dip.prepare_site(r) : SiteId{};
-        nb.sites[kSiteQuad] =
-            in_range(quad, r) ? quad.prepare_site(r) : SiteId{};
+        nb.sites[kSitePhi] = force::prime_site(pair[ai, aj], r);
+        nb.sites[kSiteGj] = force::prime_site(density[aj], r);
+        nb.sites[kSiteGi] = force::prime_site(g_i, r);
+        nb.sites[kSiteDipole] = force::prime_site(dipole[ai, aj], r);
+        nb.sites[kSiteQuad] = force::prime_site(quadrupole[ai, aj], r);
       }
     }
   }

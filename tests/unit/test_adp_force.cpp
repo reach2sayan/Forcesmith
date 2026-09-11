@@ -9,7 +9,8 @@ using namespace forcesmith;
 
 // ── Minimal analytic potential types ─────────────────────────────────────────
 
-struct RepulsivePair : NoBounds<RepulsivePair> {
+struct RepulsivePair : NoBounds<RepulsivePair>, NoSiteCache<RepulsivePair>, NoRawParamAccess,
+                     NoParamJacobian {
     double A = 1.0;
     double eval(double r)  const { return A / std::pow(r, 12); }
     double deriv(double r) const { return -12.0 * A / std::pow(r, 13); }
@@ -19,7 +20,8 @@ struct RepulsivePair : NoBounds<RepulsivePair> {
     void scatter_params(const Eigen::VectorXd&, int) {}
 };
 
-struct ExpDensity : NoBounds<ExpDensity> {
+struct ExpDensity : NoBounds<ExpDensity>, NoSiteCache<ExpDensity>, NoRawParamAccess,
+                     NoParamJacobian {
     double beta = 1.0;
     double eval(double r)  const { return std::exp(-beta * r); }
     double deriv(double r) const { return -beta * std::exp(-beta * r); }
@@ -29,7 +31,8 @@ struct ExpDensity : NoBounds<ExpDensity> {
     void scatter_params(const Eigen::VectorXd&, int) {}
 };
 
-struct SqrtEmbedding : NoBounds<SqrtEmbedding> {
+struct SqrtEmbedding : NoBounds<SqrtEmbedding>, NoSiteCache<SqrtEmbedding>, NoRawParamAccess,
+                     NoParamJacobian {
     double c = 1.0;
     double eval(double rho)  const { return -c * std::sqrt(rho); }
     double deriv(double rho) const { return -c / (2.0 * std::sqrt(rho)); }
@@ -40,7 +43,8 @@ struct SqrtEmbedding : NoBounds<SqrtEmbedding> {
 };
 
 // Dipole: u(r) = exp(-r)
-struct ExpDipole : NoBounds<ExpDipole> {
+struct ExpDipole : NoBounds<ExpDipole>, NoSiteCache<ExpDipole>, NoRawParamAccess,
+                     NoParamJacobian {
     double alpha = 1.0;
     double eval(double r)  const { return std::exp(-alpha * r); }
     double deriv(double r) const { return -alpha * std::exp(-alpha * r); }
@@ -51,7 +55,8 @@ struct ExpDipole : NoBounds<ExpDipole> {
 };
 
 // Quadrupole: w(r) = exp(-2r) (faster decay)
-struct ExpQuadrupole : NoBounds<ExpQuadrupole> {
+struct ExpQuadrupole : NoBounds<ExpQuadrupole>, NoSiteCache<ExpQuadrupole>, NoRawParamAccess,
+                     NoParamJacobian {
     double gamma = 2.0;
     double eval(double r)  const { return std::exp(-gamma * r); }
     double deriv(double r) const { return -gamma * std::exp(-gamma * r); }
@@ -61,7 +66,8 @@ struct ExpQuadrupole : NoBounds<ExpQuadrupole> {
     void scatter_params(const Eigen::VectorXd&, int) {}
 };
 
-struct ZeroPot : NoBounds<ZeroPot> {
+struct ZeroPot : NoBounds<ZeroPot>, NoSiteCache<ZeroPot>, NoRawParamAccess,
+                     NoParamJacobian {
     double eval(double)  const { return 0.0; }
     double deriv(double) const { return 0.0; }
     std::pair<double,double> span() const { return {0.0, 100.0}; }

@@ -12,7 +12,6 @@ namespace forcesmith {
 
 namespace {
 
-// Cosine cutoff and its derivative; both vanish for r >= rcut.
 FORCE_INLINE std::pair<double, double> cutoff(double r, double rcut) {
   if (r >= rcut) {
     return {0.0, 0.0};
@@ -22,9 +21,6 @@ FORCE_INLINE std::pair<double, double> cutoff(double r, double rcut) {
           -0.5 * std::numbers::pi / rcut * std::sin(x)};
 }
 
-// Scatter one radial-family contribution at descriptor index `idx`: value g and
-// radial derivative dg, for neighbour `orig` with unit bond direction rhat.
-//   dD/dr_j = dg·rhat, dD/dr_i = −dg·rhat.
 void scatter_radial(DescriptorValue &out, std::size_t orig, Eigen::Index idx,
                     const Eigen::RowVector3d &rhat, double g, double dg) {
   out.values[idx] += g;
@@ -32,7 +28,6 @@ void scatter_radial(DescriptorValue &out, std::size_t orig, Eigen::Index idx,
   out.grad_self.row(idx) -= dg * rhat;
 }
 
-// Per-pair geometry (j<k), computed once and shared by every G4/G5 term.
 struct AngularPair {
   std::size_t oj, ok; // original neighbour indices (into atom.neighbors)
   double rij, rik, rjk;
@@ -43,8 +38,6 @@ struct AngularPair {
   double fcjk, fcpjk;          // r_jk cutoff + derivative (G4 only)
 };
 
-// Scatter one angular-family term at descriptor index `idx`. G4 includes the
-// r_jk factor (with_jk=true); G5 omits it (with_jk=false).
 void scatter_angular(DescriptorValue &out, const AngularPair &p,
                      Eigen::Index idx, double zeta, double lambda, double eta,
                      bool with_jk) {
@@ -64,7 +57,6 @@ void scatter_angular(DescriptorValue &out, const AngularPair &p,
   const double g = C * ang * rad * fcs;
   out.values[idx] += g;
 
-  // Coefficients on the geometric gradients ∇rij, ∇rik, ∇rjk, ∇cosθ.
   const double drad_drij = rad * (-2.0 * eta * p.rij);
   const double drad_drik = rad * (-2.0 * eta * p.rik);
   const double drad_drjk = with_jk ? rad * (-2.0 * eta * p.rjk) : 0.0;
@@ -77,7 +69,6 @@ void scatter_angular(DescriptorValue &out, const AngularPair &p,
   const double cjk = C * ang * (drad_drjk * fcs + rad * dfcs_drjk);
   const double ccos = C * rad * fcs * dang_dcos;
 
-  // ∂g/∂d_j and ∂g/∂d_k; ∂g/∂d_i = −(∂g/∂d_j + ∂g/∂d_k).
   const Vec3 gj = cij * p.rij_h - cjk * p.rjk_h + ccos * p.dcos_dj;
   const Vec3 gk = cik * p.rik_h + cjk * p.rjk_h + ccos * p.dcos_dk;
 
@@ -88,26 +79,23 @@ void scatter_angular(DescriptorValue &out, const AngularPair &p,
 
 } // namespace
 
-// ---- step: per-neighbour distance/species filter + cutoff precompute ----
 std::vector<ACSF::Neighbor> ACSF::collect_neighbors(const Atom &a) const {
   const std::size_t S = ntypes;
   std::vector<Neighbor> nb;
   nb.reserve(a.neighbors.size());
   for (auto [j, neigh] : a.neighbors | std::views::enumerate) {
-    const Vec3 &d = neigh.dist;
-    const double r = d.norm();
-    const auto si = static_cast<long long>(neigh.neighbor->type.index);
-    if (r < 1e-14 || r >= rcut || si < 0 || static_cast<std::size_t>(si) >= S) {
+    const auto hit = descriptor_neighbor(neigh, rcut, S, 1e-14);
+    if (!hit) {
       continue;
     }
-    auto [fc, fcp] = cutoff(r, rcut);
-    nb.push_back(Neighbor{static_cast<std::size_t>(j), d, d / r, r, fc, fcp,
-                          static_cast<std::size_t>(si)});
+    const Vec3 &d = neigh.dist;
+    auto [fc, fcp] = cutoff(hit->r, rcut);
+    nb.push_back(Neighbor{static_cast<std::size_t>(j), d, d / hit->r, hit->r,
+                          fc, fcp, hit->slot});
   }
   return nb;
 }
 
-// ---- step: radial families G1/G2/G3 (per neighbour, per species channel) ----
 void ACSF::accumulate_radial(DescriptorValue &out,
                              const std::vector<Neighbor> &nb,
                              const AcsfLayout &L) const {
@@ -115,13 +103,11 @@ void ACSF::accumulate_radial(DescriptorValue &out,
     const double r = j.r, fc = j.fc, fcp = j.fcp;
     const Eigen::RowVector3d rhat = j.rhat.transpose();
 
-    // G1: Σ f_c
     for (std::size_t t : std::views::iota(std::size_t{0}, g1)) {
       scatter_radial(out, j.orig_index,
                      L.radial(SymmetryFunctionFamily::G1, j.s, t), rhat, fc,
                      fcp);
     }
-    // G2: Σ exp(−η(r−Rs)²) f_c
     for (auto [ti, p] : radial | std::views::enumerate) {
       const auto t = static_cast<std::size_t>(ti);
       const double dr = r - p.rs;
@@ -130,7 +116,6 @@ void ACSF::accumulate_radial(DescriptorValue &out,
                      L.radial(SymmetryFunctionFamily::G2, j.s, t), rhat,
                      gauss * fc, gauss * (-2.0 * p.eta * dr * fc + fcp));
     }
-    // G3: Σ cos(κ r) f_c
     for (auto [ti, gp] : g3 | std::views::enumerate) {
       const auto t = static_cast<std::size_t>(ti);
       const double k = gp.kappa;
@@ -142,7 +127,6 @@ void ACSF::accumulate_radial(DescriptorValue &out,
   }
 }
 
-// ---- step: angular families G4/G5 (per unordered neighbour pair) ----
 void ACSF::accumulate_angular(DescriptorValue &out,
                               const std::vector<Neighbor> &nb,
                               const AcsfLayout &L) const {
@@ -165,13 +149,11 @@ void ACSF::accumulate_angular(DescriptorValue &out,
     p.rik_h = nbk.rhat;
     p.costh = std::clamp(nbj.d.dot(nbk.d) / (p.rij * p.rik), -1.0, 1.0);
 
-    // r_jk geometry (G4 only).
     const Vec3 djk = nbk.d - nbj.d; // r_k − r_j
     p.rjk = djk.norm();
     p.rjk_h = p.rjk > 1e-14 ? Vec3(djk / p.rjk) : Vec3::Zero();
     std::tie(p.fcjk, p.fcpjk) = cutoff(p.rjk, rcut);
 
-    // ∂cosθ/∂d_j and ∂cosθ/∂d_k.
     p.dcos_dj = (p.rik_h - p.costh * p.rij_h) / p.rij;
     p.dcos_dk = (p.rij_h - p.costh * p.rik_h) / p.rik;
 
@@ -196,8 +178,6 @@ void ACSF::accumulate_angular(DescriptorValue &out,
 }
 
 DescriptorValue ACSF::get_descriptor(const Atom &a) const {
-  // The descriptor's flat layout (block bases + per-component indices) lives in
-  // one place; no offset arithmetic in the steps below.
   const AcsfLayout L{ntypes,    g1,        radial.size(),
                      g3.size(), g4.size(), g5.size()};
   const std::vector<Neighbor> nb = collect_neighbors(a);
@@ -206,26 +186,11 @@ DescriptorValue ACSF::get_descriptor(const Atom &a) const {
   out.values = Eigen::VectorXd::Zero(L.size());
   out.has_grad = true;
   out.grad_self = DescriptorGrad::Zero(L.size(), 3);
-  // grad_neigh stays full-length and parallel to atom.neighbors; the steps
-  // scatter into row `orig` of the matching neighbour.
   out.grad_neigh.assign(a.neighbors.size(), DescriptorGrad::Zero(L.size(), 3));
 
   accumulate_radial(out, nb, L);
   accumulate_angular(out, nb, L);
   return out;
-}
-
-std::vector<std::optional<Eigen::Index>>
-ACSF::descriptor_index_map(const SpeciesRegistry &old_reg,
-                           const SpeciesRegistry &new_reg) const {
-  const std::size_t S_old = forcesmith::ntypes(old_reg);
-  const std::size_t S_new = forcesmith::ntypes(new_reg);
-  const AcsfLayout old_L{S_old,     g1,        radial.size(),
-                         g3.size(), g4.size(), g5.size()};
-  const AcsfLayout new_L{S_new,     g1,        radial.size(),
-                         g3.size(), g4.size(), g5.size()};
-  return remap_layout(old_L.d_, new_L.d_, old_slot_of_new(old_reg, new_reg),
-                      S_old, S_new);
 }
 
 } // namespace forcesmith

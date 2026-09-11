@@ -8,11 +8,6 @@
 
 namespace forcesmith::cli {
 
-// Evaluate-only mode: a single force evaluation of the (unoptimized) start
-// potential against every configuration, dumping per-config computed vs
-// reference forces / energy / stress as JSON to o.evaluate. Parity artifact vs
-// the original C forcesmith. Caller guarantees o.evaluate has a value. A failure to
-// open the output file is reported as a leaf ParseError.
 boost::leaf::result<void> write_evaluate_report(forcesmith::Forcesmith &session,
                                                 const CliOptions &o);
 

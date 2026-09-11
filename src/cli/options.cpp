@@ -1,52 +1,60 @@
 #include "forcesmith/cli/options.hpp"
 
+#include "forcesmith/cli/solver_registry.hpp"
+
 #include <boost/program_options.hpp>
 #include <iostream>
+#include <string>
 
 namespace po = boost::program_options;
 
 namespace forcesmith::cli {
 
 ParseResult parse(int argc, char *argv[]) {
+  CliOptions o;
+  std::string endpot, evaluate, checkpoint;
+
+  const std::string algorithm_help =
+      "optimization algorithm: " + solver_help_text();
+
   po::options_description desc("forcesmith — interatomic potential fitter");
   desc.add_options()("help,h", "show this message")(
-      "config,c", po::value<std::string>()->required(),
+      "config,c", po::value(&o.config)->required(),
       "atomic configuration file")("startpot,s",
-                                   po::value<std::string>()->required(),
+                                   po::value(&o.startpot)->required(),
                                    "initial potential file")(
-      "endpot,e", po::value<std::string>(),
+      "endpot,e", po::value(&endpot),
       "output potential file (required unless --evaluate)")(
-      "evaluate", po::value<std::string>(),
+      "evaluate", po::value(&evaluate),
       "evaluate the start potential against the configs and write a "
       "per-config\n"
       "forces/energy/stress JSON report to the given file, then exit (no "
       "optimization)")("format,f",
-                       po::value<std::string>()->default_value("native"),
+                       po::value(&o.format)->default_value(o.format),
                        "output format: native | lammps | imd")(
-      "checkpoint,k", po::value<std::string>(),
+      "checkpoint,k", po::value(&checkpoint),
       "checkpoint prefix: save after each run, resume if present")(
-      "maxiter", po::value<int>()->default_value(500),
-      "max optimizer iterations")("eweight",
-                                  po::value<double>()->default_value(1.0),
-                                  "energy residual weight")(
-      "stress-weight", po::value<double>()->default_value(0.0),
+      "maxiter", po::value(&o.max_iter)->default_value(o.max_iter),
+      "max optimizer iterations")(
+      "eweight", po::value(&o.energy_weight)->default_value(o.energy_weight),
+      "energy residual weight")(
+      "stress-weight",
+      po::value(&o.stress_weight)->default_value(o.stress_weight),
       "stress tensor residual weight (0 = disabled)")(
-      "smooth-weight", po::value<double>()->default_value(0.0),
+      "smooth-weight",
+      po::value(&o.smooth_weight)->default_value(o.smooth_weight),
       "curvature (Tikhonov) regularization weight on free knots (0 = "
-      "disabled)")("algorithm,a", po::value<std::string>()->default_value("lm"),
-                   "optimization algorithm: lm | powell (dogleg) | de | ls "
-                   "(Powell direction-set line search) | ipopt (L-BFGS) | lsq "
-                   "(closed-form least squares; exact + low-memory for linear "
-                   "ML heads)")(
-      "seed", po::value<unsigned>()->default_value(0),
-      "RNG seed for DE (0 = random_device)")(
-      "de-F", po::value<double>()->default_value(0.65),
-      "DE mutation factor F ∈ (0,1)")("de-CR",
-                                      po::value<double>()->default_value(0.5),
-                                      "DE crossover probability CR ∈ (0,1)")(
-      "de-np", po::value<int>()->default_value(15),
+      "disabled)")(
+      "algorithm,a", po::value(&o.algorithm)->default_value(o.algorithm),
+      algorithm_help.c_str())("seed", po::value(&o.seed)->default_value(o.seed),
+                              "RNG seed for DE (0 = random_device)")(
+      "de-F", po::value(&o.de_F)->default_value(o.de_F, "0.65"),
+      "DE mutation factor F ∈ (0,1)")(
+      "de-CR", po::value(&o.de_CR)->default_value(o.de_CR),
+      "DE crossover probability CR ∈ (0,1)")(
+      "de-np", po::value(&o.de_np)->default_value(o.de_np),
       "DE population factor: NP = de-np × D")(
-      "de-gen", po::value<int>()->default_value(1000),
+      "de-gen", po::value(&o.de_gen)->default_value(o.de_gen),
       "DE maximum number of generations");
 
   po::variables_map vm;
@@ -66,29 +74,15 @@ ParseResult parse(int argc, char *argv[]) {
     return {ParseOutcome::ExitError, {}};
   }
 
-  CliOptions o;
-  o.config = vm["config"].as<std::string>();
-  o.startpot = vm["startpot"].as<std::string>();
   if (vm.count("endpot")) {
-    o.endpot = vm["endpot"].as<std::string>();
+    o.endpot = endpot;
   }
   if (vm.count("evaluate")) {
-    o.evaluate = vm["evaluate"].as<std::string>();
+    o.evaluate = evaluate;
   }
-  o.format = vm["format"].as<std::string>();
   if (vm.count("checkpoint")) {
-    o.checkpoint = vm["checkpoint"].as<std::string>();
+    o.checkpoint = checkpoint;
   }
-  o.max_iter = vm["maxiter"].as<int>();
-  o.energy_weight = vm["eweight"].as<double>();
-  o.stress_weight = vm["stress-weight"].as<double>();
-  o.smooth_weight = vm["smooth-weight"].as<double>();
-  o.algorithm = vm["algorithm"].as<std::string>();
-  o.seed = vm["seed"].as<unsigned>();
-  o.de_F = vm["de-F"].as<double>();
-  o.de_CR = vm["de-CR"].as<double>();
-  o.de_np = vm["de-np"].as<int>();
-  o.de_gen = vm["de-gen"].as<int>();
 
   return {ParseOutcome::Run, std::move(o)};
 }

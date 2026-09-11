@@ -1,17 +1,5 @@
 #pragma once
 
-// One place for the optimizer parameter-plumbing every fittable LEAF repeats:
-// "I own a set of Param; expose the FREE (non-fixed) ones to the optimizer
-// vector, in a stable order." Analytic-potential param arrays, ML head
-// coefficients, and EAM global params are all this same loop over different
-// storage. It is written ONCE here against the ParamRange concept and reused by
-// every leaf via the ParamSet CRTP base — so adding a new leaf means supplying
-// its parameters as a range, not re-deriving gather/scatter/bounds/count.
-//
-// Composite force calculators (EAM/ADP/Pair/…) instead DELEGATE to a range of
-// sub-potentials — that pattern lives in force_calculator_concept.hpp
-// (gather_range/…), not here.
-
 #include "forcesmith/core/param.hpp"
 
 #include <Eigen/Core>
@@ -27,21 +15,11 @@
 
 namespace forcesmith {
 
-// A range whose elements are (possibly const) Param lvalues.
-// (a) an analytic potential : `std::array<Param,N>`, a head
-// (b) ML head : a view over its scattered coefficient pointers,
-// (c) Any global params.
 template <class R>
 concept ParamRange =
     std::ranges::input_range<R> &&
     std::same_as<std::remove_cvref_t<std::ranges::range_reference_t<R>>, Param>;
 
-// The full leaf-side optimizer surface: report the FREE-parameter count,
-// gather/ scatter those params to/from the optimizer vector, AND report their
-// bounds. Bounds are part of the contract — every fittable type has them. A
-// leaf that carries no real [min, max] metadata still satisfies this by mixing
-// in NoBounds (below), which supplies the ±inf default; leaves with real bounds
-// (ParamSet via Param.min/max) provide their own gather_bounds.
 template <class T>
 concept CFittable =
     requires(T &t, const T &ct, Eigen::VectorXd &v, std::size_t off) {
@@ -51,12 +29,6 @@ concept CFittable =
       ct.gather_bounds(v, v, off);
     };
 
-// Default "no bound metadata" mixin (CRTP, like NoGlobals/NoCache): every free
-// parameter is unbounded (±inf). A fittable leaf with no real [min, max] data
-// mixes this in so it models the full CFittable surface — gather_bounds
-// included — without hand-writing the ±inf loop. The order matches
-// gather_params: one
-// [-inf, +inf] slot per free parameter, read from the Derived's param_count().
 template <class Derived> struct NoBounds {
   void gather_bounds(Eigen::VectorXd &lo, Eigen::VectorXd &hi,
                      std::size_t off) const {
@@ -124,9 +96,6 @@ void scatter_params_impl(std::ranges::input_range auto &values,
   }
 }
 
-// The erased optimizer-plumbing interface every fittable type
-// (a) handle FREE parameters to (and read them back from) the optimizer
-// (b) report their bounds.
 struct FittableConcept {
   virtual ~FittableConcept() = default;
   virtual std::size_t param_count() const = 0;
@@ -152,7 +121,6 @@ template <class T, class Concept> struct FittableModel : Concept {
   }
   constexpr void gather_bounds(Eigen::VectorXd &lo, Eigen::VectorXd &hi,
                                std::size_t off) const override {
-    // Every leaf supplies gather_bounds (its own, or NoBounds's ±inf default).
     impl_.gather_bounds(lo, hi, off);
   }
 };

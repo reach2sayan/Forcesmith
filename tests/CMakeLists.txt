@@ -5,17 +5,15 @@
 # headers are referenced via ${PROJECT_SOURCE_DIR}.
 
 include(FetchContent)
-FetchContent_Declare(googletest
-        GIT_REPOSITORY https://github.com/google/googletest.git
-        GIT_TAG v1.14.0
-        GIT_SHALLOW TRUE
-)
+# The GoogleTest pin is declared in cmake/Dependencies.cmake, ahead of ddx —
+# which declares a googletest of its own, and the first declaration wins.
 set(INSTALL_GTEST OFF CACHE BOOL "" FORCE)
 FetchContent_MakeAvailable(googletest)
 
 set(UNIT_TEST_SOURCES
         unit/test_adp_force.cpp
         unit/test_analytic_functions.cpp
+        unit/test_param_jacobian.cpp
         unit/test_angular_force.cpp
         unit/test_boundary_conditions.cpp
         unit/test_checkpoint.cpp
@@ -43,6 +41,7 @@ set(UNIT_TEST_SOURCES
         unit/test_ml_fit.cpp
         unit/test_ml_rerank.cpp
         unit/test_types.cpp
+        unit/test_foundations.cpp
         unit/test_init.cpp
 )
 

@@ -28,10 +28,13 @@ namespace forcesmith::detail {
 namespace leaf = boost::leaf;
 
 [[nodiscard]] FORCE_INLINE leaf::error_id err(std::string msg) {
-  return leaf::new_error(io::ParseError{std::move(msg), 0});
+  return leaf::new_error(io::ParseError{.message=std::move(msg),.line= 0});
 }
 
 template <class Map>
+  requires requires(const Map &m, const typename Map::key_type &k) {
+    { m.find(k) } -> std::same_as<typename Map::const_iterator>;
+  }
 [[nodiscard]] leaf::result<typename Map::mapped_type>
 require(const Map &m, const typename Map::key_type &key, std::string what) {
   if (auto it = m.find(key); it != m.end()) {
@@ -42,8 +45,6 @@ require(const Map &m, const typename Map::key_type &key, std::string what) {
 
 using LambdaKey = std::tuple<std::string, std::string, std::string>;
 
-// Mutable references to the symbol-keyed spec maps + globals, bundled so the
-// free strategies can read (materialize) and write (decompose) them.
 struct SpecRef {
   const SpeciesRegistry &registry;
   std::map<Forcesmith::PairKey, RadialPotential> &pair;
@@ -68,7 +69,7 @@ struct SpecRef {
   return {std::move(sa), std::move(sb)};
 }
 
-template <class V>
+template <std::copy_constructible V>
 [[nodiscard]] leaf::result<SymmetricMatrix<V>>
 build_pair_table(const std::map<Forcesmith::PairKey, V> &src,
                  const SpeciesRegistry &reg, std::string_view what) {
@@ -99,8 +100,6 @@ build_type_array(const std::map<std::string, RadialPotential> &src,
   return arr;
 }
 
-// Stiweb λ flat vector, in the calculator's own order: ti outer, then the
-// unordered neighbour pair in upper-triangular slot order (== lambda_index).
 [[nodiscard]] inline leaf::result<std::vector<Param>>
 build_lambda(const std::map<LambdaKey, Param> &src,
              const SpeciesRegistry &reg) {
@@ -121,7 +120,7 @@ build_lambda(const std::map<LambdaKey, Param> &src,
   return lam;
 }
 
-template <class V>
+template <std::copy_constructible V>
 void dump_pair_table(const SymmetricMatrix<V> &mat, const SpeciesRegistry &reg,
                      std::map<Forcesmith::PairKey, V> &dst) {
   for (auto [ti, tj] : upper_triangle(ntypes(reg))) {
@@ -365,17 +364,6 @@ template <> struct PotentialType<LMBTR> {
                "model file with the final element ordering");
   }
 };
-
-struct Probe {
-  using apply_fn = bool (*)(const SpecRef &);
-  using materialize_fn = leaf::result<ForceCalculator> (*)(const SpecRef &);
-  apply_fn applies;
-  materialize_fn materialize;
-};
-
-template <class Calc> constexpr Probe probe_for() {
-  return {&PotentialType<Calc>::applies, &PotentialType<Calc>::materialize};
-}
 
 } // namespace forcesmith::detail
 

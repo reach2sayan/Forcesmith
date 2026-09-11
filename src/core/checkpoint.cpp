@@ -1,7 +1,9 @@
 #include "forcesmith/core/checkpoint.hpp"
+#include "forcesmith/io/file.hpp"
 #include "forcesmith/io/force_model_reader.hpp"
 #include "forcesmith/io/write_model.hpp"
 
+#include <concepts>
 #include <boost/archive/binary_iarchive.hpp>
 #include <boost/archive/binary_oarchive.hpp>
 #include <boost/leaf/error.hpp>
@@ -15,11 +17,6 @@ namespace forcesmith {
 
 namespace leaf = boost::leaf;
 
-#if defined(__clang__)
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored                                               \
-    "-Wgnu-statement-expression-from-macro-expansion"
-#endif
 // clang-format on
 
 namespace {
@@ -35,8 +32,10 @@ namespace {
   return std::filesystem::path(p.string() + ".model.json");
 }
 
-// Open a stream, mapping failure into the result channel.
 template <class Stream>
+  requires std::constructible_from<Stream, const std::filesystem::path &,
+                                   std::ios::openmode> &&
+           std::derived_from<Stream, std::ios_base>
 [[nodiscard]] leaf::result<Stream> open_file(const std::filesystem::path &path,
                                              std::ios::openmode mode,
                                              std::string_view verb) {
@@ -59,7 +58,6 @@ save_configs(const std::filesystem::path &path,
 
 [[nodiscard]] leaf::result<void> save_model(const std::filesystem::path &path,
                                             const ForceCalculator &model) {
-  // Native JSON model output handles every force-calculator family.
   return io::write_model(model, path, "native");
 }
 
@@ -79,9 +77,7 @@ load_configs(const std::filesystem::path &path,
 
 [[nodiscard]] leaf::result<void> load_model(const std::filesystem::path &path,
                                             ForceCalculator &model) {
-  BOOST_LEAF_AUTO(f, open_file<std::ifstream>(path, std::ios::in, "reading"));
-  std::string text{std::istreambuf_iterator<char>(f),
-                   std::istreambuf_iterator<char>{}};
+  BOOST_LEAF_AUTO(text, io::read_file(path));
   BOOST_LEAF_AUTO(m, io::parse_force_model(text));
   model = std::move(m);
   return {};
@@ -110,7 +106,3 @@ leaf::result<void> CheckpointReader::read(std::vector<Configuration> &configs,
 }
 
 } // namespace forcesmith
-
-#if defined(__clang__)
-#pragma clang diagnostic pop
-#endif

@@ -19,7 +19,10 @@ list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 include(Dependencies)
 
 include(CheckIPOSupported)
-check_ipo_supported(RESULT FORCESMITH_IPO_SUPPORTED OUTPUT FORCESMITH_IPO_ERROR)
+# LANGUAGES CXX: the project is C++ only, but dependencies (Boost, IPOPT) enable
+# C, and probing every enabled language would disable LTO for our targets
+# whenever the C toolchain cannot do IPO.
+check_ipo_supported(RESULT FORCESMITH_IPO_SUPPORTED OUTPUT FORCESMITH_IPO_ERROR LANGUAGES CXX)
 if (FORCESMITH_IPO_SUPPORTED)
     set(CMAKE_INTERPROCEDURAL_OPTIMIZATION_RELEASE ON)
     set(CMAKE_INTERPROCEDURAL_OPTIMIZATION_RELWITHDEBINFO ON)
@@ -53,7 +56,6 @@ set(FORCESMITH_ENGINE_SOURCES
         src/force/lmbtr.cpp
         src/force/soap.cpp
         src/force/evaluate.cpp
-        src/force/smoothness.cpp
         src/io/config_reader.cpp
         src/io/force_model_reader.cpp
         src/io/logging.cpp
@@ -73,10 +75,28 @@ add_library(forcesmith_engine STATIC ${FORCESMITH_ENGINE_SOURCES})
 target_include_directories(forcesmith_engine PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include")
 target_link_libraries(forcesmith_engine PUBLIC
         forcesmith::eigen
+        # Boost 1.92, one library target at a time. In the CMake superproject
+        # Boost::headers is only libs/headers/include — it does NOT aggregate
+        # the other libraries — so a missing target here silently falls through
+        # to whatever Boost the system happens to have in /usr/include.
         Boost::serialization
-        Boost::boost
-        boost_parser
-        boost_math
+        Boost::headers
+        Boost::parser
+        Boost::math
+        Boost::leaf
+        Boost::mp11
+        Boost::describe
+        Boost::pfr
+        Boost::type_erasure
+        Boost::container
+        Boost::hana
+        Boost::hof
+        Boost::bimap
+        Boost::unordered
+        Boost::signals2
+        Boost::multi_index
+        ddx::ddx
+        einsum::einsum
         nlohmann_json::nlohmann_json
         TBB::tbb
         IPOPT::ipopt
@@ -106,6 +126,7 @@ add_executable(forcesmith_cli
         src/cli/options.cpp
         src/cli/evaluate_report.cpp
         src/cli/init.cpp
+        src/cli/solver_registry.cpp
         src/cli/app.cpp)
 set_target_properties(forcesmith_cli PROPERTIES OUTPUT_NAME forcesmith)
 target_include_directories(forcesmith_cli PRIVATE

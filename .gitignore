@@ -61,3 +61,12 @@ data/
 !**/CMakeLists.txt
 __pycache__/
 *.data
+
+# ── Stray compiler dep / module-scan output ──────────────────────────────────
+*.d
+*.ddi
+
+# ── Local dependency clones (fetched via FetchContent) ───────────────────────
+/googletest/
+/nlohmann_json/
+/spdlog/

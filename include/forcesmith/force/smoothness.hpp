@@ -1,56 +1,33 @@
 #pragma once
 
-// Curvature (smoothness) regularization, force-calculator level.
-//
-// Sums the per-potential curvature residuals (see
-// forcesmith/potentials/curvature.hpp) over every tabulated potential a
-// calculator owns. The default reports zero (calculators with no tabulated
-// potentials — e.g. Tersoff/Stiweb, which are purely analytic — contribute
-// nothing). Calculators built from `RadialPotential` tables overload the two entry
-// points below by iterating their public tables.
-//
-// force_calculator.hpp's Model<T> forwards its smoothness virtuals here, so this
-// header pulls only the concrete calculator leaf headers it names — NOT
-// force_calculator.hpp — to break that include cycle.
-
-#include "forcesmith/force/adp_force.hpp"
-#include "forcesmith/force/angular_force.hpp"
-#include "forcesmith/force/eam_force.hpp"
-#include "forcesmith/force/pair_force.hpp"
+#include "forcesmith/core/fields.hpp"
+#include "forcesmith/force/force_calculator_concept.hpp"
 
 #include <Eigen/Core>
 
 #include <cstddef>
+#include <string_view>
 
 namespace forcesmith {
 
-// Defaults: no tabulated potentials (Tersoff/Stiweb)
-template <typename M> constexpr std::size_t model_smoothness_count(const M &) {
-  return 0;
+// Constrained: unconstrained, these defaults would silently answer 0 for any type.
+template <class M>
+concept CSmoothable = requires(const M &m) { m.ntypes; };
+
+template <CSmoothable M> std::size_t model_smoothness_count(const M &m) {
+  std::size_t n = 0;
+  for_each_table(m, [&](const auto &t, std::string_view) {
+    n += smoothness_count_range(t);
+  });
+  return n;
 }
-template <typename M>
-constexpr void model_write_smoothness(const M &, Eigen::VectorXd &,
-                                      std::size_t /*off*/, double /*weight*/) {}
 
-// EAM: pair + density + embedding tables.
-std::size_t model_smoothness_count(const EAMForceCalculator &m);
-void model_write_smoothness(const EAMForceCalculator &m, Eigen::VectorXd &dst,
-                            std::size_t off, double weight);
-
-// Pair: single pair table.
-std::size_t model_smoothness_count(const PairForceCalculator &m);
-void model_write_smoothness(const PairForceCalculator &m, Eigen::VectorXd &dst,
-                            std::size_t off, double weight);
-
-// ADP: pair + density + embedding + dipole + quadrupole tables.
-std::size_t model_smoothness_count(const ADPForceCalculator &m);
-void model_write_smoothness(const ADPForceCalculator &m, Eigen::VectorXd &dst,
-                            std::size_t off, double weight);
-
-// Angular: pair + radial + angular tables.
-std::size_t model_smoothness_count(const AngularForceCalculator &m);
-void model_write_smoothness(const AngularForceCalculator &m,
-                            Eigen::VectorXd &dst, std::size_t off,
-                            double weight);
+template <CSmoothable M>
+void model_write_smoothness(const M &m, Eigen::VectorXd &dst, std::size_t off,
+                            double weight) {
+  for_each_table(m, [&](const auto &t, std::string_view) {
+    write_smoothness_range(t, dst, off, weight);
+  });
+}
 
 } // namespace forcesmith

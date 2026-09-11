@@ -9,7 +9,8 @@ using namespace forcesmith;
 
 // ── Minimal analytic potential types ─────────────────────────────────────────
 
-struct LJPair : NoBounds<LJPair> {
+struct LJPair : NoBounds<LJPair>, NoSiteCache<LJPair>, NoRawParamAccess,
+                     NoParamJacobian {
     double eps = 1.0, sigma = 1.0;
     double eval(double r)  const {
         const double sr6 = std::pow(sigma/r, 6);
@@ -26,7 +27,8 @@ struct LJPair : NoBounds<LJPair> {
 };
 
 // f(r) = exp(-r): smooth radial modulation that goes to 0 at large r
-struct ExpMod : NoBounds<ExpMod> {
+struct ExpMod : NoBounds<ExpMod>, NoSiteCache<ExpMod>, NoRawParamAccess,
+                     NoParamJacobian {
     double alpha = 1.0;
     double eval(double r)  const { return std::exp(-alpha * r); }
     double deriv(double r) const { return -alpha * std::exp(-alpha * r); }
@@ -37,7 +39,8 @@ struct ExpMod : NoBounds<ExpMod> {
 };
 
 // g(cos θ) = (cos θ − cos θ₀)²: penalises deviation from preferred angle
-struct CosAngle : NoBounds<CosAngle> {
+struct CosAngle : NoBounds<CosAngle>, NoSiteCache<CosAngle>, NoRawParamAccess,
+                     NoParamJacobian {
     double cos0 = -0.5;  // preferred angle ~120°
     double k    = 1.0;
     double eval(double c)  const { return k * (c - cos0) * (c - cos0); }
@@ -48,7 +51,8 @@ struct CosAngle : NoBounds<CosAngle> {
     void scatter_params(const Eigen::VectorXd&, int) {}
 };
 
-struct ZeroPot : NoBounds<ZeroPot> {
+struct ZeroPot : NoBounds<ZeroPot>, NoSiteCache<ZeroPot>, NoRawParamAccess,
+                     NoParamJacobian {
     double eval(double)  const { return 0.0; }
     double deriv(double) const { return 0.0; }
     std::pair<double,double> span() const { return {0.0, 100.0}; }

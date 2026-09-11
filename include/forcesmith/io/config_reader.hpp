@@ -11,11 +11,9 @@ namespace forcesmith::io {
 struct ParseError {
   std::string message;
   std::size_t line = 0;
+  std::size_t column = 0; // 1-based; 0 == unknown (filled by io/grammar.hpp)
 };
 
-// Parsed configurations together with the element↔slot registry that stamped
-// their atom types. The registry's Z-sorted slot order is authoritative: the
-// potential tables a force model is built with must use the same layout.
 struct ParsedConfig {
   std::vector<Configuration> configs;
   SpeciesRegistry registry;

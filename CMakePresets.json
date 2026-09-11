@@ -1,6 +1,10 @@
 {
   "version": 6,
-  "cmakeMinimumRequired": { "major": 3, "minor": 28, "patch": 0 },
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 28,
+    "patch": 0
+  },
   "configurePresets": [
     {
       "name": "base",
@@ -8,8 +12,11 @@
       "generator": "Ninja",
       "binaryDir": "${sourceDir}/build/${presetName}",
       "cacheVariables": {
-        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
-      }
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
+        "CMAKE_CXX_COMPILER": "g++-15",
+        "CMAKE_C_COMPILER": "gcc-15"
+      },
+      "description": "GCC 15 is the floor: ddx and einsum both stop at configure time below GCC 14 / Clang 20, and the fetched Boost 1.92 plus C++23 need it too."
     },
     {
       "name": "debug",
@@ -54,7 +61,9 @@
     {
       "name": "ci",
       "configurePreset": "ci",
-      "output": { "verbosity": "verbose" }
+      "output": {
+        "verbosity": "verbose"
+      }
     }
   ]
 }

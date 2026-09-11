@@ -9,7 +9,8 @@ using namespace forcesmith;
 // ── Minimal analytic potential types for EAM testing ─────────────────────────
 
 // Pair repulsion: φ(r) = A/r^12
-struct RepulsivePair : NoBounds<RepulsivePair> {
+struct RepulsivePair : NoBounds<RepulsivePair>, NoSiteCache<RepulsivePair>, NoRawParamAccess,
+                     NoParamJacobian {
     double A = 1.0;
     explicit RepulsivePair(double a = 1.0) : A(a) {}
     double eval(double r)  const { return A / std::pow(r, 12); }
@@ -21,7 +22,8 @@ struct RepulsivePair : NoBounds<RepulsivePair> {
 };
 
 // Density: g(r) = exp(-β r)  (decay, always non-negative)
-struct ExpDensity : NoBounds<ExpDensity> {
+struct ExpDensity : NoBounds<ExpDensity>, NoSiteCache<ExpDensity>, NoRawParamAccess,
+                     NoParamJacobian {
     double beta = 1.0;
     explicit ExpDensity(double b = 1.0) : beta(b) {}
     double eval(double r)  const { return std::exp(-beta * r); }
@@ -33,7 +35,8 @@ struct ExpDensity : NoBounds<ExpDensity> {
 };
 
 // Embedding: F(ρ) = -c × √ρ   (attractive, like Finnis-Sinclair style)
-struct SqrtEmbedding : NoBounds<SqrtEmbedding> {
+struct SqrtEmbedding : NoBounds<SqrtEmbedding>, NoSiteCache<SqrtEmbedding>, NoRawParamAccess,
+                     NoParamJacobian {
     double c = 1.0;
     explicit SqrtEmbedding(double cc = 1.0) : c(cc) {}
     double eval(double rho)  const { return -c * std::sqrt(rho); }

@@ -23,7 +23,8 @@ static Atom make_atom(int type, Vec3 pos) {
 }
 
 // Trivial potential stub — satisfies the RadialPotential concept.
-struct ConstPot : NoBounds<ConstPot> {
+struct ConstPot : NoBounds<ConstPot>, NoSiteCache<ConstPot>, NoRawParamAccess,
+                     NoParamJacobian {
     double eval(double)  const { return 0.0; }
     double deriv(double) const { return 0.0; }
     std::pair<double,double> span() const { return {0.0, 100.0}; }

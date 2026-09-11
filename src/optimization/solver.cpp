@@ -1,9 +1,11 @@
 #include "forcesmith/optimization/solver.hpp"
 
+#include "forcesmith/optimization/fd_jacobian.hpp"
+
 #include "forcesmith/optimization/line_search.hpp"
 
-#include <boost/math/optimization/differential_evolution.hpp>
 #include <Eigen/Cholesky>
+#include <boost/math/optimization/differential_evolution.hpp>
 #include <unsupported/Eigen/NonLinearOptimization>
 
 #include <algorithm>
@@ -14,22 +16,6 @@
 #include <vector>
 
 namespace {
-// Process-wide threading hygiene, applied once at library-load static-init time
-// (before any BLAS computation and before main; solver.o is always linked, so
-// this initializer always fires). Lets every run go without an
-// OPENBLAS_NUM_THREADS=1 prefix.
-//
-// Ipopt's MUMPS (libcoinmumps) drags in OpenBLAS, which spawns nproc idle
-// threads on load (parked in futex_wait) and oversubscribes the box — pure
-// overhead, since the hot path is Eigen → threaded MKL. Shrink its pool to 1.
-// Weak symbol: a no-op when OpenBLAS isn't present.
-//
-// The companion concern — MUMPS also linking the MKL *sequential* threading
-// layer, which could fight our TBB layer — is handled at link time, not here:
-// Dependencies.cmake links libmkl_tbb_thread directly (and ahead of
-// libcoinmumps), so in MKL's layered model the TBB threading symbols bind first.
-// (MKL's runtime mkl_set_threading_layer() lives only in libmkl_rt, not the
-// layered libs, so it isn't an option here.)
 extern "C" void openblas_set_num_threads(int) __attribute__((weak));
 
 const int kThreadingHygiene = [] {
@@ -43,7 +29,6 @@ namespace forcesmith {
 
 namespace {
 
-// Adapts std::function<VectorXd(VectorXd)> to the Eigen DenseFunctor interface.
 struct FunctorAdapter {
   using Scalar = double;
   using InputType = Eigen::VectorXd;
@@ -53,30 +38,20 @@ struct FunctorAdapter {
   ResidualFn fn;
   int n_inputs;
   int n_values;
-  JacobianFn jac; // optional; when set, df delegates to it (ForcesmithFunctor::df)
+  JacobianFn
+      jac; // optional; when set, df delegates to it (ForcesmithFunctor::df)
 
   int operator()(const Eigen::VectorXd &x, Eigen::VectorXd &fvec) const {
     fvec = std::invoke(fn, x);
     return 0;
   }
 
-  // Prefer the supplied (typed, parallel) Jacobian; otherwise fall back to a
-  // local central finite-difference Jacobian (Δ = 1e-5).
   int df(const Eigen::VectorXd &x, Eigen::MatrixXd &fjac) const {
     if (jac) {
       std::invoke(jac, x, fjac);
       return 0;
     }
-    constexpr double delta = 1e-5;
-    Eigen::VectorXd fp, fm, xp = x;
-    for (int j : std::views::iota(0, n_inputs)) {
-      xp[j] += delta;
-      fp = fn(xp);
-      xp[j] -= 2.0 * delta;
-      fm = fn(xp);
-      xp[j] += delta;
-      fjac.col(j) = (fp - fm) / (2.0 * delta);
-    }
+    opt::fd_jacobian(fn, x, fjac);
     return 0;
   }
 
@@ -92,22 +67,17 @@ int EigenLMSolver::minimize(Eigen::VectorXd &x, ResidualFn f, JacobianFn jac,
   FunctorAdapter adapter{std::move(f), static_cast<int>(x.size()), n_vals,
                          std::move(jac)};
   Eigen::LevenbergMarquardt<FunctorAdapter> lm(adapter);
-  // max_iter counts LM *iterations* (one Jacobian + trust-region step each), to
-  // match IpoptSolver. Eigen's lm.minimize() is
-  // instead bounded by maxfev (function evaluations), so the same --maxiter flag
-  // meant wildly different work across solvers. Drive minimizeOneStep directly
-  // and set maxfev high enough that the per-step search is never the limiter.
   namespace LM = Eigen::LevenbergMarquardtSpace;
   lm.parameters.maxfev = std::max(max_iter, 1) * 100 + 100;
   lm.parameters.xtol = xtol;
   lm.parameters.ftol = ftol;
-  if (lm.minimizeInit(x) == LM::ImproperInputParameters)
+  if (lm.minimizeInit(x) == LM::ImproperInputParameters) {
     return static_cast<int>(LM::ImproperInputParameters);
-  LM::Status status = LM::Running; // minimizeInit leaves NotStarted; prime the loop
+  }
+  LM::Status status =
+      LM::Running; // minimizeInit leaves NotStarted; prime the loop
   for (int i = 0; i < max_iter && status == LM::Running; ++i)
     status = lm.minimizeOneStep(x);
-  // Still Running ⇒ stopped by the iteration cap, not a numerical failure; report
-  // it as the max-iter-reached code (2), matching IpoptSolver.
   return status == LM::Running ? 2 : static_cast<int>(status);
 }
 
@@ -117,24 +87,12 @@ int EigenHybridSolver::minimize(Eigen::VectorXd &x, ResidualFn f,
                                 const Eigen::VectorXd & /*upper*/) const {
   const int D = static_cast<int>(x.size());
 
-  // Gradient functor: g(x)[j] = Fᵀ ∂F/∂xⱼ  (central FD, δ=1e-5)
   struct GradFunctor {
     std::function<Eigen::VectorXd(const Eigen::VectorXd &)> fn;
     int D;
 
     int operator()(const Eigen::VectorXd &xv, Eigen::VectorXd &grad) const {
-      constexpr double delta = 1e-5;
-      const Eigen::VectorXd f0 = fn(xv);
-      grad.resize(D);
-      Eigen::VectorXd xp = xv;
-      for (int j = 0; j < D; ++j) {
-        xp[j] += delta;
-        const Eigen::VectorXd fp = fn(xp);
-        xp[j] -= 2.0 * delta;
-        const Eigen::VectorXd fm = fn(xp);
-        xp[j] += delta;
-        grad[j] = f0.dot((fp - fm) / (2.0 * delta));
-      }
+      opt::fd_gradient(fn, xv, grad);
       return 0;
     }
 
@@ -142,7 +100,7 @@ int EigenHybridSolver::minimize(Eigen::VectorXd &x, ResidualFn f,
     constexpr int values() const { return D; } // square system
   };
 
-  GradFunctor gf{std::move(f), D};
+  GradFunctor gf{.fn = std::move(f), .D = D};
   Eigen::HybridNonLinearSolver<GradFunctor> solver(gf);
   solver.parameters.maxfev = max_iter * D;
   solver.parameters.xtol = xtol;
@@ -155,9 +113,6 @@ int BoostDESolver::minimize(Eigen::VectorXd &x, ResidualFn f,
                             const Eigen::VectorXd &upper) const {
   const int D = static_cast<int>(x.size());
 
-  // DE needs a finite search box. Use each parameter's supplied [lower, upper]
-  // where finite; where a bound is ±∞, auto-derive a ±half-width box from the
-  // current x (mirrors the per-component fallback used for an unbounded fit).
   std::vector<double> lb(D), ub(D);
   for (int j = 0; j < D; ++j) {
     const double v = x[j];
@@ -177,8 +132,6 @@ int BoostDESolver::minimize(Eigen::VectorXd &x, ResidualFn f,
   params.max_generations = max_generations;
   params.threads = 1;
 
-  // Clamp the start point into the box; a user bound may exclude the current x,
-  // and DE requires the initial guess to lie within [lower, upper].
   std::vector<double> ig(D);
   for (int j = 0; j < D; ++j)
     ig[j] = std::clamp(x[j], lb[j], ub[j]);
@@ -209,7 +162,6 @@ int LineSearchSolver::minimize(Eigen::VectorXd &x, ResidualFn f,
 
   const PowellDirectionSet powell{f};
 
-  // Direction set, initialized to the unit basis.
   std::vector<Eigen::VectorXd> dirs(D, Eigen::VectorXd::Zero(D));
   for (int i = 0; i < D; ++i) {
     dirs[i] = Eigen::VectorXd::Unit(D, i);
@@ -222,13 +174,10 @@ int LineSearchSolver::minimize(Eigen::VectorXd &x, ResidualFn f,
     const auto s = powell.sweep(x, dirs);
     const double fret = powell.phi(x);
 
-    // Converged once a whole sweep barely moves the parameters.
     if ((x - p0).norm() <= xtol) {
       break;
     }
 
-    // Adopt the conjugate direction iff Powell's criterion holds, then replace
-    // the most-effective old direction with it.
     powell.conjugate_direction(p0, x, fp, fret, s.del)
         .transform([&](const Eigen::VectorXd &xi) {
           powell.line_min(x, xi);
@@ -296,13 +245,10 @@ int NormalEquationsSolver::minimize(Eigen::VectorXd &x, ResidualFn f,
     return 0;
   }
 
-  // One residual + one Jacobian evaluation at the start point (the functor
-  // streams `jac` per-config, so J is the only large allocation: n_vals × P).
   const Eigen::VectorXd r0 = std::invoke(f, x);
   Eigen::MatrixXd J(n_vals, P);
   std::invoke(jac, x, J);
 
-  // Normal equations of min‖r0 + J·Δ‖²:  (JᵀJ + λI)·Δ = −Jᵀr0.
   Eigen::MatrixXd AtA = J.transpose() * J; // P×P (small)
   const Eigen::VectorXd Atb = J.transpose() * r0;
 
@@ -312,13 +258,13 @@ int NormalEquationsSolver::minimize(Eigen::VectorXd &x, ResidualFn f,
   }
   AtA.diagonal().array() += lambda;
 
-  // PSD ⇒ LDLᵀ; θ = θ₀ + Δ = θ₀ − (JᵀJ+λ)⁻¹·Jᵀr0.
   x -= AtA.ldlt().solve(Atb);
   return 0;
 }
 
 Solver make_default_solver(int max_iter, double xtol, double ftol) {
-  return Solver(EigenLMSolver{max_iter, xtol, ftol});
+  return Solver(
+      EigenLMSolver{.max_iter = max_iter, .xtol = xtol, .ftol = ftol});
 }
 
 } // namespace forcesmith

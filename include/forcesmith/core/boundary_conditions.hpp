@@ -8,7 +8,7 @@ namespace forcesmith {
 
 class PeriodicBC {
 private:
-  template <class RoundOp>
+  template <std::invocable<Eigen::Array3d> RoundOp>
   [[nodiscard]] Vec3 map_fractional(const Vec3 &v,
                                     RoundOp &&round) const noexcept {
     Vec3 frac = inv_box_ * v;
@@ -21,10 +21,6 @@ public:
   void set_box(const Mat3 &box) {
     box_ = box;
     const double det = box.determinant();
-    // A singular or non-finite cell has no usable inverse; keep inv_box_/volume_
-    // finite so a degenerate config can't propagate NaNs into wrap(),
-    // min_image() or the neighbour-list image-shell counts. Such input should be
-    // rejected upstream — this is only a last-resort guard.
     if (box.allFinite() && std::isfinite(det) && det != 0.0) {
       inv_box_ = box.inverse();
     } else {
@@ -39,12 +35,10 @@ public:
   }
   [[nodiscard]] constexpr double volume() const noexcept { return volume_; }
 
-  // Wrap a Cartesian position into the unit cell [0,1)³ (frac coords).
   [[nodiscard]] Vec3 wrap(const Vec3 &r) const noexcept {
     return map_fractional(r, [](const auto &x) { return x.floor(); });
   }
 
-  // Mini-imag displacement: maps delta into [-0.5, 0.5)³ in frac coords.
   [[nodiscard]] Vec3 min_image(const Vec3 &d) const noexcept {
     return map_fractional(d, [](const auto &x) { return x.round(); });
   }
@@ -58,7 +52,7 @@ private:
 class InfiniteBC {
 public:
   constexpr explicit InfiniteBC(double volume = 1.0) noexcept
-      : volume_(volume) {}
+      : volume_{volume} {}
 
   [[nodiscard]] Vec3 wrap(const Vec3 &r) const noexcept { return r; }
   [[nodiscard]] Vec3 min_image(const Vec3 &d) const noexcept { return d; }

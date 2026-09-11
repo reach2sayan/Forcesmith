@@ -4,9 +4,6 @@
 #include "forcesmith/core/types.hpp"             // Vec3, SymTens
 #include "forcesmith/force/force_calculator.hpp" // ForceCalculator variant
 
-#include <cstddef>
-#include <tuple>
-#include <utility>
 #include <vector>
 
 namespace forcesmith::force {
@@ -20,45 +17,4 @@ struct EvalResult {
 
 EvalResult evaluate(const ForceCalculator &calc, const Configuration &cfg);
 
-template <std::size_t I> constexpr decltype(auto) get(EvalResult &r) noexcept {
-  static_assert(I < 4, "EvalResult has 4 fields");
-  if constexpr (I == 0) {
-    return (r.energy);
-  } else if constexpr (I == 1) {
-    return (r.forces);
-  } else if constexpr (I == 2) {
-    return (r.stress);
-  } else {
-    return (r.limit);
-  }
-}
-
-template <std::size_t I>
-constexpr decltype(auto) get(const EvalResult &r) noexcept {
-  static_assert(I < 4, "EvalResult has 4 fields");
-  if constexpr (I == 0) {
-    return (r.energy);
-  } else if constexpr (I == 1) {
-    return (r.forces);
-  } else if constexpr (I == 2) {
-    return (r.stress);
-  } else {
-    return (r.limit);
-  }
-}
-
-template <std::size_t I> constexpr decltype(auto) get(EvalResult &&r) noexcept {
-  return std::move(get<I>(r));
-}
-
 } // namespace forcesmith::force
-
-template <>
-struct std::tuple_size<forcesmith::force::EvalResult>
-    : std::integral_constant<std::size_t, 4> {};
-
-template <std::size_t I>
-struct std::tuple_element<I, forcesmith::force::EvalResult> {
-  using type = std::remove_reference_t<decltype(forcesmith::force::get<I>(
-      std::declval<forcesmith::force::EvalResult &>()))>;
-};

@@ -1,7 +1,10 @@
 #include "forcesmith/cli/evaluate_report.hpp"
 
+#include "forcesmith/core/json.hpp"
+#include "forcesmith/core/voigt.hpp"
 #include "forcesmith/io/config_reader.hpp" // ParseError
 
+#include <ranges>
 #include <boost/leaf/error.hpp>
 #include <boost/leaf/handle_errors.hpp>
 #include <cstddef>
@@ -11,6 +14,7 @@
 #include <string>
 
 namespace leaf = boost::leaf;
+using json = nlohmann::json;
 
 namespace forcesmith::cli {
 
@@ -21,9 +25,6 @@ leaf::result<void> write_evaluate_report(forcesmith::Forcesmith &session,
   const double sw = o.stress_weight;
 
   BOOST_LEAF_AUTO(configs, session.configurations());
-  // Evaluate every config up front, in parallel across cores. The serial loop
-  // below then only formats JSON, so output order and total_sumsq are
-  // unchanged.
   BOOST_LEAF_AUTO(results, session.evaluate_all());
 
   std::ofstream out(ev_path);
@@ -31,62 +32,57 @@ leaf::result<void> write_evaluate_report(forcesmith::Forcesmith &session,
     return leaf::new_error(forcesmith::io::ParseError{
         "cannot open evaluate output: " + ev_path, 0});
   }
-  out << std::setprecision(17);
 
-  auto stress6 = [](const forcesmith::SymTens &s, std::ostream &oo) {
-    oo << s(0, 0) << ", " << s(1, 1) << ", " << s(2, 2) << ", " << s(0, 1)
-       << ", " << s(1, 2) << ", " << s(0, 2);
+  const auto stress6 = [](const forcesmith::SymTens &s) {
+    json a = json::array();
+    for (const auto &[i, j] : kVoigt6) {
+      a.push_back(s(i, j));
+    }
+    return a;
   };
 
   double total_sumsq = 0.0;
-  out << "{\n  \"energy_weight\": " << ew << ",\n  \"stress_weight\": " << sw
-      << ",\n  \"nconf\": " << configs.size() << ",\n  \"configs\": [\n";
+  json report;
+  report["energy_weight"] = ew;
+  report["stress_weight"] = sw;
+  report["nconf"] = configs.size();
+  report["configs"] = json::array();
 
-  for (std::size_t i = 0; i < configs.size(); ++i) {
-    const forcesmith::Configuration &cfg = configs[i];
-    const forcesmith::force::EvalResult &r = results[i];
-
+  for (const auto &[i, pair_] : std::views::zip(configs, results) |
+                                    std::views::enumerate) {
+    const auto &[cfg, r] = pair_;
     double csq = 0.0;
-    out << "    {\n      \"index\": " << i << ",\n      \"name\": \""
-        << cfg.name << "\""
-        << ",\n      \"natoms\": " << cfg.atoms.size()
-        << ",\n      \"calc_energy\": " << r.energy
-        << ",\n      \"ref_energy\": " << cfg.ref.energy
-        << ",\n      \"calc_stress\": [";
-    stress6(r.stress, out);
-    out << "],\n      \"ref_stress\": [";
-    stress6(cfg.ref.stress, out);
-    out << "],\n      \"atoms\": [\n";
-    for (std::size_t a = 0; a < cfg.atoms.size(); ++a) {
-      const auto &cf = r.forces[a];
-      const auto &rf = cfg.atoms[a].ref.force;
-      for (int k = 0; k < 3; ++k) {
-        const double d = cf[k] - rf[k];
-        csq += d * d;
-      }
-      out << "        {\"calc_force\": [" << cf[0] << ", " << cf[1] << ", "
-          << cf[2] << "], \"ref_force\": [" << rf[0] << ", " << rf[1] << ", "
-          << rf[2] << "]}" << (a + 1 < cfg.atoms.size() ? "," : "") << "\n";
+    json atoms = json::array();
+    for (const auto &[cf, atom] : std::views::zip(r.forces, cfg.atoms)) {
+      const Vec3 &rf = atom.ref.force;
+      csq += (cf - rf).squaredNorm();
+      atoms.push_back(json{{"calc_force", Vec3(cf)}, {"ref_force", Vec3(rf)}});
     }
     const double de = ew * (r.energy - cfg.ref.energy);
     csq += de * de;
     if (sw > 0.0) {
       const forcesmith::SymTens ds = r.stress - cfg.ref.stress;
-      const double comps[6] = {ds(0, 0), ds(1, 1), ds(2, 2),
-                               ds(0, 1), ds(1, 2), ds(0, 2)};
-      for (double c : comps) {
-        csq += (sw * c) * (sw * c);
+      for (const auto &[vi, vj] : kVoigt6) {
+        csq += (sw * ds(vi, vj)) * (sw * ds(vi, vj));
       }
     }
     csq += r.limit * r.limit;
     total_sumsq += csq;
 
-    out << "      ],\n      \"limit\": " << r.limit
-        << ",\n      \"sumsq\": " << csq << "\n    }"
-        << (i + 1 < configs.size() ? "," : "") << "\n";
+    report["configs"].push_back(json{{"index", static_cast<std::size_t>(i)},
+                                     {"name", cfg.name},
+                                     {"natoms", cfg.atoms.size()},
+                                     {"calc_energy", r.energy},
+                                     {"ref_energy", cfg.ref.energy},
+                                     {"calc_stress", stress6(r.stress)},
+                                     {"ref_stress", stress6(cfg.ref.stress)},
+                                     {"atoms", std::move(atoms)},
+                                     {"limit", r.limit},
+                                     {"sumsq", csq}});
   }
+  report["total_sumsq"] = total_sumsq;
 
-  out << "  ],\n  \"total_sumsq\": " << total_sumsq << "\n}\n";
+  out << report.dump(2) << "\n";
   std::cout << "evaluated " << configs.size()
             << " configurations, total error sum = " << std::setprecision(10)
             << total_sumsq << "\nwrote evaluation report to " << ev_path

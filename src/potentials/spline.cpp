@@ -1,5 +1,7 @@
 #include "forcesmith/potentials/spline.hpp"
 
+#include "forcesmith/core/symbolic.hpp"
+
 #include "forcesmith/core/fit_params.hpp"
 
 #include <algorithm>
@@ -13,8 +15,6 @@ namespace forcesmith {
 
 namespace {
 
-// Locate the interval x[i] <= r < x[i+1], clamped to [0, n-2]. Assumes
-// x.front() < r < x.back() (callers handle the boundaries separately).
 std::size_t locate_interval(const std::vector<double> &x, double r) {
   BOOST_ASSERT_MSG(std::ranges::is_sorted(x), "Expected sorted x values");
   const std::size_t n = x.size();
@@ -40,9 +40,6 @@ SplinePotential::SplinePotential(std::vector<double> x, std::vector<double> y)
 #endif
 }
 
-// Port of boost::math::interpolators::makima's slope computation (makima.hpp).
-// We own the slopes so the per-bond hot path can evaluate the Hermite cubic
-// directly from (y_, s_) with no interpolator object and no binary search.
 void SplinePotential::recompute_slopes_() {
   using std::abs;
   using std::isnan;
@@ -115,44 +112,90 @@ void SplinePotential::rebuild_interp_() {
 }
 #endif
 
-// Cubic Hermite value/derivative on interval i, written exactly as boost's
-// cubic_hermite_detail (cubic_hermite_detail.hpp) so eval/deriv stay
-// bit-identical to the previous boost-backed implementation given matching
-// slopes (which FORCESMITH_SPLINE_VERIFY checks).
+namespace hermite {
+
+using ddx::named;
+using ddx::var;
+
+inline constexpr auto r = var<"r">;
+inline constexpr auto x0 = var<"x0">;
+inline constexpr auto dx = var<"dx">;
+inline constexpr auto y0 = var<"y0">;
+inline constexpr auto y1 = var<"y1">;
+inline constexpr auto s0 = var<"s0">;
+inline constexpr auto s1 = var<"s1">;
+
+// Boost's cubic_hermite_detail spelling, kept verbatim so the VALUE stays
+// bit-identical to the boost-backed implementation this port replaced.
+inline constexpr auto kExpr = [] {
+  const auto t = (r - x0) / dx;
+  const auto omt = 1.0 - t;
+  return omt * omt * (y0 * (1.0 + 2.0 * t) + s0 * (r - x0)) +
+         t * t * (y1 * (3.0 - 2.0 * t) + dx * s1 * (t - 1.0));
+}();
+
+inline constexpr auto kValue = ddx::Equation{kExpr};
+inline constexpr auto kDeriv = symbolic::derivative_of<"r">(kValue);
+
+// Slots by name PER EQUATION: a derivative may carry fewer symbols, so another
+// equation's slots would silently read the wrong partial.
+template <class Eq, ddx::impl::FixedString N>
+inline constexpr std::size_t slot = symbolic::slot_of<Eq>(N.view());
+
+inline auto point(const std::vector<double> &x, const std::vector<double> &y,
+                  const std::vector<double> &s, std::size_t i, double rr) {
+  return decltype(kValue)::point(
+      named<"dx">(x[i + 1] - x[i]), named<"r">(rr), named<"s0">(s[i]),
+      named<"s1">(s[i + 1]), named<"x0">(x[i]), named<"y0">(y[i]),
+      named<"y1">(y[i + 1]));
+}
+
+// Value basis = d(value)/d(y0,y1,s0,s1); the derivative basis must come from
+// derivative_tensor<2>: jacobian() of the stored r-derivative silently returns
+// zeros (ddx freezes a partial tree's symbols as constants).
+struct Basis {
+  double c_y0, c_y1, c_s0, c_s1;
+};
+
+template <ddx::impl::FixedString N>
+inline constexpr std::size_t vslot = slot<decltype(kValue), N>;
+
+inline Basis value_basis(double x0v, double dxv, double rr) {
+  const auto j = kValue.jacobian(named<"dx">(dxv), named<"r">(rr),
+                                 named<"s0">(0.0), named<"s1">(0.0),
+                                 named<"x0">(x0v), named<"y0">(0.0),
+                                 named<"y1">(0.0));
+  return Basis{j[vslot<"y0">], j[vslot<"y1">], j[vslot<"s0">],
+               j[vslot<"s1">]};
+}
+
+inline Basis deriv_basis(double x0v, double dxv, double rr) {
+  const auto t = kValue.derivative_tensor<2>(
+      named<"dx">(dxv), named<"r">(rr), named<"s0">(0.0), named<"s1">(0.0),
+      named<"x0">(x0v), named<"y0">(0.0), named<"y1">(0.0));
+  constexpr std::size_t R = vslot<"r">;
+  return Basis{t[R, vslot<"y0">], t[R, vslot<"y1">], t[R, vslot<"s0">],
+               t[R, vslot<"s1">]};
+}
+
+} // namespace hermite
+
 double SplinePotential::hermite_eval_(std::size_t i, double r) const {
-  const double x0 = x_[i], x1 = x_[i + 1];
-  const double y0 = y_[i], y1 = y_[i + 1];
-  const double s0 = s_[i], s1 = s_[i + 1];
-  const double dx = x1 - x0;
-  const double t = (r - x0) / dx;
-  return (1 - t) * (1 - t) * (y0 * (1 + 2 * t) + s0 * (r - x0)) +
-         t * t * (y1 * (3 - 2 * t) + dx * s1 * (t - 1));
+  return hermite::kValue.evaluate(hermite::point(x_, y_, s_, i, r));
 }
 
 double SplinePotential::hermite_deriv_(std::size_t i, double r) const {
-  const double x0 = x_[i], x1 = x_[i + 1];
-  const double y0 = y_[i], y1 = y_[i + 1];
-  const double s0 = s_[i], s1 = s_[i + 1];
-  const double dx = x1 - x0;
-  const double d1 = (y1 - y0 - s0 * dx) / (dx * dx);
-  const double d2 = (s1 - s0) / (2 * dx);
-  const double c2 = 3 * d1 - 2 * d2;
-  const double c3 = 2 * (d2 - d1) / dx;
-  return s0 + 2 * c2 * (r - x0) + 3 * c3 * (r - x0) * (r - x0);
+  return hermite::kDeriv.evaluate(hermite::point(x_, y_, s_, i, r));
 }
 
 void SplinePotential::gather_params(Eigen::VectorXd &dst,
                                     std::size_t offset) const {
-  // Spline knots are stored as parallel value/fixed arrays (not Param objects),
-  // so use the (values, fixed) overload of the shared leaf loop.
   detail::gather_params_impl(y_, fixed_, dst, offset);
 }
 
 void SplinePotential::scatter_params(const Eigen::VectorXd &src,
                                      std::size_t offset) {
   detail::scatter_params_impl(y_, fixed_, src, offset);
-  // Only the knot VALUES changed; the x-grid (and therefore every cached site)
-  // is untouched. Recompute the cheap per-knot slopes; do NOT clear sites_.
   recompute_slopes_();
 #ifdef FORCESMITH_SPLINE_VERIFY
   rebuild_interp_();
@@ -164,15 +207,12 @@ void SplinePotential::write_curvature(Eigen::VectorXd &dst, std::size_t offset,
   if (curvature_count() == 0) {
     return;
   }
-  // One residual per interior knot: weight * (y[k-1] - 2 y[k] + y[k+1]).
   for (std::size_t k = 1; k + 1 < y_.size(); ++k) {
     dst[offset++] = weight * (y_[k - 1] - 2.0 * y_[k] + y_[k + 1]);
   }
 }
 
 double SplinePotential::eval(double r) const {
-  // Out of range: linear extrapolation using the boundary slope, consistent
-  // with deriv()
   const std::size_t n = x_.size();
   if (r <= x_.front()) {
     const double slope = (y_[1] - y_[0]) / (x_[1] - x_[0]);
@@ -211,10 +251,7 @@ double SplinePotential::deriv(double r) const {
   return d;
 }
 
-// Fused eval(r)+deriv(r): the branch ladder mirrors eval()/deriv() exactly, but
-// the interior cubic case does ONE locate_interval and feeds the shared index to
-// both hermite helpers — saving the second binary search. Each returned
-// component is bit-identical to the standalone call.
+// Fused eval(r)+deriv(r), bit-identical to the separate calls.
 std::pair<double, double> SplinePotential::eval_and_deriv(double r) const {
   const std::size_t n = x_.size();
   if (r <= x_.front()) {
@@ -268,19 +305,16 @@ int SplinePotential::prepare_site(double r) const {
   st.off = r - x_[i];
 
   if (st.kind == EvalSite::Kind::Cubic) {
-    const double t = st.off * st.inv_dx; // (r - x_[i]) / dx
-    const double omt = 1.0 - t;
-    // Value basis (matches boost cubic_hermite operator()): the s0 term is
-    // (1-t)^2 * s0 * (r-x0) = (1-t)^2 * t * dx * s0.
-    st.v0 = omt * omt * (1.0 + 2.0 * t);
-    st.v1 = t * t * (3.0 - 2.0 * t);
-    st.vs0 = omt * omt * t * dx;
-    st.vs1 = t * t * (t - 1.0) * dx;
-    // Derivative basis: d/dx of the value basis (chain rule, dt/dx = 1/dx).
-    st.d0 = (6.0 * t * t - 6.0 * t) * st.inv_dx;
-    st.d1 = (-6.0 * t * t + 6.0 * t) * st.inv_dx;
-    st.ds0 = 3.0 * t * t - 4.0 * t + 1.0;
-    st.ds1 = 3.0 * t * t - 2.0 * t;
+    const auto v = hermite::value_basis(x_[i], dx, r);
+    st.v0 = v.c_y0;
+    st.v1 = v.c_y1;
+    st.vs0 = v.c_s0;
+    st.vs1 = v.c_s1;
+    const auto d = hermite::deriv_basis(x_[i], dx, r);
+    st.d0 = d.c_y0;
+    st.d1 = d.c_y1;
+    st.ds0 = d.c_s0;
+    st.ds1 = d.c_s1;
   }
 
   const int idx = static_cast<int>(sites_.size());
@@ -288,8 +322,5 @@ int SplinePotential::prepare_site(double r) const {
   site_of_r_.emplace(r, idx);
   return idx;
 }
-
-// eval_at / deriv_at / eval_and_deriv_at are defined FORCE_INLINE in spline.hpp
-// so they fuse into the force calculators' hot neighbor loops.
 
 } // namespace forcesmith

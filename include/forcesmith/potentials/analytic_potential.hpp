@@ -2,763 +2,806 @@
 
 #include "forcesmith/core/fit_params.hpp"
 #include "forcesmith/core/param.hpp"
+#include "forcesmith/core/radial_potential.hpp" // NoSiteCache
+#include "forcesmith/core/symbolic.hpp" // name_of, slot_of
 #include "forcesmith/core/types.hpp"
+
+#include "ddx.hpp"
+
 #include <Eigen/Core>
+
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstddef>
 #include <numbers>
 #include <ranges>
+#include <span>
+#include <string_view>
+#include <type_traits>
 #include <utility>
 
 namespace forcesmith {
 
-// CRTP base for analytic potentials: holds the parameter array + range and
-// generates the optimizer param-plumbing
-// (param_count/gather/scatter/set_param). Each Derived supplies the maths
-// directly — eval(double) and deriv(double) — defined inline below so the
-// compiler inlines them at the RadialPotential/SmoothCutoff call sites.
+namespace sym {
+using ddx::var;
+
+inline constexpr auto r = var<"r">;       // the radius: the free variable
+inline constexpr auto rmax = var<"rmax">; // the form's own cutoff (not a param)
+
+inline constexpr auto A = var<"A">;
+inline constexpr auto B = var<"B">;
+inline constexpr auto C = var<"C">;
+inline constexpr auto D = var<"D">;
+inline constexpr auto E = var<"E">;
+inline constexpr auto F = var<"F">;
+inline constexpr auto G = var<"G">;
+inline constexpr auto H = var<"H">;
+inline constexpr auto I = var<"I">;
+inline constexpr auto J = var<"J">;
+inline constexpr auto K = var<"K">;
+inline constexpr auto L = var<"L">;
+
+inline constexpr auto a = var<"a">;
+inline constexpr auto b = var<"b">;
+inline constexpr auto c = var<"c">;
+inline constexpr auto d = var<"d">;
+inline constexpr auto h = var<"h">;
+inline constexpr auto k = var<"k">;
+inline constexpr auto m = var<"m">;
+inline constexpr auto n = var<"n">;
+inline constexpr auto p = var<"p">;
+inline constexpr auto q = var<"q">;
+
+inline constexpr auto a0 = var<"a0">;
+inline constexpr auto a1 = var<"a1">;
+inline constexpr auto a2 = var<"a2">;
+inline constexpr auto a3 = var<"a3">;
+inline constexpr auto a4 = var<"a4">;
+inline constexpr auto c1 = var<"c1">;
+inline constexpr auto c2 = var<"c2">;
+inline constexpr auto c3 = var<"c3">;
+inline constexpr auto c4 = var<"c4">;
+inline constexpr auto c5 = var<"c5">;
+inline constexpr auto D1 = var<"D1">;
+inline constexpr auto D2 = var<"D2">;
+inline constexpr auto r0 = var<"r0">;
+inline constexpr auto r1 = var<"r1">;
+inline constexpr auto r2 = var<"r2">;
+inline constexpr auto R = var<"R">;
+inline constexpr auto S = var<"S">;
+
+inline constexpr auto De = var<"De">;
+inline constexpr auto re = var<"re">;
+inline constexpr auto E0 = var<"E0">;
+inline constexpr auto beta = var<"beta">;
+inline constexpr auto chi = var<"chi">;
+inline constexpr auto delta = var<"delta">;
+inline constexpr auto epsilon = var<"epsilon">;
+inline constexpr auto gamma = var<"gamma">;
+inline constexpr auto lambda = var<"lambda">;
+inline constexpr auto mu = var<"mu">;
+inline constexpr auto omega = var<"omega">;
+inline constexpr auto phi = var<"phi">;
+inline constexpr auto rc = var<"rc">;
+inline constexpr auto rho = var<"rho">;
+inline constexpr auto sigma = var<"sigma">;
+} // namespace sym
+
+struct ParamDefault {
+  double value;
+  double min;
+  double max;
+};
+
+template <class T>
+concept CAnalyticForm = requires {
+  { T::names };
+  { T::param_names };
+  { T::defaults };
+  { T::expr };
+  { T::num_params } -> std::convertible_to<std::size_t>;
+};
+
+namespace detail {
+
+inline constexpr std::size_t kSlotR = static_cast<std::size_t>(-1);
+inline constexpr std::size_t kSlotRmax = static_cast<std::size_t>(-2);
+
+template <CAnalyticForm Form, symbolic::CEquation Eq>
+inline constexpr auto symbol_map = [] {
+  using Syms = typename Eq::symbols;
+  std::array<std::size_t, boost::mp11::mp_size<Syms>::value> slots{};
+  std::size_t k = 0;
+  boost::mp11::mp_for_each<
+      boost::mp11::mp_transform<boost::mp11::mp_identity, Syms>>([&](auto tag) {
+    const std::string_view name = symbolic::name_of<typename decltype(tag)::type>();
+    slots[k] =
+        name == "r" ? kSlotR
+        : name == "rmax"
+            ? kSlotRmax
+            : std::ranges::distance(Form::param_names.begin(),
+                                    std::ranges::find(Form::param_names, name));
+    ++k;
+  });
+  return slots;
+}();
+
+template <CAnalyticForm Form>
+inline constexpr auto equation = ddx::Equation{Form::expr};
+template <CAnalyticForm Form>
+inline constexpr std::size_t r_slot = [] {
+  constexpr std::size_t k =
+      symbolic::slot_of<std::remove_cvref_t<decltype(equation<Form>)>>("r");
+  return k == symbolic::npos ? std::size_t{0} : k;
+}();
+template <CAnalyticForm Form>
+inline constexpr auto derivative =
+    ddx::Equation{equation<Form>[ddx::idx<r_slot<Form> + 1>()]};
+
+constexpr auto cosine_cutoff(auto rr, auto lo, auto hi) {
+  return 0.5 +
+         0.5 * cos(std::numbers::pi * (min(max(rr, lo), hi) - lo) / (hi - lo));
+}
+
+constexpr auto switching_factor(auto rr, auto r0_, auto h_) {
+  return [](auto u) {
+    return ((u * u) * (u * u)) / (1.0 + (u * u) * (u * u));
+  }(min((rr - r0_) / h_, 0.0));
+}
+
+} // namespace detail
+
 template <typename Derived, std::size_t N>
-struct AnalyticParams : ParamSet<AnalyticParams<Derived, N>> {
+struct AnalyticForm : ParamSet<AnalyticForm<Derived, N>>, NoSiteCache<Derived> {
   static constexpr std::size_t num_params = N;
 
 protected:
   std::array<Param, N> params;
   double rmin, rmax;
 
-  constexpr AnalyticParams(std::array<double, N> vals, double lo,
-                           double hi) noexcept
+public:
+  constexpr AnalyticForm(std::array<double, N> vals, double lo,
+                         double hi) noexcept
       : rmin(lo), rmax(hi) {
     std::ranges::transform(vals, params.begin(),
-                           [](auto v) { return Param{v}; });
+                           [](double v) { return Param{v}; });
   }
 
-public:
+  template <std::convertible_to<double>... Ds>
+    requires(sizeof...(Ds) == N + 2)
+  constexpr explicit AnalyticForm(Ds... args) noexcept {
+    const std::array<double, N + 2> all{static_cast<double>(args)...};
+    for (std::size_t i = 0; i < N; ++i) {
+      params[i] = Param{all[i]};
+    }
+    rmin = all[N];
+    rmax = all[N + 1];
+  }
+
   constexpr std::pair<double, double> span() const { return {rmin, rmax}; }
 
-  // Mark parameter i as fixed (excluded from optimizer) or free.
   constexpr void set_fixed(std::size_t i, bool f) { params[i].fixed = f; }
   constexpr bool is_fixed(std::size_t i) const { return params[i].fixed; }
   constexpr void set_param(std::size_t i, double v) { params[i].value = v; }
 
-  // ParamSet CPO
   constexpr auto param_fields() { return std::views::all(params); }
   constexpr auto param_fields() const { return std::views::all(params); }
 
-  // Set parameter i's [min, max] box (raw index, bypassing the fixed flag).
   constexpr void set_bounds(std::size_t i, double lo, double hi) {
     params[i].min = lo;
     params[i].max = hi;
   }
+
+  // Bind symbols to parameters by name: ddx sorts them alphabetically, so a
+  // positional point would silently read the wrong parameter.
+  template <symbolic::CEquation Eq, class Use>
+  FORCE_INLINE constexpr decltype(auto) at_point(const Eq &eq, double r,
+                                                 Use &&use) const {
+    constexpr auto slots = detail::symbol_map<Derived, std::remove_cvref_t<Eq>>;
+    // param_names and the sym:: objects in expr spell the same names twice; a
+    // typo in either would silently leave a symbol unbound (and index past the
+    // parameter array), so it has to fail here instead.
+    static_assert(std::ranges::all_of(slots,
+                                      [](std::size_t i) {
+                                        return i == detail::kSlotR ||
+                                               i == detail::kSlotRmax || i < N;
+                                      }),
+                  "a symbol in this form's expression is not one of its "
+                  "param_names (or the reserved r / rmax)");
+    return [&]<std::size_t... K>(std::index_sequence<K...>) -> decltype(auto) {
+      return use(eq, (slots[K] == detail::kSlotR ? r
+                      : slots[K] == detail::kSlotRmax
+                          ? rmax
+                          : params[slots[K]].value)...);
+    }(std::make_index_sequence<slots.size()>{});
+  }
+
+  template <symbolic::CEquation Eq>
+  FORCE_INLINE constexpr double run(const Eq &eq, double r) const {
+    return at_point(eq, r, [](const auto &e, auto... v) {
+      return e.evaluate(v...);
+    });
+  }
+
+  FORCE_INLINE constexpr double eval(double r) const {
+    return run(detail::equation<Derived>, r);
+  }
+  FORCE_INLINE constexpr double deriv(double r) const {
+    return run(detail::derivative<Derived>, r);
+  }
+
+  // Exact dphi/dtheta (jacobian) and d2phi/dr dtheta (derivative_tensor<2>) from
+  // the value equation; jacobian() of the stored r-derivative is silently zero.
+  static constexpr bool has_param_jacobian() noexcept { return true; }
+
+  FORCE_INLINE void param_grad(double r, std::span<double> out) const {
+    fill_free(out, all_param_grad(r));
+  }
+  FORCE_INLINE void dderiv_dparam(double r, std::span<double> out) const {
+    fill_free(out, all_dderiv_dparam(r));
+  }
+
+  [[nodiscard]] FORCE_INLINE double deriv2(double r) const {
+    return at_point(detail::equation<Derived>, r,
+                    [](const auto &e, auto... v) {
+                      constexpr std::size_t R = detail::r_slot<Derived>;
+                      return e.template derivative_tensor<2>(v...)[R, R];
+                    });
+  }
+
+private:
+  template <class Row>
+  FORCE_INLINE static std::array<double, N> by_param(const Row &row) {
+    constexpr auto slots =
+        detail::symbol_map<Derived,
+                           std::remove_cvref_t<decltype(detail::equation<
+                                                        Derived>)>>;
+    std::array<double, N> g{};
+    for (std::size_t k = 0; k < slots.size(); ++k) {
+      if (slots[k] < N) {
+        g[slots[k]] = row(k);
+      }
+    }
+    return g;
+  }
+
+  FORCE_INLINE std::array<double, N> all_param_grad(double r) const {
+    return at_point(detail::equation<Derived>, r,
+                    [](const auto &e, auto... v) {
+                      const auto j = e.jacobian(v...);
+                      return by_param([&](std::size_t k) { return j[k]; });
+                    });
+  }
+
+  FORCE_INLINE std::array<double, N> all_dderiv_dparam(double r) const {
+    return at_point(detail::equation<Derived>, r,
+                    [](const auto &e, auto... v) {
+                      constexpr std::size_t R = detail::r_slot<Derived>;
+                      const auto t = e.template derivative_tensor<2>(v...);
+                      return by_param([&](std::size_t k) { return t[R, k]; });
+                    });
+  }
+
+  FORCE_INLINE void fill_free(std::span<double> out,
+                              const std::array<double, N> &all) const {
+    std::size_t o = 0;
+    for (std::size_t i = 0; i < N; ++i) {
+      if (!params[i].fixed) {
+        out[o++] = all[i];
+      }
+    }
+  }
+
+public:
+};
+
+// Expressions keep the original kernels' operand association (bit-identical).
+
+using namespace std::string_view_literals;
+
+struct LennardJones : AnalyticForm<LennardJones, 2> {
+  using AnalyticForm::AnalyticForm;
+  static constexpr std::array names{"lj"sv, "pair_lj"sv};
+  static constexpr std::array param_names{"epsilon"sv, "sigma"sv};
+  static constexpr std::array<ParamDefault, 2> defaults{
+      {{0.1, 0.0, 1.0}, {2.5, 1.0, 4.0}}};
+  static constexpr auto expr = [] {
+    const auto sr6 = pow(sym::sigma / sym::r, 6.0);
+    return 4.0 * sym::epsilon * (sr6 * sr6 - sr6);
+  }();
+};
+
+struct Morse : AnalyticForm<Morse, 3> {
+  using AnalyticForm::AnalyticForm;
+  static constexpr std::array names{"morse"sv};
+  static constexpr std::array param_names{"De"sv, "a"sv, "re"sv};
+  static constexpr std::array<ParamDefault, 3> defaults{
+      {{0.1, 0.0, 1.0}, {2.0, 1.0, 5.0}, {2.5, 1.0, 5.0}}};
+  static constexpr auto expr = [] {
+    const auto e = exp(-sym::a * (sym::r - sym::re));
+    return sym::De * (1.0 - e) * (1.0 - e) - sym::De;
+  }();
+};
+
+struct Buckingham : AnalyticForm<Buckingham, 3> {
+  using AnalyticForm::AnalyticForm;
+  static constexpr std::array names{"buckingham"sv, "buck"sv};
+  static constexpr std::array param_names{"A"sv, "rho"sv, "C"sv};
+  static constexpr std::array<ParamDefault, 3> defaults{
+      {{1.0, -10.0, 10.0}, {1.0, -10.0, 10.0}, {1.0, -10.0, 10.0}}};
+  static constexpr auto expr = [] {
+    const auto x = (sym::rho * sym::rho) / (sym::r * sym::r);
+    return sym::A * exp(-sym::r / sym::rho) - sym::C * x * x * x;
+  }();
+};
+
+struct Born : AnalyticForm<Born, 5> {
+  using AnalyticForm::AnalyticForm;
+  static constexpr std::array names{"born"sv};
+  static constexpr std::array param_names{"A"sv, "B"sv, "C"sv, "D"sv, "E"sv};
+  static constexpr std::array<ParamDefault, 5> defaults{{{0.1, 0.0, 10.0},
+                                                         {2.0, 0.0, 10.0},
+                                                         {3.0, 0.0, 10.0},
+                                                         {2.0, 0.0, 10.0},
+                                                         {2.5, 1.0, 8.0}}};
+  static constexpr auto expr = [] {
+    const auto r2 = sym::r * sym::r;
+    const auto r6 = r2 * r2 * r2;
+    return sym::A * exp((sym::C - sym::r) / sym::B) - sym::D / r6 +
+           sym::E / (r6 * r2);
+  }();
+};
+
+struct PowerDecay : AnalyticForm<PowerDecay, 2> {
+  using AnalyticForm::AnalyticForm;
+  static constexpr std::array names{"power_decay"sv, "power"sv};
+  static constexpr std::array param_names{"A"sv, "n"sv};
+  static constexpr std::array<ParamDefault, 2> defaults{
+      {{1.0, 0.1, 10.0}, {2.0, 1.0, 5.0}}};
+  static constexpr auto expr = sym::A / pow(sym::r, sym::n);
+};
+
+struct ExpDecay : AnalyticForm<ExpDecay, 2> {
+  using AnalyticForm::AnalyticForm;
+  static constexpr std::array names{"exp_decay"sv, "exp"sv};
+  static constexpr std::array param_names{"A"sv, "B"sv};
+  static constexpr std::array<ParamDefault, 2> defaults{
+      {{4.0, 1.0, 20.0}, {1.0, 0.5, 5.0}}};
+  static constexpr auto expr = sym::A * exp(-sym::B * sym::r);
+};
+
+struct MexpDecay : AnalyticForm<MexpDecay, 3> {
+  using AnalyticForm::AnalyticForm;
+  static constexpr std::array names{"mexp_decay"sv, "mexp"sv};
+  static constexpr std::array param_names{"A"sv, "B"sv, "r0"sv};
+  static constexpr std::array<ParamDefault, 3> defaults{
+      {{0.1, 0.0, 10.0}, {0.1, 0.0, 10.0}, {2.0, 0.0, 10.0}}};
+  static constexpr auto expr = sym::A * exp(-sym::B * (sym::r - sym::r0));
+};
+
+struct Harmonic : AnalyticForm<Harmonic, 2> {
+  using AnalyticForm::AnalyticForm;
+  static constexpr std::array names{"harmonic"sv};
+  static constexpr std::array param_names{"k"sv, "r0"sv};
+  static constexpr std::array<ParamDefault, 2> defaults{
+      {{0.1, 0.0, 10.0}, {2.0, 0.0, 8.0}}};
+  static constexpr auto expr = sym::k * (sym::r - sym::r0) * (sym::r - sym::r0);
+};
+
+struct Universal : AnalyticForm<Universal, 4> {
+  using AnalyticForm::AnalyticForm;
+  static constexpr std::array names{"universal"sv};
+  static constexpr std::array param_names{"E0"sv, "a"sv, "b"sv, "c"sv};
+  static constexpr std::array<ParamDefault, 4> defaults{{{1.0, -10.0, 10.0},
+                                                         {1.0, 0.0, 20.0},
+                                                         {2.0, 0.0, 20.0},
+                                                         {0.0, -1.0, 1.0}}};
+  static constexpr auto expr =
+      sym::E0 * (sym::b / (sym::b - sym::a) * pow(sym::r, sym::a) -
+                 sym::a / (sym::b - sym::a) * pow(sym::r, sym::b)) +
+      sym::c * sym::r;
+};
+
+struct Eopp : AnalyticForm<Eopp, 6> {
+  using AnalyticForm::AnalyticForm;
+  static constexpr std::array names{"eopp"sv};
+  static constexpr std::array param_names{"A"sv, "n"sv, "B"sv,
+                                          "m"sv, "k"sv, "phi"sv};
+  static constexpr std::array<ParamDefault, 6> defaults{{{15.0, 1.0, 10000.0},
+                                                         {6.0, 1.0, 20.0},
+                                                         {5.0, -100.0, 100.0},
+                                                         {3.0, 1.0, 10.0},
+                                                         {2.5, 0.0, 6.0},
+                                                         {3.0, 0.0, 6.3}}};
+  static constexpr auto expr =
+      sym::A / pow(sym::r, sym::n) +
+      (sym::B / pow(sym::r, sym::m)) * cos(sym::k * sym::r + sym::phi);
+};
+
+struct EoppExp : AnalyticForm<EoppExp, 6> {
+  using AnalyticForm::AnalyticForm;
+  static constexpr std::array names{"eopp_exp"sv, "eopp_exp_"sv};
+  static constexpr std::array param_names{"A"sv, "B"sv, "C"sv,
+                                          "m"sv, "k"sv, "phi"sv};
+  static constexpr std::array<ParamDefault, 6> defaults{{{15.0, 1.0, 10000.0},
+                                                         {1.0, 0.5, 5.0},
+                                                         {5.0, -100.0, 100.0},
+                                                         {3.0, 1.0, 10.0},
+                                                         {2.5, 0.0, 6.0},
+                                                         {3.0, 0.0, 6.3}}};
+  static constexpr auto expr =
+      sym::A * exp(-sym::B * sym::r) +
+      (sym::C / pow(sym::r, sym::m)) * cos(sym::k * sym::r + sym::phi);
+};
+
+struct Meopp : AnalyticForm<Meopp, 7> {
+  using AnalyticForm::AnalyticForm;
+  static constexpr std::array names{"meopp"sv};
+  static constexpr std::array param_names{"A"sv, "n"sv,   "B"sv, "m"sv,
+                                          "k"sv, "phi"sv, "r0"sv};
+  static constexpr std::array<ParamDefault, 7> defaults{{{15.0, 1.0, 10000.0},
+                                                         {6.0, 1.0, 20.0},
+                                                         {5.0, -100.0, 100.0},
+                                                         {3.0, 1.0, 10.0},
+                                                         {2.5, 0.0, 6.0},
+                                                         {3.0, 0.0, 6.3},
+                                                         {0.5, 0.0, 2.0}}};
+  static constexpr auto expr =
+      sym::A / pow(sym::r - sym::r0, sym::n) +
+      (sym::B / pow(sym::r, sym::m)) * cos(sym::k * sym::r + sym::phi);
+};
+
+struct GenLJ : AnalyticForm<GenLJ, 5> {
+  using AnalyticForm::AnalyticForm;
+  static constexpr std::array names{"gen_lj"sv, "genlj"sv};
+  static constexpr std::array param_names{"A"sv, "n"sv, "m"sv, "r0"sv, "B"sv};
+  static constexpr std::array<ParamDefault, 5> defaults{{{0.1, 0.0, 10.0},
+                                                         {12.0, 1.0, 20.0},
+                                                         {6.0, 1.0, 20.0},
+                                                         {2.5, 1.0, 5.0},
+                                                         {0.0, -10.0, 10.0}}};
+  static constexpr auto expr = [] {
+    const auto x = sym::r / sym::r0;
+    return sym::A / (sym::m - sym::n) *
+               (sym::m * pow(x, -sym::n) - sym::n * pow(x, -sym::m)) +
+           sym::B;
+  }();
+};
+
+struct DoubleMorse : AnalyticForm<DoubleMorse, 7> {
+  using AnalyticForm::AnalyticForm;
+  static constexpr std::array names{"double_morse"sv, "dbl_morse"sv};
+  static constexpr std::array param_names{"D1"sv, "a1"sv, "r1"sv, "D2"sv,
+                                          "a2"sv, "r2"sv, "C"sv};
+  static constexpr std::array<ParamDefault, 7> defaults{{{0.1, 0.0, 1.0},
+                                                         {2.0, 1.0, 5.0},
+                                                         {2.5, 1.0, 5.0},
+                                                         {0.1, 0.0, 1.0},
+                                                         {2.0, 1.0, 5.0},
+                                                         {3.0, 1.0, 6.0},
+                                                         {0.0, -1.0, 1.0}}};
+  static constexpr auto expr = [] {
+    const auto e1 = exp(-sym::a1 * (sym::r - sym::r1));
+    const auto e2 = exp(-sym::a2 * (sym::r - sym::r2));
+    return sym::D1 * ((1.0 - e1) * (1.0 - e1) - 1.0) +
+           sym::D2 * ((1.0 - e2) * (1.0 - e2) - 1.0) + sym::C;
+  }();
+};
+
+struct DoubleExp : AnalyticForm<DoubleExp, 5> {
+  using AnalyticForm::AnalyticForm;
+  static constexpr std::array names{"double_exp"sv, "dbl_exp"sv};
+  static constexpr std::array param_names{"A"sv, "B"sv, "r1"sv, "C"sv, "r2"sv};
+  static constexpr std::array<ParamDefault, 5> defaults{{{0.1, 0.0, 10.0},
+                                                         {1.0, 0.0, 10.0},
+                                                         {2.5, 1.0, 5.0},
+                                                         {1.0, 0.0, 10.0},
+                                                         {2.5, 1.0, 5.0}}};
+  static constexpr auto expr = [] {
+    const auto dr = sym::r - sym::r1;
+    return sym::A * exp(-sym::B * dr * dr) + exp(-sym::C * (sym::r - sym::r2));
+  }();
+};
+
+struct Mishin : AnalyticForm<Mishin, 6> {
+  using AnalyticForm::AnalyticForm;
+  static constexpr std::array names{"mishin"sv};
+  static constexpr std::array param_names{"A"sv,  "B"sv, "C"sv,
+                                          "r0"sv, "n"sv, "d"sv};
+  static constexpr std::array<ParamDefault, 6> defaults{{{0.1, 0.0, 10.0},
+                                                         {1.0, -10.0, 10.0},
+                                                         {0.0, -1.0, 1.0},
+                                                         {1.0, 0.0, 5.0},
+                                                         {2.0, 0.0, 10.0},
+                                                         {1.0, 0.0, 10.0}}};
+  static constexpr auto expr = [] {
+    const auto z = sym::r - sym::r0;
+    const auto e = exp(-sym::d * z);
+    return sym::A * pow(z, sym::n) * e * (1.0 + sym::B * e) + sym::C;
+  }();
+};
+
+struct SqrtFunc : AnalyticForm<SqrtFunc, 2> {
+  using AnalyticForm::AnalyticForm;
+  static constexpr std::array names{"sqrt"sv};
+  static constexpr std::array param_names{"A"sv, "B"sv};
+  static constexpr std::array<ParamDefault, 2> defaults{
+      {{0.1, 0.0, 10.0}, {2.0, 0.0, 10.0}}};
+  static constexpr auto expr = sym::A * sqrt(sym::r / sym::B);
+};
+
+struct ConstFunc : AnalyticForm<ConstFunc, 1> {
+  using AnalyticForm::AnalyticForm;
+  static constexpr std::array names{"const"sv};
+  static constexpr std::array param_names{"C"sv};
+  static constexpr std::array<ParamDefault, 1> defaults{{{1.0, 0.0, 2.0}}};
+  static constexpr auto expr = sym::C + 0.0 * sym::r;
+};
+
+struct Parabola : AnalyticForm<Parabola, 3> {
+  using AnalyticForm::AnalyticForm;
+  static constexpr std::array names{"parabola"sv};
+  static constexpr std::array param_names{"A"sv, "B"sv, "C"sv};
+  static constexpr std::array<ParamDefault, 3> defaults{
+      {{1.0, -10.0, 10.0}, {1.0, -10.0, 10.0}, {1.0, -10.0, 10.0}}};
+  static constexpr auto expr =
+      sym::A * sym::r * sym::r + sym::B * sym::r + sym::C;
+};
+
+struct Poly5 : AnalyticForm<Poly5, 5> {
+  using AnalyticForm::AnalyticForm;
+  static constexpr std::array names{"poly5"sv};
+  static constexpr std::array param_names{"a0"sv, "a1"sv, "a2"sv, "a3"sv,
+                                          "a4"sv};
+  static constexpr std::array<ParamDefault, 5> defaults{{{0.0, -10.0, 10.0},
+                                                         {0.0, -10.0, 10.0},
+                                                         {0.0, -10.0, 10.0},
+                                                         {0.0, -10.0, 10.0},
+                                                         {0.0, -10.0, 10.0}}};
+  static constexpr auto expr = [] {
+    const auto s = sym::r - 1.0;
+    const auto s2 = s * s;
+    return sym::a0 + 0.5 * sym::a1 * s2 + sym::a2 * s * s2 + sym::a3 * s2 * s2 +
+           sym::a4 * s2 * s2 * s;
+  }();
+};
+
+struct StiwWeb2 : AnalyticForm<StiwWeb2, 6> {
+  using Base = AnalyticForm<StiwWeb2, 6>;
+  using Base::Base;
+  static constexpr std::array names{"stiweb_2"sv, "sw2"sv};
+  static constexpr std::array param_names{"A"sv, "B"sv,     "p"sv,
+                                          "q"sv, "delta"sv, "rc"sv};
+  static constexpr std::array<ParamDefault, 6> defaults{{{1.0, 0.0, 100.0},
+                                                         {1.0, 0.0, 100.0},
+                                                         {4.0, 1.0, 10.0},
+                                                         {0.0, 0.0, 10.0},
+                                                         {1.0, 0.0, 10.0},
+                                                         {3.0, 1.0, 10.0}}};
+  static constexpr auto expr =
+      (sym::A * pow(sym::r, -sym::p) - sym::B * pow(sym::r, -sym::q)) *
+      exp(sym::delta / (sym::r - sym::rc));
+
+  FORCE_INLINE bool outside(double r) const {
+    const double d = r - params[5].value;
+    return d >= 0.0 || params[4].value / d < -708.0;
+  }
+  FORCE_INLINE double eval(double r) const {
+    return outside(r) ? 0.0 : Base::eval(r);
+  }
+  FORCE_INLINE double deriv(double r) const {
+    return outside(r) ? 0.0 : Base::deriv(r);
+  }
+};
+
+struct StiwWeb3 : AnalyticForm<StiwWeb3, 2> {
+  using Base = AnalyticForm<StiwWeb3, 2>;
+  using Base::Base;
+  static constexpr std::array names{"stiweb_3"sv, "sw3"sv};
+  static constexpr std::array param_names{"gamma"sv, "a"sv};
+  static constexpr std::array<ParamDefault, 2> defaults{
+      {{1.0, 0.0, 10.0}, {3.0, 1.0, 10.0}}};
+  static constexpr auto expr = exp(sym::gamma / (sym::r - sym::a));
+
+  FORCE_INLINE bool outside(double r) const {
+    const double d = r - params[1].value;
+    return d >= 0.0 || params[0].value / d < -708.0;
+  }
+  FORCE_INLINE double eval(double r) const {
+    return outside(r) ? 0.0 : Base::eval(r);
+  }
+  FORCE_INLINE double deriv(double r) const {
+    return outside(r) ? 0.0 : Base::deriv(r);
+  }
+};
+
+struct TersoffPot : AnalyticForm<TersoffPot, 11> {
+  using AnalyticForm::AnalyticForm;
+  static constexpr std::array names{"tersoff"sv, "tersoff_pot"sv};
+  static constexpr std::array param_names{"A"sv,    "B"sv, "lambda"sv, "mu"sv,
+                                          "beta"sv, "n"sv, "c"sv,      "d"sv,
+                                          "h"sv,    "R"sv, "S"sv};
+  static constexpr std::array<ParamDefault, 11> defaults{{{1000.0, 0.0, 1e5},
+                                                          {100.0, 0.0, 1e5},
+                                                          {3.0, 0.0, 10.0},
+                                                          {1.5, 0.0, 10.0},
+                                                          {1e-6, 0.0, 1.0},
+                                                          {1.0, 0.0, 10.0},
+                                                          {1e5, 0.0, 1e6},
+                                                          {20.0, 0.0, 1e3},
+                                                          {-0.5, -1.0, 1.0},
+                                                          {2.7, 1.0, 5.0},
+                                                          {3.0, 1.0, 6.0}}};
+  static constexpr auto expr =
+      detail::cosine_cutoff(sym::r, sym::R, sym::S) *
+      (sym::A * exp(-sym::lambda * sym::r) - sym::B * exp(-sym::mu * sym::r));
+};
+
+struct TersoffMix : AnalyticForm<TersoffMix, 2> {
+  using AnalyticForm::AnalyticForm;
+  static constexpr std::array names{"tersoff_mix"sv};
+  static constexpr std::array param_names{"chi"sv, "omega"sv};
+  static constexpr std::array<ParamDefault, 2> defaults{
+      {{1.0, 0.0, 10.0}, {1.0, 0.0, 10.0}}};
+  static constexpr auto expr = sym::chi * exp(-sym::omega * sym::r);
+};
+
+struct TersoffModPot : AnalyticForm<TersoffModPot, 16> {
+  using AnalyticForm::AnalyticForm;
+  static constexpr std::array names{"tersoff_mod"sv, "tmod"sv};
+  static constexpr std::array param_names{
+      "A"sv, "B"sv, "lambda"sv, "mu"sv, "beta"sv, "n"sv,  "c"sv,  "d"sv,
+      "h"sv, "R"sv, "S"sv,      "c1"sv, "c2"sv,   "c3"sv, "c4"sv, "c5"sv};
+  static constexpr std::array<ParamDefault, 16> defaults{{{1000.0, 0.0, 1e5},
+                                                          {100.0, 0.0, 1e5},
+                                                          {3.0, 0.0, 10.0},
+                                                          {1.5, 0.0, 10.0},
+                                                          {1e-6, 0.0, 1.0},
+                                                          {1.0, 0.0, 10.0},
+                                                          {1e5, 0.0, 1e6},
+                                                          {20.0, 0.0, 1e3},
+                                                          {-0.5, -1.0, 1.0},
+                                                          {2.7, 1.0, 5.0},
+                                                          {3.0, 1.0, 6.0},
+                                                          {0.0, -10.0, 10.0},
+                                                          {0.0, -10.0, 10.0},
+                                                          {0.0, -10.0, 10.0},
+                                                          {0.0, -10.0, 10.0},
+                                                          {0.0, -10.0, 10.0}}};
+  static constexpr auto expr = [] {
+    const auto r2 = sym::r * sym::r;
+    const auto r3 = r2 * sym::r;
+    const auto r4 = r3 * sym::r;
+    const auto r5 = r4 * sym::r;
+    return detail::cosine_cutoff(sym::r, sym::R, sym::S) *
+           (sym::A * exp(-sym::lambda * sym::r) -
+            sym::B * exp(-sym::mu * sym::r)) *
+           (1.0 + sym::c1 * sym::r + sym::c2 * r2 + sym::c3 * r3 +
+            sym::c4 * r4 + sym::c5 * r5);
+  }();
+};
+
+struct Kawamura : AnalyticForm<Kawamura, 9> {
+  using AnalyticForm::AnalyticForm;
+  static constexpr std::array names{"kawamura"sv};
+  static constexpr std::array param_names{"A"sv, "B"sv, "C"sv, "D"sv, "E"sv,
+                                          "F"sv, "G"sv, "H"sv, "I"sv};
+  static constexpr std::array<ParamDefault, 9> defaults{{{1.0, -5.0, 5.0},
+                                                         {1.0, -5.0, 5.0},
+                                                         {1.0, 0.0, 100.0},
+                                                         {1.0, 0.0, 5.0},
+                                                         {1.0, 0.0, 5.0},
+                                                         {0.1, 0.01, 2.0},
+                                                         {0.1, 0.01, 2.0},
+                                                         {1.0, 0.0, 100.0},
+                                                         {1.0, 0.0, 100.0}}};
+  static constexpr auto expr = [] {
+    const auto s = sym::F + sym::G;
+    const auto t = sym::D + sym::E;
+    return sym::A * sym::B / sym::r + sym::C * s * exp((t - sym::r) / s) -
+           sym::H * sym::I / pow(sym::r, 6.0);
+  }();
+};
+
+struct KawamuraMix : AnalyticForm<KawamuraMix, 12> {
+  using AnalyticForm::AnalyticForm;
+  static constexpr std::array names{"kawamura_mix"sv};
+  static constexpr std::array param_names{"A"sv, "B"sv, "C"sv, "D"sv,
+                                          "E"sv, "F"sv, "G"sv, "H"sv,
+                                          "I"sv, "J"sv, "K"sv, "L"sv};
+  static constexpr std::array<ParamDefault, 12> defaults{{{1.0, -5.0, 5.0},
+                                                          {1.0, -5.0, 5.0},
+                                                          {1.0, 0.0, 100.0},
+                                                          {1.0, 0.0, 5.0},
+                                                          {1.0, 0.0, 5.0},
+                                                          {0.1, 0.01, 2.0},
+                                                          {0.1, 0.01, 2.0},
+                                                          {1.0, 0.0, 100.0},
+                                                          {1.0, 0.0, 100.0},
+                                                          {0.0, -10.0, 10.0},
+                                                          {1.0, 0.0, 10.0},
+                                                          {2.5, 1.0, 5.0}}};
+  static constexpr auto expr = [] {
+    const auto s = sym::F + sym::G;
+    const auto t = sym::D + sym::E;
+    const auto w = sym::r - sym::L;
+    return sym::A * sym::B / sym::r + sym::C * s * exp((t - sym::r) / s) -
+           sym::H * sym::I / pow(sym::r, 6.0) +
+           sym::C * sym::J * (exp(-2.0 * sym::K * w) - 2.0 * exp(-sym::K * w));
+  }();
+};
+
+struct Softshell : AnalyticForm<Softshell, 2> {
+  using AnalyticForm::AnalyticForm;
+  static constexpr std::array names{"softshell"sv, "soft"sv};
+  static constexpr std::array param_names{"A"sv, "n"sv};
+  static constexpr std::array<ParamDefault, 2> defaults{
+      {{1.0, 0.1, 10.0}, {2.0, 1.0, 5.0}}};
+  static constexpr auto expr = pow(sym::A / sym::r, sym::n);
+};
+
+struct ExpPlus : AnalyticForm<ExpPlus, 3> {
+  using AnalyticForm::AnalyticForm;
+  static constexpr std::array names{"exp_plus"sv, "expplus"sv};
+  static constexpr std::array param_names{"A"sv, "B"sv, "C"sv};
+  static constexpr std::array<ParamDefault, 3> defaults{
+      {{4.0, 1.0, 20.0}, {1.0, 0.5, 5.0}, {0.0, -1.0, 1.0}}};
+  static constexpr auto expr = sym::A * exp(-sym::B * sym::r) + sym::C;
+};
+
+struct Strmm : AnalyticForm<Strmm, 5> {
+  using AnalyticForm::AnalyticForm;
+  static constexpr std::array names{"strmm"sv};
+  static constexpr std::array param_names{"A"sv, "B"sv, "C"sv, "D"sv, "E"sv};
+  static constexpr std::array<ParamDefault, 5> defaults{{{0.1, 0.0, 10.0},
+                                                         {1.0, 0.0, 10.0},
+                                                         {0.1, 0.0, 10.0},
+                                                         {1.0, 0.0, 10.0},
+                                                         {2.5, 1.0, 5.0}}};
+  static constexpr auto expr = [] {
+    const auto s = sym::r - sym::E;
+    return 2.0 * sym::A * exp(-sym::B / 2.0 * s) -
+           sym::C * (1.0 + sym::D * s) * exp(-sym::D * s);
+  }();
 };
 
 namespace detail {
-
-// Tersoff / SW smooth cosine cutoff and its derivative.
-FORCE_INLINE constexpr double fc(double r, double R, double S) noexcept {
-  if (r <= R) {
-    return 1.0;
-  }
-  if (r >= S) {
-    return 0.0;
-  }
-  const double x = std::numbers::pi * (r - R) / (S - R);
-  return 0.5 + 0.5 * std::cos(x);
+template <class A, std::size_t Na, class B, std::size_t Nb>
+consteval auto concat(const std::array<A, Na> &a, const std::array<B, Nb> &b) {
+  std::array<A, Na + Nb> out{};
+  std::ranges::copy(a, out.begin());
+  std::ranges::copy(b, out.begin() + Na);
+  return out;
 }
-
-constexpr FORCE_INLINE double dfc(double r, double R, double S) noexcept {
-  if (r <= R || r >= S) {
-    return 0.0;
-  }
-  const double x = std::numbers::pi * (r - R) / (S - R);
-  return -0.5 * std::numbers::pi / (S - R) * std::sin(x);
-}
-
-// forcesmith's smooth-cutoff switching factor (the `_sc` function variants):
-//   apot_cutoff(r, r0, h) = u⁴/(1+u⁴),  u = (r − r0)/h,  and 0 for r ≥ r0.
-// r0 is the function's cutoff (rmax). Value AND derivative → 0 as r → r0, so a
-// _sc potential is continuous at the cutoff (unlike a hard truncation). This is
-// a DIFFERENT function from the cosine fc above (used by Tersoff/SW); it
-// matches forcesmith's apot_cutoff exactly (functions.c:322) for apple-to-apple
-// parity.
-constexpr FORCE_INLINE double apot_cutoff(double r, double r0,
-                                          double h) noexcept {
-  if (r >= r0) {
-    return 0.0;
-  }
-  const double u = (r - r0) / h;
-  const double u4 = (u * u) * (u * u);
-  return u4 / (1.0 + u4);
-}
-
-// d/dr of apot_cutoff: with u=(r−r0)/h, c=u⁴/(1+u⁴) ⇒ dc/dr = (4u³/h)/(1+u⁴)².
-constexpr FORCE_INLINE double apot_cutoff_deriv(double r, double r0,
-                                                double h) noexcept {
-  if (r >= r0) {
-    return 0.0;
-  }
-  const double u = (r - r0) / h;
-  const double u3 = u * u * u;
-  const double denom = 1.0 + u3 * u;
-  return (4.0 * u3 / h) / (denom * denom);
-}
-
 } // namespace detail
 
-// Lennard-Jones: V(r) = 4ε[(σ/r)^12 − (σ/r)^6]
-// params: {epsilon, sigma}
-struct LennardJones : AnalyticParams<LennardJones, 2> {
-  constexpr LennardJones(double epsilon, double sigma, double lo, double hi)
-      : AnalyticParams({epsilon, sigma}, lo, hi) {}
-  constexpr FORCE_INLINE double eval(double r) const {
-    const auto [ep, sig] = params;
-    const double sr6 = std::pow(sig / r, 6);
-    return 4.0 * ep * (sr6 * sr6 - sr6);
-  }
-  constexpr FORCE_INLINE double deriv(double r) const {
-    const auto [ep, sig] = params;
-    const double sr6 = std::pow(sig / r, 6);
-    return 4.0 * ep * (-12.0 * sr6 * sr6 + 6.0 * sr6) / r;
-  }
+template <typename Base, ddx::impl::FixedString Name,
+          ddx::impl::FixedString Alias = "">
+struct SmoothCutoff
+    : AnalyticForm<SmoothCutoff<Base, Name, Alias>, Base::num_params + 1> {
+  using Self = SmoothCutoff<Base, Name, Alias>;
+  using AnalyticForm<Self, Base::num_params + 1>::AnalyticForm;
+
+  static constexpr std::array names{Name.view(), Alias.view()};
+  static constexpr auto param_names =
+      detail::concat(Base::param_names, std::array{"h"sv});
+  static constexpr auto defaults = detail::concat(
+      Base::defaults, std::array<ParamDefault, 1>{ParamDefault{1.0, 0.5, 2.0}});
+  static constexpr auto expr =
+      Base::expr * detail::switching_factor(sym::r, sym::rmax, sym::h);
 };
 
-// Morse: V(r) = D_e[(1−e^{−a(r−r_e)})^2 − 1]
-// params: {D_e, a, r_e}
-struct Morse : AnalyticParams<Morse, 3> {
-  constexpr Morse(double De, double a, double re, double lo, double hi)
-      : AnalyticParams({De, a, re}, lo, hi) {}
-  constexpr FORCE_INLINE double eval(double r) const {
-    const auto [De, a, re] = params;
-    const double e = std::exp(-a * (r - re));
-    return De * (1.0 - e) * (1.0 - e) - De;
-  }
-  constexpr FORCE_INLINE double deriv(double r) const {
-    const auto [De, a, re] = params;
-    const double e = std::exp(-a * (r - re));
-    return 2.0 * De * a * e * (1.0 - e);
-  }
-};
+using LennardJonesSC = SmoothCutoff<LennardJones, "lj_sc", "pair_lj_sc">;
+using MorseSC = SmoothCutoff<Morse, "morse_sc">;
+using ExpDecaySC = SmoothCutoff<ExpDecay, "exp_decay_sc", "exp_sc">;
+using EoppSC = SmoothCutoff<Eopp, "eopp_sc">;
 
-// Buckingham: V = A exp(−r/ρ) − C·ρ^6/r^6
-// Matches forcesmith buck_value: the dispersion term carries a ρ^6 factor.
-// params: {A, rho, C}
-struct Buckingham : AnalyticParams<Buckingham, 3> {
-  constexpr Buckingham(double A, double rho, double C, double lo, double hi)
-      : AnalyticParams({A, rho, C}, lo, hi) {}
-  constexpr FORCE_INLINE double eval(double r) const {
-    const auto [A, rho, C] = params;
-    const double x = (rho * rho) / (r * r);
-    return A * std::exp(-r / rho) - C * x * x * x; // C·(ρ²/r²)³ = C·ρ⁶/r⁶
-  }
-  constexpr FORCE_INLINE double deriv(double r) const {
-    const auto [A, rho, C] = params;
-    const double rho6 = std::pow(rho, 6);
-    return -(A / rho) * std::exp(-r / rho) + 6.0 * C * rho6 / std::pow(r, 7);
-  }
-};
-
-// Born: V = A exp((C−r)/B) − D/r^6 + E/r^8
-// Matches forcesmith born_value. params: {A, B, C, D, E}
-//   A: amplitude, B: range, C: offset inside exponent, D: r^6, E: r^8.
-struct Born : AnalyticParams<Born, 5> {
-  constexpr Born(double A, double B, double C, double D, double E, double lo,
-                 double hi)
-      : AnalyticParams({A, B, C, D, E}, lo, hi) {}
-  constexpr FORCE_INLINE double eval(double r) const {
-    const auto [A, B, C, D, E] = params;
-    const double r2 = r * r, r6 = r2 * r2 * r2, r8 = r6 * r2;
-    return A * std::exp((C - r) / B) - D / r6 + E / r8;
-  }
-  constexpr FORCE_INLINE double deriv(double r) const {
-    const auto [A, B, C, D, E] = params;
-    return -(A / B) * std::exp((C - r) / B) + 6.0 * D / std::pow(r, 7) -
-           8.0 * E / std::pow(r, 9);
-  }
-};
-
-// ── PowerDecay: V = A/r^n ────────────────────────────────────────────────────
-// params: {A, n}
-struct PowerDecay : AnalyticParams<PowerDecay, 2> {
-  constexpr PowerDecay(double A, double n, double lo, double hi)
-      : AnalyticParams({A, n}, lo, hi) {}
-  constexpr FORCE_INLINE double eval(double r) const {
-    const auto [A, n] = params;
-    return A / std::pow(r, n);
-  }
-  constexpr FORCE_INLINE double deriv(double r) const {
-    const auto [A, n] = params;
-    return -A * n / std::pow(r, n + 1.0);
-  }
-};
-
-// ExpDecay: V = A exp(−Br)
-// params: {A, B}
-struct ExpDecay : AnalyticParams<ExpDecay, 2> {
-  constexpr ExpDecay(double A, double B, double lo, double hi)
-      : AnalyticParams({A, B}, lo, hi) {}
-  constexpr FORCE_INLINE double eval(double r) const {
-    const auto [A, B] = params;
-    return A * std::exp(-B * r);
-  }
-  constexpr FORCE_INLINE double deriv(double r) const {
-    const auto [A, B] = params;
-    return -A * B * std::exp(-B * r);
-  }
-};
-
-// MexpDecay, V = A·exp(−B·(r − r0))
-// params order follows forcesmith p[]: {A, B, r0}
-struct MexpDecay : AnalyticParams<MexpDecay, 3> {
-  constexpr MexpDecay(double A, double B, double r0, double lo, double hi)
-      : AnalyticParams({A, B, r0}, lo, hi) {}
-  FORCE_INLINE double eval(double r) const {
-    const auto [A, B, r0] = params;
-    return A * std::exp(-B * (r - r0));
-  }
-  FORCE_INLINE double deriv(double r) const {
-    const auto [A, B, r0] = params;
-    return -A * B * std::exp(-B * (r - r0));
-  }
-};
-
-// Harmonic: V = k(r−r0)²
-// params: {k, r0}
-struct Harmonic : AnalyticParams<Harmonic, 2> {
-  constexpr Harmonic(double k, double r0, double lo, double hi)
-      : AnalyticParams({k, r0}, lo, hi) {}
-  constexpr double eval(double r) const {
-    const auto [k, r0] = params;
-    return k * (r - r0) * (r - r0);
-  }
-  constexpr double deriv(double r) const {
-    const auto [k, r0] = params;
-    return 2.0 * k * (r - r0);
-  }
-};
-
-// Universal embedding function
-//   V = E0·(b/(b−a)·r^a − a/(b−a)·r^b) + c·r
-// params order follows forcesmith p[]: {E0, a, b, c}
-struct Universal : AnalyticParams<Universal, 4> {
-  Universal(double E0, double a, double b, double c, double lo, double hi)
-      : AnalyticParams({E0, a, b, c}, lo, hi) {}
-  constexpr FORCE_INLINE double eval(double r) const {
-    const auto [E0, a, b, c] = params;
-    return E0 * (b / (b - a) * std::pow(r, a) - a / (b - a) * std::pow(r, b)) +
-           c * r;
-  }
-  constexpr FORCE_INLINE double deriv(double r) const {
-    const auto [E0, a, b, c] = params;
-    return E0 * (a * b / (b - a)) *
-               (std::pow(r, a - 1.0) - std::pow(r, b - 1.0)) +
-           c;
-  }
-};
-
-// Eopp (empirical oscillating pair)
-//   V = A/r^n + (B/r^m)·cos(k·r + φ)
-// params order follows forcesmith p[]: {A, n, B, m, k, phi}
-struct Eopp : AnalyticParams<Eopp, 6> {
-  constexpr Eopp(double A, double n, double B, double m, double k, double phi,
-                 double lo, double hi)
-      : AnalyticParams({A, n, B, m, k, phi}, lo, hi) {}
-  constexpr FORCE_INLINE double eval(double r) const {
-    const auto [A, n, B, m, k, phi] = params;
-    return A / std::pow(r, n) + (B / std::pow(r, m)) * std::cos(k * r + phi);
-  }
-  constexpr FORCE_INLINE double deriv(double r) const {
-    const auto [A, n, B, m, k, phi] = params;
-    const double c = std::cos(k * r + phi), s = std::sin(k * r + phi);
-    return -A * n / std::pow(r, n + 1.0) - B * m / std::pow(r, m + 1.0) * c -
-           B * k / std::pow(r, m) * s;
-  }
-};
-
-// Generic `_sc` smooth-cutoff wrapper. Wraps ANY base analytic potential and
-// multiplies its value by detail::apot_cutoff(r, rmax, h); the derivative uses
-// the product rule (base'·c + base·c'). This mirrors forcesmith's generic `_sc`
-// mechanism exactly: a name ending in `_sc` appends ONE parameter h (the
-// switching width) after the base potential's parameters, and the cutoff radius
-// is the potential's rmax. apot_cutoff takes value AND derivative to zero at
-// the cutoff, so the base must NOT itself early-cut at rmax (it already zeroes
-// there). Replaces the per-function LjSC/MorseSC/ExpDecaySC/EoppSC structs;
-// any base becomes `_sc` for free by registering SmoothCutoff(Base{...}, h).
-template <typename Base> struct SmoothCutoff {
-  Base base;
-  Param h;
-  constexpr SmoothCutoff(Base b, double h_val) : base(std::move(b)), h(h_val) {}
-  constexpr FORCE_INLINE double eval(double r) const {
-    return base.eval(r) * detail::apot_cutoff(r, base.span().second, h.value);
-  }
-  constexpr FORCE_INLINE double deriv(double r) const {
-    const double r0 = base.span().second;
-    return base.deriv(r) * detail::apot_cutoff(r, r0, h.value) +
-           base.eval(r) * detail::apot_cutoff_deriv(r, r0, h.value);
-  }
-  constexpr std::pair<double, double> span() const { return base.span(); }
-  constexpr std::size_t param_count() const {
-    return base.param_count() + (h.fixed ? 0 : 1);
-  }
-  constexpr void gather_params(Eigen::VectorXd &dst, std::size_t off) const {
-    base.gather_params(dst, off);
-    if (!h.fixed) {
-      dst[off + base.param_count()] = h.value;
-    }
-  }
-  constexpr void scatter_params(const Eigen::VectorXd &src, std::size_t off) {
-    base.scatter_params(src, off);
-    if (!h.fixed) {
-      h.value = src[off + base.param_count()];
-    }
-  }
-  constexpr void gather_bounds(Eigen::VectorXd &lo, Eigen::VectorXd &hi,
-                               std::size_t off) const {
-    base.gather_bounds(lo, hi, off);
-    if (!h.fixed) {
-      lo[off + base.param_count()] = h.min;
-      hi[off + base.param_count()] = h.max;
-    }
-  }
-  // Raw-index parameter access (used to broadcast a shared global h). Indices
-  // 0..N-1 address the base; index N addresses the appended cutoff width h.
-  constexpr void set_param(std::size_t i, double v) {
-    if (i < Base::num_params) {
-      base.set_param(i, v);
-    } else {
-      h.value = v;
-    }
-  }
-  constexpr void set_fixed(std::size_t i, bool f) {
-    if (i < Base::num_params) {
-      base.set_fixed(i, f);
-    } else {
-      h.fixed = f;
-    }
-  }
-  constexpr void set_bounds(std::size_t i, double lo, double hi) {
-    if (i < Base::num_params) {
-      base.set_bounds(i, lo, hi);
-    } else {
-      h.min = lo;
-      h.max = hi;
-    }
-  }
-  constexpr bool is_fixed(std::size_t i) const {
-    return i < Base::num_params ? base.is_fixed(i) : h.fixed;
-  }
-};
-
-// EoppExp:
-//   V = A·exp(−B·r) + (C/r^m)·cos(k·r + φ)
-// params order follows forcesmith p[]: {A, B, C, m, k, phi}
-struct EoppExp : AnalyticParams<EoppExp, 6> {
-  constexpr EoppExp(double A, double B, double C, double m, double k,
-                    double phi, double lo, double hi)
-      : AnalyticParams({A, B, C, m, k, phi}, lo, hi) {}
-  constexpr FORCE_INLINE double eval(double r) const {
-    const auto [A, B, C, m, k, phi] = params;
-    return A * std::exp(-B * r) + (C / std::pow(r, m)) * std::cos(k * r + phi);
-  }
-  constexpr FORCE_INLINE double deriv(double r) const {
-    const auto [A, B, C, m, k, phi] = params;
-    const double cc = std::cos(k * r + phi), s = std::sin(k * r + phi);
-    return -A * B * std::exp(-B * r) - C * m / std::pow(r, m + 1.0) * cc -
-           C * k / std::pow(r, m) * s;
-  }
-};
-
-// Meopp (modified eopp):
-//   V = A/(r−r0)^n + (B/r^m)·cos(k·r + φ)
-// params order follows forcesmith p[]: {A, n, B, m, k, phi, r0}
-struct Meopp : AnalyticParams<Meopp, 7> {
-  constexpr Meopp(double A, double n, double B, double m, double k, double phi,
-                  double r0, double lo, double hi)
-      : AnalyticParams({A, n, B, m, k, phi, r0}, lo, hi) {}
-  constexpr FORCE_INLINE double eval(double r) const {
-    const auto [A, n, B, m, k, phi, r0] = params;
-    return A / std::pow(r - r0, n) +
-           (B / std::pow(r, m)) * std::cos(k * r + phi);
-  }
-  constexpr FORCE_INLINE double deriv(double r) const {
-    const auto [A, n, B, m, k, phi, r0] = params;
-    const double c = std::cos(k * r + phi), s = std::sin(k * r + phi);
-    return -A * n / std::pow(r - r0, n + 1.0) -
-           B * m / std::pow(r, m + 1.0) * c - B * k / std::pow(r, m) * s;
-  }
-};
-
-// GenLJ (generalized Lennard-Jones):
-//   x = r/r0;  V = A/(m−n)·(m·x^{−n} − n·x^{−m}) + B
-// params order follows forcesmith p[]: {A, n, m, r0, B}
-struct GenLJ : AnalyticParams<GenLJ, 5> {
-  constexpr GenLJ(double A, double n, double m, double r0, double B, double lo,
-                  double hi)
-      : AnalyticParams({A, n, m, r0, B}, lo, hi) {}
-  constexpr FORCE_INLINE double eval(double r) const {
-    const auto [A, n, m, r0, B] = params;
-    const double x = r / r0;
-    return A / (m - n) * (m * std::pow(x, -n) - n * std::pow(x, -m)) + B;
-  }
-  constexpr FORCE_INLINE double deriv(double r) const {
-    const auto [A, n, m, r0, B] = params;
-    const double x = r / r0;
-    // dV/dr = A/(m−n)·(1/r0)·(−mn·x^{−n−1} + nm·x^{−m−1})
-    return A / (m - n) / r0 * m * n *
-           (std::pow(x, -m - 1.0) - std::pow(x, -n - 1.0));
-  }
-};
-
-// DoubleMorse: sum of two Morse terms + constant offset
-// params: {D1, a1, r1, D2, a2, r2, C}
-struct DoubleMorse : AnalyticParams<DoubleMorse, 7> {
-  constexpr DoubleMorse(double D1, double a1, double r1, double D2, double a2,
-                        double r2, double C, double lo, double hi)
-      : AnalyticParams({D1, a1, r1, D2, a2, r2, C}, lo, hi) {}
-  constexpr FORCE_INLINE double eval(double r) const {
-    const auto [D1, a1, r1, D2, a2, r2, C] = params;
-    const double e1 = std::exp(-a1 * (r - r1));
-    const double e2 = std::exp(-a2 * (r - r2));
-    return D1 * ((1.0 - e1) * (1.0 - e1) - 1.0) +
-           D2 * ((1.0 - e2) * (1.0 - e2) - 1.0) + C;
-  }
-  constexpr FORCE_INLINE double deriv(double r) const {
-    const auto [D1, a1, r1, D2, a2, r2, C] = params;
-    const double e1 = std::exp(-a1 * (r - r1));
-    const double e2 = std::exp(-a2 * (r - r2));
-    return 2.0 * D1 * a1 * e1 * (1.0 - e1) + 2.0 * D2 * a2 * e2 * (1.0 - e2);
-  }
-};
-
-// DoubleExp, matches forcesmith double_exp_value:
-//   V = A·exp(−B·(r − r1)²) + exp(−C·(r − r2))   (2nd term has no prefactor)
-// params order follows forcesmith p[]: {A, B, r1, C, r2}
-struct DoubleExp : AnalyticParams<DoubleExp, 5> {
-  constexpr DoubleExp(double A, double B, double r1, double C, double r2,
-                      double lo, double hi)
-      : AnalyticParams({A, B, r1, C, r2}, lo, hi) {}
-  constexpr FORCE_INLINE double eval(double r) const {
-    const auto [A, B, r1, C, r2] = params;
-    const double dr = r - r1;
-    return A * std::exp(-B * dr * dr) + std::exp(-C * (r - r2));
-  }
-  constexpr FORCE_INLINE double deriv(double r) const {
-    const auto [A, B, r1, C, r2] = params;
-    const double dr = r - r1;
-    return -2.0 * A * B * dr * std::exp(-B * dr * dr) -
-           C * std::exp(-C * (r - r2));
-  }
-};
-
-// Mishin, matches forcesmith mishin_value:
-//   z = r − r0;  e = exp(−d·z);  V = A·z^n·e·(1 + B·e) + C
-// params order follows forcesmith p[]: {A, B, C, r0, n, d}
-struct Mishin : AnalyticParams<Mishin, 6> {
-  constexpr Mishin(double A, double B, double C, double r0, double n, double d,
-                   double lo, double hi)
-      : AnalyticParams({A, B, C, r0, n, d}, lo, hi) {}
-  constexpr FORCE_INLINE double eval(double r) const {
-    const auto [A, B, C, r0, n, d] = params;
-    const double z = r - r0;
-    const double e = std::exp(-d * z);
-    return A * std::pow(z, n) * e * (1.0 + B * e) + C;
-  }
-  constexpr FORCE_INLINE double deriv(double r) const {
-    const auto [A, B, C, r0, n, d] = params;
-    const double z = r - r0;
-    const double e = std::exp(-d * z);
-    const double zn1 = std::pow(z, n - 1.0);
-    // d/dr[A z^n e]      = A z^{n-1} e (n − d z)
-    // d/dr[A B z^n e^2]  = A B z^{n-1} e^2 (n − 2 d z)
-    return A * zn1 * e * (n - d * z) + A * B * zn1 * e * e * (n - 2.0 * d * z);
-  }
-};
-
-// SqrtFunc: V = A sqrt(r / B)
-// Matches forcesmith sqrt_value. params: {A, B}
-struct SqrtFunc : AnalyticParams<SqrtFunc, 2> {
-  constexpr SqrtFunc(double A, double B, double lo, double hi)
-      : AnalyticParams({A, B}, lo, hi) {}
-  constexpr FORCE_INLINE double eval(double r) const {
-    const auto [A, B] = params;
-    return A * std::sqrt(r / B);
-  }
-  constexpr FORCE_INLINE double deriv(double r) const {
-    const auto [A, B] = params;
-    return A / (2.0 * B * std::sqrt(r / B));
-  }
-};
-
-// ConstFunc: V = C
-// params: {C}
-struct ConstFunc : AnalyticParams<ConstFunc, 1> {
-  constexpr explicit ConstFunc(double C, double lo, double hi)
-      : AnalyticParams({C}, lo, hi) {}
-  constexpr FORCE_INLINE double eval(double) const { return params[0]; }
-  constexpr FORCE_INLINE double deriv(double) const { return 0.0; }
-};
-
-// Parabola: V = Ar² + Br + C
-// params: {A, B, C}
-struct Parabola : AnalyticParams<Parabola, 3> {
-  constexpr Parabola(double A, double B, double C, double lo, double hi)
-      : AnalyticParams({A, B, C}, lo, hi) {}
-  constexpr FORCE_INLINE double eval(double r) const {
-    const auto [A, B, C] = params;
-    return A * r * r + B * r + C;
-  }
-  constexpr FORCE_INLINE double deriv(double r) const {
-    const auto [A, B, C] = params;
-    return 2.0 * A * r + B;
-  }
-};
-
-// Poly5, matches forcesmith poly_5_value (expansion about r = 1):
-//   s = r − 1;  V = a0 + 0.5·a1·s² + a2·s³ + a3·s⁴ + a4·s⁵
-// params: {a0, a1, a2, a3, a4}
-struct Poly5 : AnalyticParams<Poly5, 5> {
-  constexpr Poly5(double a0, double a1, double a2, double a3, double a4,
-                  double lo, double hi)
-      : AnalyticParams({a0, a1, a2, a3, a4}, lo, hi) {}
-  constexpr FORCE_INLINE double eval(double r) const {
-    const auto [a0, a1, a2, a3, a4] = params;
-    const double s = r - 1.0, s2 = s * s;
-    return a0 + 0.5 * a1 * s2 + a2 * s * s2 + a3 * s2 * s2 + a4 * s2 * s2 * s;
-  }
-  constexpr FORCE_INLINE double deriv(double r) const {
-    const auto [a0, a1, a2, a3, a4] = params;
-    const double s = r - 1.0, s2 = s * s;
-    return a1 * s + 3.0 * a2 * s2 + 4.0 * a3 * s2 * s + 5.0 * a4 * s2 * s2;
-  }
-};
-
-// StiwWeb2 (Stillinger-Weber pair), matches forcesmith stiweb_2_value:
-//   V = (A·r^{−p} − B·r^{−q})·exp(δ/(r − rc))
-// params order follows forcesmith p[]: {A, B, p, q, delta, rc}
-struct StiwWeb2 : AnalyticParams<StiwWeb2, 6> {
-  constexpr StiwWeb2(double A, double B, double p, double q, double delta,
-                     double rc, double lo, double hi)
-      : AnalyticParams({A, B, p, q, delta, rc}, lo, hi) {}
-  constexpr FORCE_INLINE double eval(double r) const {
-    const auto [A, B, p, q, delta, rc] = params;
-    if (r >= rc)
-      return 0.0; // exp pole at r = rc; SW pair vanishes beyond
-    const double poly = A * std::pow(r, -p) - B * std::pow(r, -q);
-    return poly * std::exp(delta / (r - rc));
-  }
-  constexpr FORCE_INLINE double deriv(double r) const {
-    const auto [A, B, p, q, delta, rc] = params;
-    if (r >= rc)
-      return 0.0;
-    const double d = r - rc;
-    const double g = std::exp(delta / d);
-    if (g == 0.0)
-      return 0.0; // exp underflow near r=rc; guards 0·∞ in the (-delta/d²) term
-    const double poly = A * std::pow(r, -p) - B * std::pow(r, -q);
-    const double dpoly =
-        -A * p * std::pow(r, -p - 1.0) + B * q * std::pow(r, -q - 1.0);
-    return dpoly * g + poly * g * (-delta / (d * d));
-  }
-};
-
-// StiwWeb3: h(r) = exp(γ/(r−a)),  r < a  [SW 3-body radial function]
-// params: {gamma, a}   (γ = γ_SW × σ and a = a_SW × σ, pre-multiplied)
-struct StiwWeb3 : AnalyticParams<StiwWeb3, 2> {
-  constexpr StiwWeb3(double gamma, double a, double lo, double hi)
-      : AnalyticParams({gamma, a}, lo, hi) {}
-  constexpr FORCE_INLINE double eval(double r) const {
-    const auto [gamma, a] = params;
-    if (r >= a)
-      return 0.0;
-    return std::exp(gamma / (r - a));
-  }
-  constexpr FORCE_INLINE double deriv(double r) const {
-    const auto [gamma, a] = params;
-    if (r >= a)
-      return 0.0;
-    const double d = r - a;
-    const double h = std::exp(gamma / d);
-    if (h == 0.0)
-      return 0.0;
-    return h * (-gamma / (d * d));
-  }
-};
-
-// TersoffPot: V = fc(r)[A exp(−λr) − B exp(−μr)]
-// Bond-order params β, n, c, d, h are stored but not used in pure pair eval.
-// params: {A, B, lambda, mu, beta, n, c, d, h, R, S}
-struct TersoffPot : AnalyticParams<TersoffPot, 11> {
-  constexpr TersoffPot(double A, double B, double lam, double mu, double beta,
-                       double n, double c, double d, double h, double R,
-                       double S, double lo, double hi)
-      : AnalyticParams({A, B, lam, mu, beta, n, c, d, h, R, S}, lo, hi) {}
-  constexpr FORCE_INLINE double eval(double r) const {
-    const double A = params[0], B = params[1], lam = params[2], mu = params[3];
-    const double R = params[9], S = params[10];
-    return detail::fc(r, R, S) *
-           (A * std::exp(-lam * r) - B * std::exp(-mu * r));
-  }
-  constexpr FORCE_INLINE double deriv(double r) const {
-    const double A = params[0], B = params[1], lam = params[2], mu = params[3];
-    const double R = params[9], S = params[10];
-    const double f = detail::fc(r, R, S);
-    const double df = detail::dfc(r, R, S);
-    const double pair = A * std::exp(-lam * r) - B * std::exp(-mu * r);
-    const double dpair =
-        -lam * A * std::exp(-lam * r) + mu * B * std::exp(-mu * r);
-    return df * pair + f * dpair;
-  }
-};
-
-// TersoffMix: mixing correction V = χ exp(−ω r)
-// params: {chi, omega}
-struct TersoffMix : AnalyticParams<TersoffMix, 2> {
-  constexpr TersoffMix(double chi, double omega, double lo, double hi)
-      : AnalyticParams({chi, omega}, lo, hi) {}
-  constexpr FORCE_INLINE double eval(double r) const {
-    const auto [chi, omega] = params;
-    return chi * std::exp(-omega * r);
-  }
-  constexpr FORCE_INLINE double deriv(double r) const {
-    const auto [chi, omega] = params;
-    return -chi * omega * std::exp(-omega * r);
-  }
-};
-
-// TersoffModPot: modified Tersoff pair (16 params)
-// Extended pair: fc(r)[A exp(−λr) − B exp(−μr)] × polynomial correction.
-// Extra params c1..c5 (indices 11-15) provide a polynomial correction.
-// params: {A, B, lambda, mu, beta, n, c, d, h, R, S, c1, c2, c3, c4, c5}
-struct TersoffModPot : AnalyticParams<TersoffModPot, 16> {
-  constexpr TersoffModPot(std::array<double, 16> p, double lo, double hi)
-      : AnalyticParams(p, lo, hi) {}
-  constexpr FORCE_INLINE double eval(double r) const {
-    const double A = params[0], B = params[1];
-    const double lam = params[2], mu = params[3];
-    const double R = params[9], S = params[10];
-    const double c1 = params[11], c2 = params[12];
-    const double c3 = params[13], c4 = params[14], c5 = params[15];
-    const double pair = A * std::exp(-lam * r) - B * std::exp(-mu * r);
-    const double corr = 1.0 + c1 * r + c2 * r * r + c3 * r * r * r +
-                        c4 * r * r * r * r + c5 * r * r * r * r * r;
-    return detail::fc(r, R, S) * pair * corr;
-  }
-  constexpr FORCE_INLINE double deriv(double r) const {
-    const double A = params[0], B = params[1];
-    const double lam = params[2], mu = params[3];
-    const double R = params[9], S = params[10];
-    const double c1 = params[11], c2 = params[12];
-    const double c3 = params[13], c4 = params[14], c5 = params[15];
-    const double f = detail::fc(r, R, S);
-    const double df = detail::dfc(r, R, S);
-    const double pair = A * std::exp(-lam * r) - B * std::exp(-mu * r);
-    const double dpair =
-        -lam * A * std::exp(-lam * r) + mu * B * std::exp(-mu * r);
-    const double r2 = r * r, r3 = r2 * r, r4 = r3 * r, r5 = r4 * r;
-    const double corr = 1.0 + c1 * r + c2 * r2 + c3 * r3 + c4 * r4 + c5 * r5;
-    const double dcorr =
-        c1 + 2.0 * c2 * r + 3.0 * c3 * r2 + 4.0 * c4 * r3 + 5.0 * c5 * r4;
-    return (df * pair + f * dpair) * corr + f * pair * dcorr;
-  }
-};
-
-// Kawamura ionic potential:
-//   V = p0·p1/r + p2·(p5+p6)·exp((p3+p4−r)/(p5+p6)) − p7·p8/r^6
-// params follow forcesmith p[] (charges/sums multiply): {p0..p8}
-struct Kawamura : AnalyticParams<Kawamura, 9> {
-  constexpr Kawamura(double p0, double p1, double p2, double p3, double p4,
-                     double p5, double p6, double p7, double p8, double lo,
-                     double hi)
-      : AnalyticParams({p0, p1, p2, p3, p4, p5, p6, p7, p8}, lo, hi) {}
-  constexpr FORCE_INLINE double eval(double r) const {
-    const auto [p0, p1, p2, p3, p4, p5, p6, p7, p8] = params;
-    const double s = p5 + p6, t = p3 + p4;
-    const double r6 = std::pow(r, 6);
-    return p0 * p1 / r + p2 * s * std::exp((t - r) / s) - p7 * p8 / r6;
-  }
-  constexpr FORCE_INLINE double deriv(double r) const {
-    const auto [p0, p1, p2, p3, p4, p5, p6, p7, p8] = params;
-    const double s = p5 + p6, t = p3 + p4;
-    return -p0 * p1 / (r * r) - p2 * std::exp((t - r) / s) +
-           6.0 * p7 * p8 / std::pow(r, 7);
-  }
-};
-
-// KawamuraMix:
-//   V = kawamura(p0..p8) + p2·p9·(exp(−2·p10·(r−p11)) − 2·exp(−p10·(r−p11)))
-// params follow forcesmith p[]: {p0..p11}
-struct KawamuraMix : AnalyticParams<KawamuraMix, 12> {
-  constexpr KawamuraMix(std::array<double, 12> p, double lo, double hi)
-      : AnalyticParams(p, lo, hi) {}
-  constexpr FORCE_INLINE double eval(double r) const {
-    const double p0 = params[0], p1 = params[1], p2 = params[2], p3 = params[3];
-    const double p4 = params[4], p5 = params[5], p6 = params[6], p7 = params[7],
-                 p8 = params[8];
-    const double p9 = params[9], p10 = params[10], p11 = params[11];
-    const double s = p5 + p6, t = p3 + p4, r6 = std::pow(r, 6), w = r - p11;
-    return p0 * p1 / r + p2 * s * std::exp((t - r) / s) - p7 * p8 / r6 +
-           p2 * p9 * (std::exp(-2.0 * p10 * w) - 2.0 * std::exp(-p10 * w));
-  }
-  constexpr FORCE_INLINE double deriv(double r) const {
-    const double p0 = params[0], p1 = params[1], p2 = params[2], p3 = params[3];
-    const double p4 = params[4], p5 = params[5], p6 = params[6], p7 = params[7],
-                 p8 = params[8];
-    const double p9 = params[9], p10 = params[10], p11 = params[11];
-    const double s = p5 + p6, t = p3 + p4, w = r - p11;
-    return -p0 * p1 / (r * r) - p2 * std::exp((t - r) / s) +
-           6.0 * p7 * p8 / std::pow(r, 7) +
-           2.0 * p2 * p9 * p10 *
-               (std::exp(-p10 * w) - std::exp(-2.0 * p10 * w));
-  }
-};
-
-// Softshell: V = (A/r)^n (soft-core repulsion)
-// params: {A, n}
-struct Softshell : AnalyticParams<Softshell, 2> {
-  constexpr Softshell(double A, double n, double lo, double hi)
-      : AnalyticParams({A, n}, lo, hi) {}
-  constexpr FORCE_INLINE double eval(double r) const {
-    const auto [A, n] = params;
-    return std::pow(A / r, n);
-  }
-  constexpr FORCE_INLINE double deriv(double r) const {
-    const auto [A, n] = params;
-    return -n * std::pow(A / r, n) / r; // d/dr (A/r)^n = -(n/r)(A/r)^n
-  }
-};
-
-// ── ExpPlus: V = A exp(−Br) + C ──────────────────────────────────────────────
-// params: {A, B, C}
-struct ExpPlus : AnalyticParams<ExpPlus, 3> {
-  constexpr ExpPlus(double A, double B, double C, double lo, double hi)
-      : AnalyticParams({A, B, C}, lo, hi) {}
-  constexpr FORCE_INLINE double eval(double r) const {
-    const auto [A, B, C] = params;
-    return A * std::exp(-B * r) + C;
-  }
-  constexpr FORCE_INLINE double deriv(double r) const {
-    const auto [A, B, C] = params;
-    return -A * B * std::exp(-B * r);
-  }
-};
-
-// ── Strmm (Streitz-Mintmire), matches forcesmith strmm_value:
-//   s = r − r0;  V = 2A·exp(−B/2·s) − C·(1 + D·s)·exp(−D·s)
-// params order follows forcesmith p[]: {A, B, C, D, r0}
-struct Strmm : AnalyticParams<Strmm, 5> {
-  constexpr Strmm(double A, double B, double C, double D, double r0, double lo,
-                  double hi)
-      : AnalyticParams({A, B, C, D, r0}, lo, hi) {}
-  constexpr FORCE_INLINE double eval(double r) const {
-    const auto [A, B, C, D, r0] = params;
-    const double s = r - r0;
-    return 2.0 * A * std::exp(-B / 2.0 * s) -
-           C * (1.0 + D * s) * std::exp(-D * s);
-  }
-  constexpr FORCE_INLINE double deriv(double r) const {
-    const auto [A, B, C, D, r0] = params;
-    const double s = r - r0;
-    return -A * B * std::exp(-B / 2.0 * s) + C * D * D * s * std::exp(-D * s);
-  }
-};
+using AnalyticForms = boost::mp11::mp_list<
+    LennardJones, Morse, Buckingham, Born, PowerDecay, ExpDecay, MexpDecay,
+    Harmonic, Universal, Eopp, EoppExp, Meopp, GenLJ, DoubleMorse, DoubleExp,
+    Mishin, SqrtFunc, ConstFunc, Parabola, Poly5, StiwWeb2, StiwWeb3,
+    TersoffPot, TersoffMix, TersoffModPot, Kawamura, KawamuraMix, Softshell,
+    ExpPlus, Strmm, LennardJonesSC, MorseSC, ExpDecaySC, EoppSC>;
 
 } // namespace forcesmith

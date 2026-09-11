@@ -1,12 +1,16 @@
 #include "forcesmith/io/force_model_reader.hpp"
-#include "forcesmith/io/factory.hpp"
-#include "forcesmith/io/json_util.hpp"
+#include "forcesmith/core/families.hpp"
+#include "forcesmith/core/fields.hpp"
+#include "forcesmith/core/json.hpp"
 #include "forcesmith/io/potential_reader.hpp"
+#include "forcesmith/io/schema.hpp"
 
 #include <boost/leaf/error.hpp>
+#include <boost/mp11/algorithm.hpp>
 #include <nlohmann/json.hpp>
 
 #include <optional>
+#include <span>
 #include <string>
 #include <unordered_map>
 #include <utility>
@@ -21,9 +25,6 @@ namespace {
 
 using Fail = leaf::result<ForceCalculator>;
 
-// Build a ParseError leaf error. The returned error_id converts implicitly to
-// leaf::result<T> for any T, so callers `return fail(...);` regardless of their
-// result type. The two-arg form prefixes the message with `label`.
 leaf::error_id fail(std::string msg) {
   return leaf::new_error(ParseError{std::move(msg), 0});
 }
@@ -31,93 +32,33 @@ leaf::error_id fail(std::string_view label, std::string msg) {
   return fail(std::string(label) + ": " + std::move(msg));
 }
 
-// Parse a sub-object of shape {"format": ..., "potentials": [...]}
-// into a flat vector<RadialPotential>. Mirrors the logic in parse_potential.
-leaf::result<std::vector<RadialPotential>>
-parse_pot_list(const json &sub, std::string_view label) {
-  if (!sub.contains("format")) {
-    return fail(label, "missing 'format' key");
-  }
-  if (!sub.contains("potentials") || !sub["potentials"].is_array()) {
-    return fail(label, "missing or invalid 'potentials' array");
-  }
+template <class T>
+concept CPotentialTable = requires(T &t, typename T::value_type v) {
+  t.reserve(std::size_t{});
+  t.push_back(std::move(v));
+};
 
-  const std::string sub_str = sub.dump();
-  auto r = parse_potential(sub_str);
-  if (!r) {
-    return r.error();
-  }
-  return std::move(*r);
-}
+template <CPotentialTable Table>
+leaf::result<void> fill_table(Table &table, const json &sub,
+                              std::size_t ntypes, std::string_view label) {
+  constexpr bool per_pair =
+      std::same_as<Table, SymmetricMatrix<typename Table::value_type>>;
+  const std::size_t want = per_pair ? ntypes * (ntypes + 1) / 2 : ntypes;
 
-// Load paircol potentials from sub into a RadialPotentialPair
-// (SymmetricMatrix<RadialPotential>).
-leaf::result<void> fill_pair(RadialPotentialPair &mat, const json &sub,
-                             std::size_t ntypes, std::string_view label) {
-  auto r = parse_pot_list(sub, label);
-  if (!r) {
-    return r.error();
-  }
-  auto &pots = *r;
-
-  const std::size_t paircol = ntypes * (ntypes + 1) / 2;
-  if (pots.size() != paircol) {
-    return fail(label, "expected " + std::to_string(paircol) +
+  BOOST_LEAF_AUTO(pots, parse_potential(sub.dump()));
+  if (pots.size() != want) {
+    return fail(label, "expected " + std::to_string(want) +
                            " potentials for ntypes=" + std::to_string(ntypes) +
                            ", got " + std::to_string(pots.size()));
   }
-
-  mat.reserve(ntypes);
-  std::ranges::move(pots, std::back_inserter(mat));
+  table.reserve(ntypes);
+  std::ranges::move(pots, std::back_inserter(table));
   return {};
 }
 
-// Load ntypes potentials from sub into a RadialPotentialArray
-// (TypeArray<RadialPotential>).
-leaf::result<void> fill_arr(RadialPotentialArray &arr, const json &sub,
-                            std::size_t ntypes, std::string_view label) {
-  auto r = parse_pot_list(sub, label);
-  if (!r) {
-    return r.error();
-  }
-
-  auto &pots = *r;
-  if (pots.size() != ntypes) {
-    return fail(label, "expected " + std::to_string(ntypes) +
-                           " potentials, got " + std::to_string(pots.size()));
-  }
-
-  arr.reserve(ntypes);
-  std::ranges::move(pots, std::back_inserter(arr));
-  return {};
-}
-
-// Check that all required keys are present.
-leaf::result<void> require_keys(const json &obj,
-                                std::initializer_list<const char *> keys,
-                                std::string_view ctx) {
-  for (const char *k : keys) {
-    if (!obj.contains(k))
-      return leaf::new_error(
-          ParseError{std::string(ctx) + ": missing section '" + k + "'", 0});
-  }
-  return {};
-}
-
-// Resolve shared global parameters. Reads the optional top-level
-// `"globals": { name: {"value":, "min":, "max":, "fixed":} }`, then scans each
-// region's `potentials` for a parameter expressed as `{"global": name}`. For
-// every such reference it records a Link (region, flat index, param slot) and
-// REPLACES the reference in `root` with the global's seed value, so the normal
-// number-based potential parser sees a plain number. The caller assigns the
-// returned vector to calc.globals and calls finalize_globals().
-//
-// `regions` pairs each sub-object that owns a `"potentials"` array with the
-// calculator sub-table (LinkRegion) it belongs to. Mutates `root` in place.
 leaf::result<std::vector<GlobalParam>> build_globals(
     json &root,
-    std::initializer_list<std::pair<json *, GlobalParam::Link::LinkRegion>>
-        regions) {
+    std::span<const std::pair<json *, GlobalParam::Link::LinkRegion>> regions) {
   std::vector<GlobalParam> globals;
   std::unordered_map<std::string, std::size_t> by_name;
   if (root.contains("globals")) {
@@ -144,8 +85,6 @@ leaf::result<std::vector<GlobalParam>> build_globals(
         continue;
       }
       const std::string type = pot["type"].get<std::string>();
-      // Collect global-ref parameter keys first, then mutate (don't modify the
-      // object mid-iteration).
       auto refs =
           pot.items() | std::views::filter([](const auto &el) {
             return el.value().is_object() && el.value().contains("global");
@@ -177,230 +116,105 @@ leaf::result<std::vector<GlobalParam>> build_globals(
   return globals;
 }
 
-leaf::result<ForceCalculator> build_pair(json &j, std::size_t ntypes) {
-  // Resolve globals in place (pair potentials live at top-level j), then
-  // parse the mutated j (not the raw input string).
-  auto rg = build_globals(j, {{&j, GlobalParam::Link::LinkRegion::PAIR}});
-  if (!rg) {
-    return rg.error();
-  }
-  auto r = parse_potential(j.dump());
-  if (!r) {
-    return r.error();
-  }
-
-  auto &pots = *r;
-  const std::size_t paircol = ntypes * (ntypes + 1) / 2;
-  if (pots.size() != paircol) {
-    return fail("pair", "expected " + std::to_string(paircol) +
-                            " potentials for ntypes=" + std::to_string(ntypes) +
-                            ", got " + std::to_string(pots.size()));
-  }
-
-  PairForceCalculator calc;
-  calc.ntypes = ntypes;
-  calc.pair.reserve(ntypes);
-  std::ranges::move(pots, std::back_inserter(calc.pair));
-  calc.globals = std::move(*rg);
-  calc.finalize_globals();
-  return ForceCalculator{std::move(calc)};
-}
-
-leaf::result<ForceCalculator> build_eam(json &j, std::size_t ntypes) {
-  auto rk = require_keys(j, {"pair", "density", "embedding"}, "eam");
-  if (!rk) {
-    return rk.error();
-  }
-
-  // Resolve shared globals BEFORE filling so the potential parser sees plain
-  // numbers; mutates j["pair"/"density"/"embedding"] in place.
+GlobalParam::Link::LinkRegion region_of(std::string_view key) {
   using enum GlobalParam::Link::LinkRegion;
-  auto rg = build_globals(j, {{&j["pair"], PAIR},
-                              {&j["density"], DENSITY},
-                              {&j["embedding"], EMBEDDING}});
-  if (!rg) {
-    return rg.error();
+  if (key == "density") {
+    return DENSITY;
   }
+  if (key == "embedding") {
+    return EMBEDDING;
+  }
+  return PAIR; // "" (the bare pair model's root) and "pair"
+}
 
-  EAMForceCalculator calc;
+template <class T>
+concept CHasGlobals = requires(T &t) { t.globals; };
+
+template <CTabulated T>
+leaf::result<ForceCalculator> build_tabulated(json &j, std::size_t ntypes) {
+  T calc;
   calc.ntypes = ntypes;
 
-  auto rp = fill_pair(calc.pair, j["pair"], ntypes, "eam.pair");
-  if (!rp) {
-    return rp.error();
+  if constexpr (CHasGlobals<T>) {
+    std::vector<std::pair<json *, GlobalParam::Link::LinkRegion>> regions;
+    for_each_table(calc, [&](auto &, std::string_view key) {
+      regions.emplace_back(key.empty() ? &j : &j.at(std::string(key)),
+                           region_of(key));
+    });
+    BOOST_LEAF_AUTO(globals, build_globals(j, std::span(regions)));
+    calc.globals = std::move(globals);
   }
-  auto rd = fill_arr(calc.density, j["density"], ntypes, "eam.density");
-  if (!rd) {
-    return rd.error();
+
+  leaf::result<void> status{};
+  for_each_table(calc, [&](auto &table, std::string_view key) {
+    if (!status) {
+      return; // a previous section already failed
+    }
+    const std::string label =
+        std::string(family_name<T>) + (key.empty() ? "" : "." + std::string(key));
+    status = fill_table(table, key.empty() ? j : j.at(std::string(key)), ntypes,
+                        label);
+  });
+  BOOST_LEAF_CHECK(std::move(status));
+
+  if constexpr (CHasGlobals<T>) {
+    calc.finalize_globals();
   }
-  auto re = fill_arr(calc.embedding, j["embedding"], ntypes, "eam.embedding");
-  if (!re)
-    return re.error();
-
-  calc.globals = std::move(*rg);
-  calc.finalize_globals();
-
   return ForceCalculator{std::move(calc)};
 }
 
-leaf::result<ForceCalculator> build_adp(json &j, std::size_t ntypes) {
-  auto rk = require_keys(
-      j, {"pair", "density", "embedding", "dipole", "quadrupole"}, "adp");
-  if (!rk) {
-    return rk.error();
+template <class T, class P>
+leaf::result<void> read_param_blocks(SymmetricMatrix<P> &out, const json &j,
+                                     std::size_t ntypes) {
+  const json &arr = j.at("potentials");
+  const std::size_t paircol = ntypes * (ntypes + 1) / 2;
+  if (!arr.is_array() || arr.size() != paircol) {
+    return fail(family_name<T>,
+                "expected " + std::to_string(paircol) +
+                    " entries for ntypes=" + std::to_string(ntypes));
   }
-
-  ADPForceCalculator calc;
-  calc.ntypes = ntypes;
-
-  auto rp = fill_pair(calc.pair, j["pair"], ntypes, "adp.pair");
-  if (!rp) {
-    return rp.error();
+  out.reserve(ntypes);
+  for (const json &p : arr) {
+    out.emplace_back(p.get<P>());
   }
-
-  auto rd = fill_arr(calc.density, j["density"], ntypes, "adp.density");
-  if (!rd) {
-    return rd.error();
-  }
-
-  auto re = fill_arr(calc.embedding, j["embedding"], ntypes, "adp.embedding");
-  if (!re) {
-    return re.error();
-  }
-
-  auto rdi = fill_pair(calc.dipole, j["dipole"], ntypes, "adp.dipole");
-  if (!rdi) {
-    return rdi.error();
-  }
-
-  auto rq =
-      fill_pair(calc.quadrupole, j["quadrupole"], ntypes, "adp.quadrupole");
-  if (!rq) {
-    return rq.error();
-  }
-
-  return ForceCalculator{std::move(calc)};
-}
-
-leaf::result<ForceCalculator> build_angular(json &j, std::size_t ntypes) {
-  auto rk = require_keys(j, {"pair", "radial", "angular"}, "angular");
-  if (!rk) {
-    return rk.error();
-  }
-
-  AngularForceCalculator calc;
-  calc.ntypes = ntypes;
-
-  auto rp = fill_pair(calc.pair, j["pair"], ntypes, "angular.pair");
-  if (!rp) {
-    return rp.error();
-  }
-  auto rr = fill_pair(calc.radial, j["radial"], ntypes, "angular.radial");
-  if (!rr) {
-    return rr.error();
-  }
-  // angular g is indexed by the central atom type → ntypes entries.
-  auto ra = fill_arr(calc.angular, j["angular"], ntypes, "angular.angular");
-  if (!ra) {
-    return ra.error();
-  }
-
-  return ForceCalculator{std::move(calc)};
+  return {};
 }
 
 leaf::result<ForceCalculator> build_tersoff(json &j, std::size_t ntypes) {
-  if (!j.contains("potentials") || !j["potentials"].is_array()) {
-    return fail("tersoff", "missing 'potentials' array");
-  }
-
-  const auto &pots_arr = j["potentials"];
-  const std::size_t paircol = ntypes * (ntypes + 1) / 2;
-  if (pots_arr.size() != paircol) {
-    return fail("tersoff", "expected " + std::to_string(paircol) +
-                               " entries for ntypes=" + std::to_string(ntypes));
-  }
-
   TersoffForceCalculator calc;
   calc.ntypes = ntypes;
-  calc.params.reserve(ntypes);
-
-  for (const auto &p : pots_arr) {
-    TersoffParams tp;
-    tp.A = p.at("A").get<double>();
-    tp.B = p.at("B").get<double>();
-    tp.lambda = p.at("lambda").get<double>();
-    tp.mu = p.at("mu").get<double>();
-    tp.beta = p.at("beta").get<double>();
-    tp.n = p.at("n").get<double>();
-    tp.c = p.at("c").get<double>();
-    tp.d = p.at("d").get<double>();
-    tp.h = p.at("h").get<double>();
-    tp.R = p.at("R").get<double>();
-    tp.S = p.at("S").get<double>();
-    // Optional bond-order mixing weight (forcesmith's omega). Absent → 1.0,
-    // fixed (diagonal/same-type pairs); present → free for fitting.
-    if (p.contains("omega")) {
-      tp.omega = Param{p.at("omega").get<double>(), false};
+  BOOST_LEAF_CHECK(
+      (read_param_blocks<TersoffForceCalculator>(calc.params, j, ntypes)));
+  const json &arr = j.at("potentials");
+  std::size_t i = 0;
+  for (TersoffParams &p : calc.params) {
+    if (arr[i++].contains("omega")) {
+      p.omega.fixed = false;
     }
-    calc.params.emplace_back(tp);
   }
-
   return ForceCalculator{std::move(calc)};
 }
 
 leaf::result<ForceCalculator> build_stiweb(json &j, std::size_t ntypes) {
-  if (!j.contains("potentials") || !j["potentials"].is_array()) {
-    return fail("stiweb", "missing 'potentials' array");
-  }
-
-  const auto &pots_arr = j["potentials"];
-  const std::size_t paircol = ntypes * (ntypes + 1) / 2;
-  if (pots_arr.size() != paircol) {
-    return fail("stiweb", "expected " + std::to_string(paircol) +
-                              " entries for ntypes=" + std::to_string(ntypes));
-  }
-
   StiwebForceCalculator calc;
   calc.ntypes = ntypes;
-  calc.params.reserve(ntypes);
+  BOOST_LEAF_CHECK(
+      (read_param_blocks<StiwebForceCalculator>(calc.params, j, ntypes)));
 
-  for (const auto &p : pots_arr) {
-    SWParams sp;
-    sp.A = p.at("A").get<double>();
-    sp.B = p.at("B").get<double>();
-    sp.p = p.at("p").get<double>();
-    sp.q = p.at("q").get<double>();
-    sp.delta = p.at("delta").get<double>();
-    sp.a1 = p.at("a1").get<double>();
-    sp.gamma = p.at("gamma").get<double>();
-    sp.a2 = p.at("a2").get<double>();
-    calc.params.emplace_back(sp);
+  const json &lam = j.at("lambda");
+  const std::size_t want = ntypes * (ntypes * (ntypes + 1) / 2);
+  if (!lam.is_array() || lam.size() != want) {
+    return fail("stiweb", "expected " + std::to_string(want) +
+                              " lambda entries for ntypes=" +
+                              std::to_string(ntypes) + ", got " +
+                              std::to_string(lam.is_array() ? lam.size() : 0));
   }
-
-  // Per-triplet 3-body strength λ[i][j][k] (symmetric in j,k): a flat array
-  // of ntypes·paircol entries in canonical order (i; pair_slot(j,k)).
-  if (!j.contains("lambda") || !j["lambda"].is_array()) {
-    return fail("stiweb", "missing 'lambda' array (ntypes·paircol entries)");
-  }
-  const auto &lam_arr = j["lambda"];
-  const std::size_t lam_count = ntypes * paircol;
-  if (lam_arr.size() != lam_count) {
-    return fail("stiweb",
-                "expected " + std::to_string(lam_count) +
-                    " lambda entries for ntypes=" + std::to_string(ntypes) +
-                    ", got " + std::to_string(lam_arr.size()));
-  }
-  calc.lambda.reserve(lam_count);
-  std::ranges::transform(
-      lam_arr, std::back_inserter(calc.lambda),
-      [](const auto &l) { return Param{l.template get<double>()}; });
-
+  calc.lambda.reserve(want);
+  std::ranges::transform(lam, std::back_inserter(calc.lambda),
+                         [](const json &l) { return l.get<Param>(); });
   return ForceCalculator{std::move(calc)};
 }
 
-// Per-head JSON parser: linear (coeffs + bias). The symmetric counterpart of
-// the build_json_from_head writer CPO; adding a head type means adding a parser
-// like this plus a dispatch branch in parse_head.
 leaf::result<EnergyHead> parse_linear_head(const json &h, std::size_t S) {
   if (!h.contains("coeffs") || !h["coeffs"].is_array()) {
     return fail("ml", "linear head missing 'coeffs' array");
@@ -420,8 +234,6 @@ leaf::result<EnergyHead> parse_linear_head(const json &h, std::size_t S) {
   return EnergyHead{std::move(lh)};
 }
 
-// Build one EnergyHead from a JSON head spec, validated against descriptor size
-// S. Dispatches on the "type" string to the per-head parser.
 leaf::result<EnergyHead> parse_head(const json &h, std::size_t S) {
   const std::string htype = h.value("type", std::string("linear"));
   if (htype == "linear") {
@@ -430,9 +242,7 @@ leaf::result<EnergyHead> parse_head(const json &h, std::size_t S) {
   return fail("ml", "unknown head type '" + htype + "'");
 }
 
-// Attach the per-type heads (positional, one per element slot) to an MLBase
-// model and wrap it as a ForceCalculator. S is the model's descriptor size.
-template <class Model>
+template <CMLFamily Model>
 leaf::result<ForceCalculator> finish_ml(Model calc, json &j, std::size_t ntypes,
                                         std::size_t S) {
   if (!j.contains("heads") || !j["heads"].is_array()) {
@@ -444,17 +254,10 @@ leaf::result<ForceCalculator> finish_ml(Model calc, json &j, std::size_t ntypes,
                           std::to_string(heads.size()));
   }
   calc.heads.reserve(ntypes);
-  for (const auto &h : heads) {
-    auto rh = parse_head(h, S);
-    if (!rh) {
-      return rh.error();
-    }
-    calc.heads.emplace_back(std::move(*rh));
+  for (const json &h : heads) {
+    BOOST_LEAF_AUTO(head, parse_head(h, S));
+    calc.heads.emplace_back(std::move(head));
   }
-  // Optional per-feature standardization (one {mean, inv_std} per type),
-  // written by output_writer's add_standardization. Absent → identity transform
-  // (older startpot files still load). Each vector is empty (type had no atoms)
-  // or S long.
   if (j.contains("standardization")) {
     const auto &st = j["standardization"];
     if (!st.is_array() || st.size() != ntypes) {
@@ -492,12 +295,10 @@ leaf::result<ForceCalculator> build_ml(json &j, std::size_t ntypes) {
   }
   const std::string dtype = desc["type"].get<std::string>();
 
-  // "symmetry_functions" is the legacy alias for "acsf".
   if (dtype == "symmetry_functions" || dtype == "acsf") {
     ACSF calc;
     calc.ntypes = ntypes;
     calc.rcut = desc.value("rcut", 6.0);
-    // G1: accept either a count ("g1": 1) or an array of empty objects.
     if (desc.contains("g1")) {
       const json &g1 = desc["g1"];
       calc.g1 = g1.is_number()  ? g1.get<std::size_t>()
@@ -530,9 +331,6 @@ leaf::result<ForceCalculator> build_ml(json &j, std::size_t ntypes) {
       return fail("ml", "acsf descriptor needs at least one of "
                         "g1/g2/g3/g4/g5");
     }
-    // Read the descriptor size BEFORE the move — argument evaluation order is
-    // unspecified, so `calc.descriptor_size()` in the call args can run after
-    // calc is moved-from.
     const std::size_t S = calc.descriptor_size();
     return finish_ml(std::move(calc), j, ntypes, S);
   }
@@ -567,8 +365,6 @@ leaf::result<ForceCalculator> build_ml(json &j, std::size_t ntypes) {
     };
     const LMBTR::Grid def_k2{0.0, calc.rcut, 50, 0.3};
     const LMBTR::Grid def_k3{-1.0, 1.0, 50, 0.1};
-    // A k-term is active when its JSON object is present (default both on if
-    // neither is given), so an empty descriptor never slips through.
     if (desc.contains("k2") || desc.contains("k3")) {
       calc.k2 = desc.contains("k2") ? std::optional(read_grid("k2", def_k2))
                                     : std::nullopt;
@@ -588,36 +384,34 @@ leaf::result<ForceCalculator> build_ml(json &j, std::size_t ntypes) {
   return fail("ml", "unknown descriptor type '" + dtype + "'");
 }
 
-// Error policy for the force-model factory: an unknown "model" string maps to
-// forcesmith's existing "unsupported model" message. (The generic
-// ForcesmithFactory lives in forcesmith/io/factory.hpp.)
-template <class IdentifierType, class AbstractProduct>
-struct UnsupportedModelError {
-  static leaf::result<AbstractProduct> OnUnknownType(const IdentifierType &id) {
-    return leaf::new_error(
-        ParseError{"unsupported model '" + std::string(id) + "'", 0});
+using Builder = leaf::result<ForceCalculator> (*)(json &, std::size_t);
+
+template <CModelFamily T> constexpr Builder builder_for() {
+  if constexpr (is_ml_family<T>) {
+    return &build_ml; // one builder for all three descriptors
+  } else if constexpr (std::same_as<T, TersoffForceCalculator>) {
+    return &build_tersoff;
+  } else if constexpr (std::same_as<T, StiwebForceCalculator>) {
+    return &build_stiweb;
+  } else {
+    return &build_tabulated<T>;
   }
-};
+}
 
-// The concrete force-model factory: "model" string → per-model builder.
-using ModelFactory =
-    ForcesmithFactory<ForceCalculator, std::string,
-                      leaf::result<ForceCalculator> (*)(json &, std::size_t),
-                      UnsupportedModelError>;
-
-const ModelFactory &model_factory() {
-  static const ModelFactory factory = [] {
-    ModelFactory f;
-    f.Register("pair", &build_pair);
-    f.Register("eam", &build_eam);
-    f.Register("adp", &build_adp);
-    f.Register("angular", &build_angular);
-    f.Register("tersoff", &build_tersoff);
-    f.Register("stiweb", &build_stiweb);
-    f.Register("ml", &build_ml);
-    return f;
-  }();
-  return factory;
+leaf::result<Builder> builder_named(std::string_view model) {
+  std::optional<Builder> found;
+  boost::mp11::mp_for_each<
+      boost::mp11::mp_transform<boost::mp11::mp_identity, ModelFamilies>>(
+      [&](auto tag) {
+        using T = typename decltype(tag)::type;
+        if (!found && model == (is_ml_family<T> ? "ml" : family_name<T>)) {
+          found = builder_for<T>();
+        }
+      });
+  if (!found) {
+    return fail("unsupported model '" + std::string(model) + "'");
+  }
+  return *found;
 }
 
 } // anonymous namespace
@@ -638,12 +432,12 @@ leaf::result<ForceCalculator> parse_force_model(std::string_view input) {
         return fail("bare pair file: " + std::to_string(count) +
                     " potentials is not a valid pair count for any ntypes");
       }
-      return build_pair(j, ntypes);
+      return build_tabulated<PairForceCalculator>(j, ntypes);
     }
 
-    const std::string model = j["model"].get<std::string>();
     const std::size_t ntypes = j.value("ntypes", std::size_t{1});
-    return model_factory().CreateObject(model, j, ntypes);
+    BOOST_LEAF_AUTO(build, builder_named(j.at("model").get<std::string>()));
+    return build(j, ntypes);
   });
 }
 

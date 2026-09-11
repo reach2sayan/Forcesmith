@@ -26,9 +26,6 @@ struct Atom;
 struct Configuration;
 class RadialPotential;
 
-// Radial-table roles a single bond can drive; indices into NeighborEntry::sites
-// (the spline-evaluation-cache hints). EAM uses the first three, the pair
-// calculator only kSitePhi, ADP all five.
 enum NeighborSiteRole : std::size_t {
   kSitePhi = 0, // pair        φ(r)
   kSiteGi,      // density     g_{t(i)}(r)
@@ -42,13 +39,6 @@ struct NeighborEntry : Serializable<NeighborEntry> {
   const Atom *neighbor = nullptr; // non-owning; restored by build_neighbor_list
   const RadialPotential *pot = nullptr; // non-owning; resolved at build time
   Vec3 dist = Vec3::Zero();
-
-  // Fit-time spline-evaluation-cache handles, one per radial-table role above:
-  // the SiteId returned by RadialPotential::prepare_site(r), or a default
-  // (none) when unset / uncacheable (caller falls back to eval/deriv(r)).
-  // Transient — same contract as `neighbor`/`pot`: populated by a
-  // ForceCalculator prepare() pass, reset on every neighbor-list rebuild (fresh
-  // entries default to none), never serialized.
   std::array<SiteId, kNeighborSiteCount> sites = {};
 };
 
@@ -63,13 +53,8 @@ struct Atom : Serializable<Atom> {
   Vec3 calc_force = Vec3::Zero(); // written by ForceCalculator
   std::vector<NeighborEntry> neighbors;
 
-  // Owning configuration. Transient: stamped by build_neighbour_list at freeze,
-  // NOT serialized — invalidated by any structural edit (which re-freezes and
-  // re-stamps). Same contract as NeighborEntry::neighbour.
   const Configuration *parent = nullptr;
 
-  // EAM/ADP scratch fields — zeroed before each force evaluation, not
-  // serialized.
   double rho = 0.0;                 // accumulated electron density
   double gradF = 0.0;               // dF/dρ (embedding energy gradient)
   Vec3 mu = Vec3::Zero();           // dipole distortion (ADP)
@@ -106,8 +91,6 @@ struct Configuration : Serializable<Configuration> {
   SymTens calc_stress = SymTens::Zero();
   double calc_limit = 0.0; // F(ρ) out-of-range penalty (RESCALE-style)
 
-  // Neighbour-list cache key; none ⇒ no valid cached list. Transient (not
-  // serialized); a structural edit changes `sig`/`pots` and forces a rebuild.
   std::optional<NeighborListKey> nl_key;
 
   [[nodiscard]] static boost::leaf::result<Configuration>
@@ -126,14 +109,14 @@ inline double force_rms(const Configuration &cfg) {
 }
 
 template <> struct Serializer<NeighborEntry> {
-  template <class Archive>
+  template <CArchive Archive>
   static void apply(Archive &ar, NeighborEntry &e, unsigned int) {
     ar & e.dist(0) & e.dist(1) & e.dist(2);
   }
 };
 
 template <> struct Serializer<Atom> {
-  template <class Archive>
+  template <CArchive Archive>
   static void apply(Archive &ar, Atom &a, unsigned int) {
     std::size_t Z = a.type.Z;
     std::size_t idx = a.type.index;
@@ -154,7 +137,7 @@ template <> struct Serializer<Atom> {
 };
 
 template <> struct Serializer<Configuration> {
-  template <class Archive>
+  template <CArchive Archive>
   static void apply(Archive &ar, Configuration &c, unsigned int) {
     ar & c.atoms & c.ref.energy & c.weight & c.name;
     Mat3 box = std::holds_alternative<PeriodicBC>(c.bc)

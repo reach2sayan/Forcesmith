@@ -9,26 +9,20 @@ namespace {
 
 int run_with_solver(std::span<Configuration> configs, ForceCalculator &model,
                     const OptimizerOptions &opts, const Solver &solver) {
-  // A one-shot (closed-form least-squares) solver on a model that is linear in
-  // its parameters (every ML head a LinearHead ⇒ has_param_jacobian()) needs
-  // the Jacobian only once, so the functor streams it per-config and skips the
-  // whole-dataset descriptor cache. Standardization needs global μ/σ that the
-  // per-config stream cannot compute, so it forces the cached path. EAM/ADP/etc.
-  // (not param-linear) keep the iterative cached path regardless of solver.
-  const bool stream_jacobian = solver.one_shot() && model.has_param_jacobian() &&
+  const bool stream_jacobian = solver.one_shot() &&
+                               model.has_param_jacobian() &&
                                !model.has_standardization();
 
-  ForcesmithFunctor functor(configs, model, opts.energy_weight, opts.stress_weight,
-                        opts.smooth_weight, stream_jacobian);
+  ForcesmithFunctor functor(configs, model, opts.energy_weight,
+                            opts.stress_weight, opts.smooth_weight,
+                            stream_jacobian);
 
   Eigen::VectorXd x(functor.inputs());
   model.gather_params(x, std::size_t{0});
 
-  // Per-parameter box constraints, aligned with x (±∞ where unbounded).
   Eigen::VectorXd lower(functor.inputs()), upper(functor.inputs());
   model.gather_bounds(lower, upper, std::size_t{0});
 
-  // Warn once if a real bound was supplied but the chosen solver ignores it.
   const bool has_finite_bound =
       lower.array().isFinite().any() || upper.array().isFinite().any();
   if (has_finite_bound && !solver.honors_bounds()) {

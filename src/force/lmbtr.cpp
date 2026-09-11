@@ -10,17 +10,12 @@ namespace forcesmith {
 
 namespace {
 
-// Per-grid Gaussian broadening constants. These depend only on the grid, so we
-// build them once per descriptor (in accumulate_k2/k3) and reuse across every
-// neighbour/pair, instead of recomputing them — and re-calling exp() for the
-// recurrence constant — on every broaden() call.
 struct GaussKernel {
-  double inv;   // 1 / (sigma * sqrt(2*pi)) — peak normalisation
-  double s2;    // 2 * sigma^2
-  double step;  // uniform grid spacing
-  double c;     // exp(-2*step^2/s2) — constant ratio of the recurrence
-  double cut;   // truncation radius (geometry units): Gaussian treated as 0
-                // beyond |grid - geom| > cut
+  double inv;  // 1 / (sigma * sqrt(2*pi)) — peak normalisation
+  double s2;   // 2 * sigma^2
+  double step; // uniform grid spacing
+  double c;    // exp(-2*step^2/s2) — constant ratio of the recurrence
+  double cut;  // truncation radius (geometry units): Gaussian treated as 0
 };
 
 GaussKernel make_kernel(const LMBTR::Grid &g) {
@@ -29,19 +24,10 @@ GaussKernel make_kernel(const LMBTR::Grid &g) {
   k.s2 = 2.0 * g.sigma * g.sigma;
   k.step = (g.n > 1) ? (g.max - g.min) / (g.n - 1) : 0.0;
   k.c = std::exp(-2.0 * k.step * k.step / k.s2);
-  // Beyond 5 sigma the unit-area Gaussian's remaining tail is ~3e-7, well below
-  // the descriptor's fitting tolerance; truncating there skips the bulk of grid
-  // points (and their mul-adds) for each broaden.
   k.cut = 5.0 * g.sigma;
   return k;
 }
 
-// Accumulate a unit-area Gaussian centred at `geom`, scaled by `w`, onto the
-// grid points of `block`. Only points within `k.cut` of `geom` are touched, and
-// the Gaussian over that uniform window is evaluated with an exact 3-term
-// recurrence (f(b+1) = f(b)*u(b), u(b+1) = u(b)*c), so just two exp() calls are
-// made regardless of window width. Result matches the per-point exp() form up to
-// floating-point rounding of the multiply chain plus the truncated tail.
 void broaden(Eigen::Ref<Eigen::VectorXd> block, const LMBTR::Grid &g,
              const GaussKernel &k, double geom, double w) {
   const double a = w * k.inv;
@@ -50,8 +36,6 @@ void broaden(Eigen::Ref<Eigen::VectorXd> block, const LMBTR::Grid &g,
     block[0] += a * std::exp(-dx * dx / k.s2);
     return;
   }
-  // Index range [b0, b1] of grid points within the truncation window, where
-  // grid(b) = g.min + b*step, so the fractional index of `geom` is below.
   const double center = (geom - g.min) / k.step;
   const double rad = k.cut / k.step;
   const int b0 = std::max(0, static_cast<int>(std::ceil(center - rad)));
@@ -59,11 +43,9 @@ void broaden(Eigen::Ref<Eigen::VectorXd> block, const LMBTR::Grid &g,
   if (b0 > b1) {
     return; // entire Gaussian falls outside the grid
   }
-  // Seed the recurrence at b0: dx(b) = (g.min + b*step) - geom.
   const double dx0 = g.min + static_cast<double>(b0) * k.step - geom;
   double f = std::exp(-dx0 * dx0 / k.s2);                              // f(b0)
-  double u =
-      std::exp(-(2.0 * dx0 * k.step + k.step * k.step) / k.s2);        // ratio
+  double u = std::exp(-(2.0 * dx0 * k.step + k.step * k.step) / k.s2); // ratio
   for (int b = b0; b <= b1; ++b) {
     block[b] += a * f;
     f *= u;
@@ -71,7 +53,6 @@ void broaden(Eigen::Ref<Eigen::VectorXd> block, const LMBTR::Grid &g,
   }
 }
 
-// Guarded L2 normalization (no-op on a (near-)zero vector).
 FORCE_INLINE void normalize_l2_inplace(Eigen::VectorXd &v) {
   const double nrm = v.norm();
   if (nrm > 1e-300) {
@@ -81,24 +62,20 @@ FORCE_INLINE void normalize_l2_inplace(Eigen::VectorXd &v) {
 
 } // namespace
 
-// ---- step: per-neighbour distance/species filter ----
 std::vector<LMBTR::Neighbor> LMBTR::collect_neighbors(const Atom &a) const {
   const std::size_t S = ntypes;
   std::vector<Neighbor> nb;
   nb.reserve(a.neighbors.size());
   for (const auto &neigh : a.neighbors) {
-    const Vec3 &d = neigh.dist;
-    const double r = d.norm();
-    const auto si = static_cast<long long>(neigh.neighbor->type.index);
-    if (r < 1e-14 || r >= rcut || si < 0 || static_cast<std::size_t>(si) >= S) {
+    const auto hit = descriptor_neighbor(neigh, rcut, S, 1e-14);
+    if (!hit) {
       continue;
     }
-    nb.emplace_back(r, d, static_cast<std::size_t>(si));
+    nb.emplace_back(hit->r, neigh.dist, hit->slot);
   }
   return nb;
 }
 
-// ---- step: k2 block (distance, per neighbour species) ----
 void LMBTR::accumulate_k2(Eigen::VectorXd &values,
                           const std::vector<Neighbor> &nb, const Grid &g,
                           const LmbtrLayout &L) const {
@@ -110,7 +87,6 @@ void LMBTR::accumulate_k2(Eigen::VectorXd &values,
   }
 }
 
-// ---- step: k3 block (cos angle, per unordered species pair) ----
 void LMBTR::accumulate_k3(Eigen::VectorXd &values,
                           const std::vector<Neighbor> &nb, const Grid &g,
                           const LmbtrLayout &L) const {
@@ -129,8 +105,6 @@ void LMBTR::accumulate_k3(Eigen::VectorXd &values,
 }
 
 DescriptorValue LMBTR::get_descriptor(const Atom &a) const {
-  // The descriptor's flat layout (block bases + per-channel offsets) lives in
-  // one place; the steps broaden into the shared values vector below.
   const LmbtrLayout L = layout();
   const std::vector<Neighbor> nb = collect_neighbors(a);
 
@@ -147,18 +121,6 @@ DescriptorValue LMBTR::get_descriptor(const Atom &a) const {
     normalize_l2_inplace(out.values);
   }
   return out;
-}
-
-std::vector<std::optional<Eigen::Index>>
-LMBTR::descriptor_index_map(const SpeciesRegistry &old_reg,
-                            const SpeciesRegistry &new_reg) const {
-  const std::size_t S_old = forcesmith::ntypes(old_reg);
-  const std::size_t S_new = forcesmith::ntypes(new_reg);
-  const auto grid_n = [](const Grid &g) { return g.n; };
-  const LmbtrLayout old_L{S_old, k2.transform(grid_n), k3.transform(grid_n)};
-  const LmbtrLayout new_L{S_new, k2.transform(grid_n), k3.transform(grid_n)};
-  return remap_layout(old_L.d_, new_L.d_, old_slot_of_new(old_reg, new_reg),
-                      S_old, S_new);
 }
 
 } // namespace forcesmith

@@ -20,15 +20,6 @@
 
 namespace forcesmith {
 
-// A chemical species: element identity (symbol / Z / mass) carried by value,
-// together with the compact 0..ntypes-1 slot used to index the dense potential
-// tables (SymmetricMatrix / TypeArray). One type does both jobs.
-//
-// The implicit conversion to std::size_t lets a Species be used anywhere a raw
-// type index is expected (data_[a.type], 1u << a.type, slot(a.type, b.type)),
-// mirroring how Param implicitly converts to double. The implicit ctor from a
-// slot lets synthetic atoms keep saying `a.type = 0` (symbol empty, identity
-// unset — only the slot matters, which is all the kernels read).
 struct Species {
   std::string_view symbol;
   std::size_t Z = 0;
@@ -74,7 +65,6 @@ using ElementCatalog = boost::multi_index_container<
             boost::multi_index::member<CatalogEntry, const std::size_t,
                                        &CatalogEntry::Z>>>>;
 
-// Single shared catalog across all TUs (inline function => one static).
 inline const ElementCatalog &catalog() {
   static const ElementCatalog t{{
       {"Ac", 89, 227.028},  {"Ag", 47, 107.868},  {"Al", 13, 26.982},
@@ -150,12 +140,6 @@ inline boost::leaf::result<Species> Species::lookup(std::string_view sym) {
                                 std::string(sym));
 }
 
-// ── SpeciesRegistry
-// The model's
-// element↔slot table: a Boost.MultiIndex container of Species with Z-sorted
-// slots (so the by_Z index *is* the slot order), queried through free functions
-// — mirroring the config_index.hpp pattern. This is the single source of truth
-// tying configurations and potential tables to the same element layout.
 namespace species_detail {
 struct by_index {};
 struct by_symbol {};
@@ -175,9 +159,6 @@ using SpeciesRegistry = bmi::multi_index_container<
             bmi::tag<species_detail::by_symbol>,
             bmi::member<Species, std::string_view, &Species::symbol>>>>;
 
-// Build from a set of element symbols: look each up in the catalog,
-// de-duplicate, sort by atomic number Z, and assign index = rank. Returns an
-// error (via leaf) on the first unknown symbol.
 [[nodiscard]] inline boost::leaf::result<SpeciesRegistry>
 build_species_registry(std::span<const std::string_view> symbols) {
   std::vector<Species> elems;
@@ -199,16 +180,10 @@ build_species_registry(std::span<const std::string_view> symbols) {
   return reg;
 }
 
-// Not constexpr: these query a boost::multi_index SpeciesRegistry
-// (size()/find() are not constexpr) and boost::leaf::result is not a literal
-// type, so none can ever be constant-evaluated — marking them constexpr is an
-// error under clang
-// (-Winvalid-constexpr / non-literal return). They remain FORCE_INLINE.
 [[nodiscard]] FORCE_INLINE std::size_t ntypes(const SpeciesRegistry &r) {
   return r.size();
 }
 
-// The Species (with assigned slot) for a given element symbol; error if absent.
 [[nodiscard]] FORCE_INLINE boost::leaf::result<Species>
 species_of(const SpeciesRegistry &r, std::string_view symbol) {
   const auto &idx = r.get<species_detail::by_symbol>();
@@ -220,7 +195,6 @@ species_of(const SpeciesRegistry &r, std::string_view symbol) {
   return *it;
 }
 
-// The Species occupying compact slot `slot`. Precondition: slot < ntypes(r).
 [[nodiscard]] FORCE_INLINE Species species_at(const SpeciesRegistry &r,
                                               std::size_t slot) {
   BOOST_ASSERT_MSG(slot < ntypes(r), "invalid species slot");
@@ -228,10 +202,6 @@ species_of(const SpeciesRegistry &r, std::string_view symbol) {
   return *idx.find(slot);
 }
 
-// For each NEW compact slot, the OLD compact slot occupied by the same element
-// (nullopt if that element is newly added). The companion of a species re-rank:
-// since both registries are Z-sorted, this captures exactly how slots shifted.
-// Used by ML model re-rank (MLBase::remap and the descriptor_index_map hooks).
 [[nodiscard]] inline std::vector<std::optional<std::size_t>>
 old_slot_of_new(const SpeciesRegistry &old_reg,
                 const SpeciesRegistry &new_reg) {

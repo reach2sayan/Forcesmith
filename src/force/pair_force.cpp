@@ -1,4 +1,7 @@
 #include "forcesmith/force/pair_force.hpp"
+#include "forcesmith/force/eval_scope.hpp"
+#include "forcesmith/force/kernels.hpp"
+#include "forcesmith/force/param_jacobian.hpp"
 
 #include "forcesmith/core/neighbor_list.hpp"
 #include "forcesmith/events/signals.hpp"
@@ -9,6 +12,7 @@
 #include <iterator>
 #include <numeric>
 #include <optional>
+#include <ranges>
 #include <utility>
 
 namespace forcesmith {
@@ -38,106 +42,24 @@ PairBond PairForceCalculator::add_pair_force(PairBond &&pb) {
 
 PairBond PairForceCalculator::accumulate_pair(Configuration &cfg,
                                               PairBond &&pb) {
-  pb.ai->calc_force += pb.force;
-  cfg.calc_energy += 0.5 * pb.phi;
-  // Virial: bond ⊗ force-on-partner = dist ⊗ (−force); 0.5 for the full list.
-  cfg.calc_stress -= 0.5 * pb.d * pb.force.transpose();
+  force::accumulate_pair(cfg, *pb.ai, pb.d, pb.force, pb.phi);
   return std::move(pb);
 }
 
-std::size_t PairForceCalculator::param_count() const {
-  const std::size_t per_pot = std::transform_reduce(
-      pair.begin(), pair.end(), std::size_t{0}, std::plus<>{},
-      [](const auto &p) { return p.param_count(); });
-  const std::size_t free_g = std::ranges::count_if(
-      globals, [](const auto &g) { return !g.value.fixed; });
-  return per_pot + free_g;
-}
-
-void PairForceCalculator::gather_params(Eigen::VectorXd &dst,
-                                        std::size_t off) const {
-  gather_range(pair, dst, off);
-  std::ranges::for_each(globals, [&](const auto &g) {
-    if (!g.value.fixed)
-      dst[off++] = g.value.value;
-  });
-}
-
-void PairForceCalculator::scatter_params(const Eigen::VectorXd &src,
-                                         std::size_t off) {
-  scatter_range(pair, src, off);
-  std::ranges::for_each(globals, [&](auto &g) {
-    if (!g.value.fixed)
-      g.value.value = src[off++];
-  });
-  broadcast_globals();
-}
-
-void PairForceCalculator::gather_bounds(Eigen::VectorXd &lo,
-                                        Eigen::VectorXd &hi,
-                                        std::size_t off) const {
-  gather_bounds_range(pair, lo, hi, off);
-  std::ranges::for_each(globals, [&](const auto &g) {
-    if (!g.value.fixed) {
-      lo[off] = g.value.min;
-      hi[off] = g.value.max;
-      ++off;
-    }
-  });
-}
-
-void PairForceCalculator::broadcast_globals() {
-  for (const auto &g : globals) {
-    for (const auto &lk : g.links) {
-      // pair calculator: region is always 0 (pair)
-      (*std::next(pair.begin(), static_cast<std::ptrdiff_t>(lk.index)))
-          .set_param(lk.param, g.value.value);
-    }
-  }
-}
-
-void PairForceCalculator::finalize_globals() {
-  for (const auto &g : globals) {
-    for (const auto &lk : g.links) {
-      (*std::next(pair.begin(), static_cast<std::ptrdiff_t>(lk.index)))
-          .set_fixed(lk.param, true);
-    }
-  }
-  broadcast_globals();
-}
-
-double PairForceCalculator::max_cutoff() const {
-  return std::transform_reduce(
-      pair.begin(), pair.end(), 0.0,
-      [](double a, double b) { return std::max(a, b); },
-      [](const auto &p) { return p.span().second; });
-}
-
 void PairForceCalculator::eval_forces(Configuration &cfg) const {
-  build_neighbor_list(cfg, max_cutoff());
-
-  cfg.calc_energy = 0.0;
-  cfg.calc_stress = SymTens::Zero();
-  std::ranges::for_each(cfg.atoms,
-                        [](auto &atom) { atom.calc_force = Vec3::Zero(); });
-
-  // Each i–j bond flows: geometry + cutoff gate → radial force → commit.
-  for (auto &atom : cfg.atoms) {
-    for (const auto &nb : atom.neighbors) {
-      make_pair_bond(atom, nb, pair[atom, *nb.neighbor])
-          .transform(add_pair_force)
-          .transform(std::bind_front(&PairForceCalculator::accumulate_pair,
-                                     std::ref(cfg)));
+  force::with_eval_scope(cfg, max_cutoff(), conf_index, [&] {
+    for (auto &atom : cfg.atoms) {
+      for (const auto &nb : atom.neighbors) {
+        make_pair_bond(atom, nb, pair[atom, *nb.neighbor])
+            .transform(add_pair_force)
+            .transform(std::bind_front(&PairForceCalculator::accumulate_pair,
+                                       std::ref(cfg)));
+      }
     }
-  }
-
-  cfg.calc_stress /= bc_volume(cfg.bc); // virial → stress (per unit volume)
-  events::on_force_eval(
-      events::ForceEvalStats{conf_index, force_rms(cfg), cfg});
+  });
 }
 
 void PairForceCalculator::prepare(std::span<Configuration> configs) const {
-  // Phase 1 — build every neighbour list in parallel (disjoint per config).
   build_all_neighbor_lists(configs, max_cutoff());
   // Phase 2 — single-threaded priming: prepare_site mutates shared spline
   // objects, so it stays serial.
@@ -145,10 +67,45 @@ void PairForceCalculator::prepare(std::span<Configuration> configs) const {
     for (Atom &ai : cfg.atoms) {
       for (NeighborEntry &nb : ai.neighbors) {
         const double r = nb.dist.norm();
-        const auto &phi_pot = pair[ai, *nb.neighbor];
-        nb.sites[kSitePhi] =
-            in_range(phi_pot, r) ? phi_pot.prepare_site(r) : SiteId{};
+        nb.sites[kSitePhi] = force::prime_site(pair[ai, *nb.neighbor], r);
       }
+    }
+  }
+}
+
+bool PairForceCalculator::has_analytic_jacobian() const {
+  return force::analytic_jacobian_available(*this);
+}
+
+void PairForceCalculator::write_param_jacobian(Configuration &cfg, int row0,
+                                               double energy_weight,
+                                               double stress_weight,
+                                               Eigen::MatrixXd &fjac) const {
+  build_neighbor_list(cfg, max_cutoff());
+  const auto cols = force::table_columns(*this);
+  const force::JacRows rows(cfg, row0, stress_weight);
+  const double inv_volume = 1.0 / bc_volume(cfg.bc);
+
+  force::Partials phi;
+  for (const auto &[i, ai] : cfg.atoms | std::views::enumerate) {
+    const int atom_row = rows.force0 + 3 * static_cast<int>(i);
+    for (const auto &nb : ai.neighbors) {
+      const double r = nb.dist.norm();
+      if (r < 1e-14) {
+        continue;
+      }
+      const Atom &aj = *nb.neighbor;
+      const auto &pot = pair[ai, aj];
+      const auto [rmin, rmax] = pot.span();
+      if (r < rmin || r >= rmax) { // exactly make_pair_bond's gate
+        continue;
+      }
+      phi.take(pot, r);
+      force::add_radial_bond(
+          fjac, rows, atom_row,
+          cols.of[0][pair_ordinal(ai.type, aj.type, pair.ntypes())], nb.dist,
+          1.0 / r, phi, 1.0, /*with_energy=*/true, energy_weight, stress_weight,
+          inv_volume);
     }
   }
 }

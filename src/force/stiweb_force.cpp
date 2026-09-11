@@ -1,6 +1,8 @@
 #include "forcesmith/force/stiweb_force.hpp"
 #include "forcesmith/core/neighbor_list.hpp"
 #include "forcesmith/events/signals.hpp"
+#include "forcesmith/force/eval_scope.hpp"
+#include "forcesmith/force/kernels.hpp"
 
 #include <cmath>
 #include <numeric>
@@ -19,9 +21,6 @@ auto sw_fields(const SWParams &p) {
                                       &p.delta, &p.a1, &p.gamma, &p.a2};
 }
 
-// SW 2-body: v2(r) = (A·r^{−p} − B·r^{−q}) exp(δ/(r − a1)), r < a1
-// Matches forcesmith stiweb_2_value. Returns {v2, dv2/dr}; both zero for r ≥
-// a1.
 std::pair<double, double> v2_dv2(double r, const SWParams &p) noexcept {
   if (r >= p.a1) {
     return {0.0, 0.0};
@@ -41,8 +40,6 @@ std::pair<double, double> v2_dv2(double r, const SWParams &p) noexcept {
   return {v2, dv2};
 }
 
-// SW 3-body radial: h(r) = exp(γ/(r − a2)), r < a2
-// Matches forcesmith stiweb_3_value. Returns {h, dh/dr}; both zero for r ≥ a2.
 std::pair<double, double> h_dh(double r, const SWParams &p) noexcept {
   if (r >= p.a2) {
     return {0.0, 0.0};
@@ -56,9 +53,6 @@ std::pair<double, double> h_dh(double r, const SWParams &p) noexcept {
   return {h, dh};
 }
 
-// 2-body pipeline
-// Each i–j bond is threaded through the stages; an empty std::optional (atoms
-// coincident) short-circuits the chain, mirroring adp/tersoff.
 struct SWPair {
   Atom *ai;                  // central atom
   const SWParams *p;         // i–j pair parameters
@@ -68,7 +62,6 @@ struct SWPair {
   Vec3 force = Vec3::Zero(); // force on i
 };
 
-// Stage 1 — geometry. Empty for coincident atoms.
 std::optional<SWPair> make_sw_pair(Atom &ai, const NeighborEntry &nb,
                                    const SWParams &p) {
   const double r = nb.dist.norm();
@@ -78,7 +71,6 @@ std::optional<SWPair> make_sw_pair(Atom &ai, const NeighborEntry &nb,
   return SWPair{&ai, &p, nb.dist, r};
 }
 
-// Stage 2 — radial force V₂′(r).
 SWPair add_pair_force(SWPair &&pf) {
   const auto [v2, dv2] = v2_dv2(pf.r, *pf.p);
   pf.v2 = v2;
@@ -86,20 +78,13 @@ SWPair add_pair_force(SWPair &&pf) {
   return std::move(pf);
 }
 
-// Stage 3 — commit energy / force / virial (0.5 for the full neighbor list).
 auto accumulate_pair(Configuration &cfg) {
   return [&cfg](SWPair &&pf) -> SWPair {
-    pf.ai->calc_force += pf.force;
-    cfg.calc_energy += 0.5 * pf.v2;
-    // Virial: bond ⊗ force-on-partner = dist ⊗ (−force); 0.5 for the full list.
-    cfg.calc_stress -= 0.5 * pf.d * pf.force.transpose();
+    force::accumulate_pair(cfg, *pf.ai, pf.d, pf.force, pf.v2);
     return std::move(pf);
   };
 }
 
-// 3-body pipeline
-// Per-(i,j) bond: h(r₁), h′(r₁) are built once and reused for every k. An empty
-// std::optional short-circuits the chain (atoms coincident or h underflows).
 struct SWJBond {
   Atom *ai;           // central atom
   const Atom *aj;     // neighbor j
@@ -119,7 +104,6 @@ struct SWTriplet {
   double c = 0.0, w = 0.0, dw = 0.0; // cosθ and angular term
 };
 
-// Build the i–j bond. Empty when i,j coincide or h(r₁) underflows.
 std::optional<SWJBond> make_jbond(Atom &ai, const NeighborEntry &nb_j,
                                   const SWParams &p_ij) {
   const Vec3 &d1 = nb_j.dist;
@@ -136,8 +120,6 @@ std::optional<SWJBond> make_jbond(Atom &ai, const NeighborEntry &nb_j,
       dh1};
 }
 
-// Build the (i, j, k) triplet from a bond. Empty when k coincides with i or
-// h(r₂) underflows.
 std::optional<SWTriplet> make_triplet(const SWJBond &jb,
                                       const NeighborEntry &nb_k,
                                       const SWParams &p_ik, double lambda) {
@@ -153,7 +135,6 @@ std::optional<SWTriplet> make_triplet(const SWJBond &jb,
   return SWTriplet{jb, nb_k.neighbor, d2, r2, 1.0 / r2, h2, dh2, lambda};
 }
 
-// Stage — angular term w(c) = λ (c + 1/3)²,  w'(c) = 2λ (c + 1/3).
 SWTriplet add_angular(SWTriplet &&t) {
   t.c = t.jb.d1.dot(t.d2) * t.jb.inv_r1 * t.inv_r2;
   const double cp13 = t.c + 1.0 / 3.0; // c + 1/3
@@ -162,14 +143,6 @@ SWTriplet add_angular(SWTriplet &&t) {
   return std::move(t);
 }
 
-// Stage — commit triplet energy, the three force vectors, and virial.
-//
-// Force gradient derivation (d1 = r_j−r_i, d2 = r_k−r_i, c = cosθ):
-//   Ac = c/r1² − 1/(r1 r2),  Bc = c/r2² − 1/(r1 r2)
-//
-//   F_i = (dh1/r1 · h2 · w) d1 + (h1 · dh2/r2 · w) d2 − h1·h2·w' (Ac d1 + Bc
-//   d2) F_j = −(dh1/r1 · h2 · w) d1 − h1·h2·w' (d2/(r1r2) − c·d1/r1²) F_k =
-//   −(h1 · dh2/r2 · w) d2 − h1·h2·w' (d1/(r1r2) − c·d2/r2²)
 auto accumulate_three_body(Configuration &cfg) {
   return [&cfg](SWTriplet &&t) -> SWTriplet {
     const SWJBond &jb = t.jb;
@@ -182,27 +155,11 @@ auto accumulate_three_body(Configuration &cfg) {
 
     cfg.calc_energy += h1 * h2 * w;
 
-    const double inv_r1r2 = inv_r1 * inv_r2;
-    const double Ac = c * inv_r1 * inv_r1 - inv_r1r2;
-    const double Bc = c * inv_r2 * inv_r2 - inv_r1r2;
-
-    const Vec3 fi = (dh1 * inv_r1 * h2 * w) * d1 +
-                    (h1 * dh2 * inv_r2 * w) * d2 -
-                    (h1 * h2 * dw) * (Ac * d1 + Bc * d2);
-
-    const Vec3 fj = -(dh1 * inv_r1 * h2 * w) * d1 -
-                    (h1 * h2 * dw) * (inv_r1r2 * d2 - c * inv_r1 * inv_r1 * d1);
-
-    const Vec3 fk = -(h1 * dh2 * inv_r2 * w) * d2 -
-                    (h1 * h2 * dw) * (inv_r1r2 * d1 - c * inv_r2 * inv_r2 * d2);
-
-    jb.ai->calc_force += fi;
-    const_cast<Atom &>(*jb.aj).calc_force += fj;
-    const_cast<Atom &>(*t.ak).calc_force += fk;
-
-    // Virial: bond ⊗ force-on-partner (fj, fk are applied to atoms j, k).
-    cfg.calc_stress += d1 * fj.transpose();
-    cfg.calc_stress += d2 * fk.transpose();
+    force::accumulate_triplet(
+        cfg, *jb.ai, const_cast<Atom &>(*jb.aj), const_cast<Atom &>(*t.ak), d1,
+        d2,
+        force::three_body_forces(d1, d2, inv_r1, inv_r2, c, h1, dh1, h2, dh2, w,
+                                 dw));
     return std::move(t);
   };
 }
@@ -282,52 +239,35 @@ double StiwebForceCalculator::max_cutoff() const {
 }
 
 void StiwebForceCalculator::eval_forces(Configuration &cfg) const {
-  build_neighbor_list(cfg, max_cutoff());
-
-  cfg.calc_energy = 0.0;
-  cfg.calc_stress = SymTens::Zero();
-  std::ranges::for_each(cfg.atoms,
-                        [](auto &a) { a.calc_force = Vec3::Zero(); });
-
-  // 2-body loop
-  // Full neighbour list: each pair counted twice, factor 0.5 per entry. Each
-  // i–j bond flows: geometry → radial force → commit.
-  for (auto &ai : cfg.atoms) {
-    for (const auto &nb : ai.neighbors) {
-      make_sw_pair(ai, nb, params[ai.type, nb.neighbor->type])
-          .transform(add_pair_force)
-          .transform(accumulate_pair(cfg));
-    }
-  }
-
-  // 3-body loop
-  // For each central atom i, iterate ordered pairs (j < k) of its neighbors.
-  // E_ijk = h(r_ij) × h(r_ik) × w(cos θ_jik). The i–j bond (h₁, h₁′) is built
-  // once per j and reused for every k; an empty bond short-circuits the inner
-  // loop. Each triplet then flows: angular term → commit.
-  for (auto &ai : cfg.atoms) {
-    const auto &nbs = ai.neighbors;
-    const std::size_t nn = nbs.size();
-    const std::size_t ti = ai.type;
-
-    for (std::size_t jj = 0; jj < nn; ++jj) {
-      auto jb = make_jbond(ai, nbs[jj], params[ti, nbs[jj].neighbor->type]);
-      if (!jb) {
-        continue;
-      }
-
-      for (std::size_t kk = jj + 1; kk < nn; ++kk) {
-        const std::size_t tk = nbs[kk].neighbor->type;
-        make_triplet(*jb, nbs[kk], params[ti, tk], lambda_at(ti, jb->tj, tk))
-            .transform(add_angular)
-            .transform(accumulate_three_body(cfg));
+  force::with_eval_scope(cfg, max_cutoff(), conf_index, [&] {
+    for (auto &ai : cfg.atoms) {
+      for (const auto &nb : ai.neighbors) {
+        make_sw_pair(ai, nb, params[ai.type, nb.neighbor->type])
+            .transform(add_pair_force)
+            .transform(accumulate_pair(cfg));
       }
     }
-  }
 
-  cfg.calc_stress /= bc_volume(cfg.bc); // virial → stress (per unit volume)
-  events::on_force_eval(
-      events::ForceEvalStats{conf_index, force_rms(cfg), cfg});
+    for (auto &ai : cfg.atoms) {
+      const auto &nbs = ai.neighbors;
+      const std::size_t nn = nbs.size();
+      const std::size_t ti = ai.type;
+
+      for (std::size_t jj = 0; jj < nn; ++jj) {
+        auto jb = make_jbond(ai, nbs[jj], params[ti, nbs[jj].neighbor->type]);
+        if (!jb) {
+          continue;
+        }
+
+        for (std::size_t kk = jj + 1; kk < nn; ++kk) {
+          const std::size_t tk = nbs[kk].neighbor->type;
+          make_triplet(*jb, nbs[kk], params[ti, tk], lambda_at(ti, jb->tj, tk))
+              .transform(add_angular)
+              .transform(accumulate_three_body(cfg));
+        }
+      }
+    }
+  });
 }
 
 } // namespace forcesmith

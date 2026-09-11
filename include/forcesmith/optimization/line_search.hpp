@@ -14,10 +14,6 @@ struct LinSearchOptions {
 };
 
 namespace detail {
-// Function-object backing the `linmin` niebloid. Minimises 0.5*||F(x +
-// α·dir)||² over α ≥ 0 via golden-ratio bracketing +
-// boost::math::tools::brent_find_minima. Updates x in place (x += α*·dir) and
-// returns the optimal α found.
 struct linmin_fn {
   double
   operator()(Eigen::VectorXd &x, const Eigen::VectorXd &dir,

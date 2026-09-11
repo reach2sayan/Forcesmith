@@ -256,3 +256,193 @@ TEST(AnalyticFunctions, DoubleMorse_MinimumEnergy) {
     // V(2.0) = -D1 - D2 + C = -1 - 1 + 0 = -2.
     EXPECT_NEAR(dm.eval(2.0), -2.0, 1e-14);
 }
+
+// ── Independent value oracle for every form ──────────────────────────────────
+// The FD tests above check that deriv agrees with eval; they cannot catch a
+// form whose EXPRESSION was transcribed wrongly, because both sides would be
+// wrong together. This test pins the value side against the reference formula
+// written out independently here — the shape the hand-written kernels had
+// before the expressions became symbolic. Any drift in a form's maths, or in
+// the order its parameters are read, fails here.
+
+namespace {
+
+// |a - b| <= rtol·|b| — bit-equality is not required (a symbolic expression may
+// associate operands differently), agreement to 1e-12 relative is.
+void expect_value(double got, double want, const char *what, double r) {
+    EXPECT_NEAR(got, want, 1e-12 * std::abs(want) + 1e-300)
+        << what << " at r=" << r;
+}
+
+// The reference cutoffs, as the branch-free forms replaced them.
+double ref_fc(double r, double R, double S) {
+    if (r <= R) return 1.0;
+    if (r >= S) return 0.0;
+    return 0.5 + 0.5 * std::cos(M_PI * (r - R) / (S - R));
+}
+double ref_sc(double r, double r0, double h) {
+    if (r >= r0) return 0.0;
+    const double u = (r - r0) / h, u4 = (u * u) * (u * u);
+    return u4 / (1.0 + u4);
+}
+
+} // namespace
+
+TEST(AnalyticFunctions, EveryFormMatchesItsReferenceFormula) {
+    for (double r : {1.4, 2.05, 2.9}) {
+        {   LennardJones f(0.7, 1.9, 0.5, 6.0);
+            const double sr6 = std::pow(1.9 / r, 6);
+            expect_value(f.eval(r), 4.0 * 0.7 * (sr6 * sr6 - sr6), "lj", r); }
+        {   Morse f(0.35, 1.4, 2.6, 0.5, 6.0);
+            const double e = std::exp(-1.4 * (r - 2.6));
+            expect_value(f.eval(r), 0.35 * (1.0 - e) * (1.0 - e) - 0.35, "morse", r); }
+        {   Buckingham f(500.0, 0.3, 2.0, 0.5, 6.0);
+            const double x = (0.3 * 0.3) / (r * r);
+            expect_value(f.eval(r), 500.0 * std::exp(-r / 0.3) - 2.0 * x * x * x,
+                         "buckingham", r); }
+        {   Born f(0.4, 2.1, 3.2, 1.7, 2.4, 0.5, 6.0);
+            const double r2 = r * r, r6 = r2 * r2 * r2, r8 = r6 * r2;
+            expect_value(f.eval(r), 0.4 * std::exp((3.2 - r) / 2.1) - 1.7 / r6 + 2.4 / r8,
+                         "born", r); }
+        {   PowerDecay f(1.3, 2.4, 0.5, 6.0);
+            expect_value(f.eval(r), 1.3 / std::pow(r, 2.4), "power_decay", r); }
+        {   ExpDecay f(4.2, 1.1, 0.5, 6.0);
+            expect_value(f.eval(r), 4.2 * std::exp(-1.1 * r), "exp_decay", r); }
+        {   MexpDecay f(0.9, 1.2, 2.0, 0.5, 6.0);
+            expect_value(f.eval(r), 0.9 * std::exp(-1.2 * (r - 2.0)), "mexp_decay", r); }
+        {   Harmonic f(0.6, 2.2, 0.5, 6.0);
+            expect_value(f.eval(r), 0.6 * (r - 2.2) * (r - 2.2), "harmonic", r); }
+        {   Universal f(1.4, 1.1, 2.3, 0.2, 0.5, 6.0);
+            const double E0 = 1.4, a = 1.1, b = 2.3, c = 0.2;
+            expect_value(f.eval(r),
+                         E0 * (b / (b - a) * std::pow(r, a) - a / (b - a) * std::pow(r, b)) + c * r,
+                         "universal", r); }
+        {   Eopp f(15.0, 6.0, 5.0, 3.0, 2.5, 3.0, 0.5, 6.0);
+            expect_value(f.eval(r),
+                         15.0 / std::pow(r, 6.0) + (5.0 / std::pow(r, 3.0)) * std::cos(2.5 * r + 3.0),
+                         "eopp", r); }
+        {   EoppExp f(12.0, 1.3, 5.0, 3.0, 2.5, 3.0, 0.5, 6.0);
+            expect_value(f.eval(r),
+                         12.0 * std::exp(-1.3 * r) + (5.0 / std::pow(r, 3.0)) * std::cos(2.5 * r + 3.0),
+                         "eopp_exp", r); }
+        {   Meopp f(15.0, 6.0, 5.0, 3.0, 2.5, 3.0, 0.4, 0.5, 6.0);
+            expect_value(f.eval(r),
+                         15.0 / std::pow(r - 0.4, 6.0) + (5.0 / std::pow(r, 3.0)) * std::cos(2.5 * r + 3.0),
+                         "meopp", r); }
+        {   GenLJ f(0.8, 12.0, 6.0, 2.4, 0.1, 0.5, 6.0);
+            const double A = 0.8, n = 12.0, m = 6.0, r0 = 2.4, B = 0.1, x = r / r0;
+            expect_value(f.eval(r),
+                         A / (m - n) * (m * std::pow(x, -n) - n * std::pow(x, -m)) + B,
+                         "gen_lj", r); }
+        {   DoubleMorse f(0.4, 1.3, 2.2, 0.2, 2.1, 2.9, 0.05, 0.5, 6.0);
+            const double e1 = std::exp(-1.3 * (r - 2.2)), e2 = std::exp(-2.1 * (r - 2.9));
+            expect_value(f.eval(r),
+                         0.4 * ((1.0 - e1) * (1.0 - e1) - 1.0) +
+                             0.2 * ((1.0 - e2) * (1.0 - e2) - 1.0) + 0.05,
+                         "double_morse", r); }
+        {   DoubleExp f(0.7, 1.9, 2.3, 1.4, 2.0, 0.5, 6.0);
+            const double dr = r - 2.3;
+            expect_value(f.eval(r),
+                         0.7 * std::exp(-1.9 * dr * dr) + std::exp(-1.4 * (r - 2.0)),
+                         "double_exp", r); }
+        {   Mishin f(0.9, 1.6, 0.05, 1.0, 2.0, 1.3, 0.5, 6.0);
+            const double z = r - 1.0, e = std::exp(-1.3 * z);
+            expect_value(f.eval(r), 0.9 * std::pow(z, 2.0) * e * (1.0 + 1.6 * e) + 0.05,
+                         "mishin", r); }
+        {   SqrtFunc f(0.8, 2.0, 0.5, 6.0);
+            expect_value(f.eval(r), 0.8 * std::sqrt(r / 2.0), "sqrt", r); }
+        {   ConstFunc f(-7.42, 0.5, 6.0);
+            expect_value(f.eval(r), -7.42, "const", r); }
+        {   Parabola f(1.1, -6.0, 10.0, 0.5, 6.0);
+            expect_value(f.eval(r), 1.1 * r * r - 6.0 * r + 10.0, "parabola", r); }
+        {   Poly5 f(0.3, 1.1, -0.4, 0.2, -0.05, 0.5, 6.0);
+            const double s = r - 1.0, s2 = s * s;
+            expect_value(f.eval(r),
+                         0.3 + 0.5 * 1.1 * s2 + (-0.4) * s * s2 + 0.2 * s2 * s2 +
+                             (-0.05) * s2 * s2 * s,
+                         "poly5", r); }
+        {   StiwWeb2 f(7.0, 0.6, 4.0, 0.0, 1.2, 3.5, 0.5, 6.0);
+            const double poly = 7.0 * std::pow(r, -4.0) - 0.6 * std::pow(r, -0.0);
+            expect_value(f.eval(r), poly * std::exp(1.2 / (r - 3.5)), "stiweb_2", r); }
+        {   StiwWeb3 f(1.2, 3.5, 0.5, 6.0);
+            expect_value(f.eval(r), std::exp(1.2 / (r - 3.5)), "stiweb_3", r); }
+        {   TersoffPot f(1830.8, 471.18, 2.4799, 1.7322, 1.1e-6, 0.78734,
+                         100390.0, 16.217, -0.59825, 2.7, 3.0, 0.5, 6.0);
+            expect_value(f.eval(r),
+                         ref_fc(r, 2.7, 3.0) *
+                             (1830.8 * std::exp(-2.4799 * r) - 471.18 * std::exp(-1.7322 * r)),
+                         "tersoff", r); }
+        {   TersoffMix f(0.9, 1.4, 0.5, 6.0);
+            expect_value(f.eval(r), 0.9 * std::exp(-1.4 * r), "tersoff_mix", r); }
+        {   TersoffModPot f(std::array<double, 16>{1830.8, 471.18, 2.4799, 1.7322, 1.1e-6,
+                                                   0.78734, 100390.0, 16.217, -0.59825,
+                                                   2.7, 3.0, 0.01, -0.02, 0.003, -0.0004, 0.00005},
+                            0.5, 6.0);
+            const double r2 = r * r, r3 = r2 * r, r4 = r3 * r, r5 = r4 * r;
+            const double corr = 1.0 + 0.01 * r - 0.02 * r2 + 0.003 * r3 - 0.0004 * r4 + 0.00005 * r5;
+            expect_value(f.eval(r),
+                         ref_fc(r, 2.7, 3.0) *
+                             (1830.8 * std::exp(-2.4799 * r) - 471.18 * std::exp(-1.7322 * r)) * corr,
+                         "tersoff_mod", r); }
+        {   Kawamura f(1.2, -0.8, 3.0, 1.1, 0.9, 0.15, 0.12, 2.0, 1.5, 0.5, 6.0);
+            const double s = 0.15 + 0.12, t = 1.1 + 0.9;
+            expect_value(f.eval(r),
+                         1.2 * -0.8 / r + 3.0 * s * std::exp((t - r) / s) -
+                             2.0 * 1.5 / std::pow(r, 6.0),
+                         "kawamura", r); }
+        {   KawamuraMix f(std::array<double, 12>{1.2, -0.8, 3.0, 1.1, 0.9, 0.15, 0.12,
+                                                 2.0, 1.5, 0.4, 1.3, 2.2},
+                          0.5, 6.0);
+            const double s = 0.15 + 0.12, t = 1.1 + 0.9, w = r - 2.2;
+            expect_value(f.eval(r),
+                         1.2 * -0.8 / r + 3.0 * s * std::exp((t - r) / s) -
+                             2.0 * 1.5 / std::pow(r, 6.0) +
+                             3.0 * 0.4 * (std::exp(-2.0 * 1.3 * w) - 2.0 * std::exp(-1.3 * w)),
+                         "kawamura_mix", r); }
+        {   Softshell f(1.7, 3.0, 0.5, 6.0);
+            expect_value(f.eval(r), std::pow(1.7 / r, 3.0), "softshell", r); }
+        {   ExpPlus f(4.2, 1.1, -0.3, 0.5, 6.0);
+            expect_value(f.eval(r), 4.2 * std::exp(-1.1 * r) - 0.3, "exp_plus", r); }
+        {   Strmm f(1.5, -0.5, 0.1, 1.5, 0.2, 0.5, 6.0);
+            const double s = r - 0.2;
+            expect_value(f.eval(r),
+                         2.0 * 1.5 * std::exp(-(-0.5) / 2.0 * s) -
+                             0.1 * (1.0 + 1.5 * s) * std::exp(-1.5 * s),
+                         "strmm", r); }
+
+        // The `_sc` wrapper: base value times the switching factor at rmax.
+        {   LennardJonesSC f(0.7, 1.9, 1.0, 0.5, 6.0);
+            const double sr6 = std::pow(1.9 / r, 6);
+            expect_value(f.eval(r), 4.0 * 0.7 * (sr6 * sr6 - sr6) * ref_sc(r, 6.0, 1.0),
+                         "lj_sc", r); }
+        {   MorseSC f(0.35, 1.4, 2.6, 1.0, 0.5, 6.0);
+            const double e = std::exp(-1.4 * (r - 2.6));
+            expect_value(f.eval(r), (0.35 * (1.0 - e) * (1.0 - e) - 0.35) * ref_sc(r, 6.0, 1.0),
+                         "morse_sc", r); }
+        {   ExpDecaySC f(4.2, 1.1, 1.0, 0.5, 6.0);
+            expect_value(f.eval(r), 4.2 * std::exp(-1.1 * r) * ref_sc(r, 6.0, 1.0),
+                         "exp_decay_sc", r); }
+        {   EoppSC f(15.0, 6.0, 5.0, 3.0, 2.5, 3.0, 1.0, 0.5, 6.0);
+            expect_value(f.eval(r),
+                         (15.0 / std::pow(r, 6.0) +
+                          (5.0 / std::pow(r, 3.0)) * std::cos(2.5 * r + 3.0)) *
+                             ref_sc(r, 6.0, 1.0),
+                         "eopp_sc", r); }
+    }
+}
+
+// The cutoff pieces the branch-free expressions replaced: identical inside the
+// switching region and exactly flat outside it.
+TEST(AnalyticFunctions, TersoffCutoffMatchesThePiecewiseForm) {
+    TersoffPot f(1830.8, 471.18, 2.4799, 1.7322, 1.1e-6, 0.78734, 100390.0,
+                 16.217, -0.59825, 2.7, 3.0, 0.5, 6.0);
+    const auto pair = [](double r) {
+        return 1830.8 * std::exp(-2.4799 * r) - 471.18 * std::exp(-1.7322 * r);
+    };
+    for (double r : {1.0, 2.69, 2.7, 2.8, 2.9, 3.0, 3.01, 4.0}) {
+        expect_value(f.eval(r), ref_fc(r, 2.7, 3.0) * pair(r), "tersoff cutoff", r);
+    }
+    EXPECT_DOUBLE_EQ(f.eval(3.5), 0.0);   // beyond S
+    EXPECT_DOUBLE_EQ(f.deriv(3.5), 0.0);
+    EXPECT_DOUBLE_EQ(f.eval(2.5), pair(2.5)); // below R: fc == 1 exactly
+}

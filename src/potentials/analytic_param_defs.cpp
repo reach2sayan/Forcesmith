@@ -1,50 +1,75 @@
 #include "forcesmith/potentials/analytic_param_defs.hpp"
 
+#include "forcesmith/potentials/analytic_potential.hpp"
+
+#include <boost/mp11/algorithm.hpp>
+
 #include <array>
+#include <cstddef>
+#include <utility>
+#include <vector>
 
 namespace forcesmith {
 
 namespace {
 
-// One AnalyticParamDef per row of a table macro.
-#define FORCESMITH_APD_AS_DEF(tok, v, lo, hi)                                  \
-  AnalyticParamDef{BOOST_PP_STRINGIZE(tok), (v), (lo), (hi)},
+template <CAnalyticForm T> const std::vector<AnalyticParamDef> &defs_of() {
+  static const std::vector<AnalyticParamDef> v = [] {
+    std::vector<AnalyticParamDef> out;
+    out.reserve(T::num_params);
+    for (std::size_t i = 0; i < T::num_params; ++i) {
+      out.push_back(AnalyticParamDef{T::param_names[i], T::defaults[i].value,
+                                     T::defaults[i].min, T::defaults[i].max});
+    }
+    return out;
+  }();
+  return v;
+}
 
-// One entry per function: its canonical "type" name and the static array of
-// its parameter defaults — both generated from the single macro table, so they
-// stay in lockstep with the reader registry's names.
-struct Entry {
-  std::string_view name;
+struct Row {
+  std::string_view name; // canonical name or alias
   std::span<const AnalyticParamDef> defaults;
 };
 
-#define FORCESMITH_APD_DEFINE_ARRAY(fn, TABLE)                                 \
-  inline constexpr std::array fn##_defs{TABLE(FORCESMITH_APD_AS_DEF)};
+const std::vector<Row> &table() {
+  static const std::vector<Row> rows = [] {
+    std::vector<Row> out;
+    boost::mp11::mp_for_each<
+        boost::mp11::mp_transform<boost::mp11::mp_identity, AnalyticForms>>(
+        [&](auto tag) {
+          using T = typename decltype(tag)::type;
+          for (std::string_view n : T::names) {
+            if (!n.empty()) {
+              out.push_back(Row{n, defs_of<T>()});
+            }
+          }
+        });
+    return out;
+  }();
+  return rows;
+}
 
-FORCESMITH_ANALYTIC_FUNCTIONS(FORCESMITH_APD_DEFINE_ARRAY)
-
-#define FORCESMITH_APD_TABLE_ENTRY(fn, TABLE)                                  \
-  Entry{BOOST_PP_STRINGIZE(fn), fn##_defs},
-
-inline constexpr std::array kTable{
-    FORCESMITH_ANALYTIC_FUNCTIONS(FORCESMITH_APD_TABLE_ENTRY)};
 } // namespace
 
 std::span<const AnalyticParamDef> analytic_defaults(std::string_view function) {
-  for (const Entry &e : kTable) {
-    if (e.name == function) {
-      return e.defaults;
-    }
-  }
-  return {};
+  const auto &tab = table();
+  auto iter = std::ranges::find(tab, function, &Row::name);
+  return iter == tab.end() ? std::span<const AnalyticParamDef>{}
+                           : iter->defaults;
 }
 
 std::span<const std::string_view> analytic_default_functions() {
-#define FORCESMITH_APD_TABLE_NAME(fn, TABLE)                                   \
-  std::string_view{BOOST_PP_STRINGIZE(fn)},
-  static constexpr std::array kNames{
-      FORCESMITH_ANALYTIC_FUNCTIONS(FORCESMITH_APD_TABLE_NAME)};
-  return kNames;
+  static const std::vector<std::string_view> names = [] {
+    std::vector<std::string_view> out;
+    boost::mp11::mp_for_each<
+        boost::mp11::mp_transform<boost::mp11::mp_identity, AnalyticForms>>(
+        [&](auto tag) {
+          using T = typename decltype(tag)::type;
+          out.push_back(T::names.front()); // the canonical name
+        });
+    return out;
+  }();
+  return names;
 }
 
 } // namespace forcesmith

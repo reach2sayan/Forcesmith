@@ -1,16 +1,16 @@
 #include "forcesmith/io/potential_reader.hpp"
 
-#include "forcesmith/io/factory.hpp"
-#include "forcesmith/io/json_util.hpp"
-#include "forcesmith/potentials/analytic_param_defs.hpp"
+#include "forcesmith/core/json.hpp"
+#include "forcesmith/io/file.hpp"
 #include "forcesmith/potentials/analytic_potential.hpp"
 #include "forcesmith/potentials/spline.hpp"
 
 #include <boost/leaf/error.hpp>
+#include <boost/mp11/algorithm.hpp>
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
-#include <fstream>
+#include <array>
 #include <functional>
 #include <iterator>
 #include <limits>
@@ -36,80 +36,44 @@ struct Entry {
 };
 using Registry = std::unordered_map<std::string_view, Entry>;
 
-template <typename... Names>
-  requires(std::convertible_to<Names, std::string_view> && ...)
-void add(Registry &reg, int nparams, std::vector<std::string> pnames,
-         RadialPotentialMaker maker, Names... names) {
-  Entry e{nparams, std::move(pnames), std::move(maker)};
-  (reg.try_emplace(std::string_view{names}, e), ...);
-}
-
-template <std::size_t N>
-std::array<double, N> to_arr(std::span<const double> p) {
-  std::array<double, N> a{};
-  std::ranges::copy_n(p.begin(), static_cast<std::ptrdiff_t>(N), a.begin());
-  return a;
-}
-
 const Registry &registry() {
   static const Registry reg = [] {
     Registry m;
     m.reserve(64);
-
-    // clang-format off
-    add(m,  2, FORCESMITH_PARAM_NAME_LIST(FORCESMITH_APD_lj),                                                          [](auto p, auto lo, auto hi) { return RadialPotential(LennardJones(p[0], p[1],                                      lo, hi)); }, "pair_lj",     "lj"         );
-    add(m,  3, FORCESMITH_PARAM_NAME_LIST(FORCESMITH_APD_morse),                                                              [](auto p, auto lo, auto hi) { return RadialPotential(Morse(p[0], p[1], p[2],                                       lo, hi)); }, "morse"                      );
-    add(m,  3, FORCESMITH_PARAM_NAME_LIST(FORCESMITH_APD_buckingham),                                                              [](auto p, auto lo, auto hi) { return RadialPotential(Buckingham(p[0], p[1], p[2],                                  lo, hi)); }, "buckingham",  "buck"        );
-    add(m,  5, FORCESMITH_PARAM_NAME_LIST(FORCESMITH_APD_born),                                                        [](auto p, auto lo, auto hi) { return RadialPotential(Born(p[0], p[1], p[2], p[3], p[4],                           lo, hi)); }, "born"                       );
-    add(m,  2, FORCESMITH_PARAM_NAME_LIST(FORCESMITH_APD_power_decay),                                                                    [](auto p, auto lo, auto hi) { return RadialPotential(PowerDecay(p[0], p[1],                                        lo, hi)); }, "power_decay", "power"       );
-    add(m,  2, FORCESMITH_PARAM_NAME_LIST(FORCESMITH_APD_exp_decay),                                                                    [](auto p, auto lo, auto hi) { return RadialPotential(ExpDecay(p[0], p[1],                                          lo, hi)); }, "exp_decay",   "exp"         );
-    add(m,  3, FORCESMITH_PARAM_NAME_LIST(FORCESMITH_APD_mexp_decay),                                                               [](auto p, auto lo, auto hi) { return RadialPotential(MexpDecay(p[0], p[1], p[2],                                   lo, hi)); }, "mexp_decay",  "mexp"        );
-    add(m,  2, FORCESMITH_PARAM_NAME_LIST(FORCESMITH_APD_harmonic),                                                                   [](auto p, auto lo, auto hi) { return RadialPotential(Harmonic(p[0], p[1],                                          lo, hi)); }, "harmonic"                   );
-    add(m,  4, FORCESMITH_PARAM_NAME_LIST(FORCESMITH_APD_universal),                                                           [](auto p, auto lo, auto hi) { return RadialPotential(Universal(p[0], p[1], p[2], p[3],                             lo, hi)); }, "universal"                  );
-    add(m,  6, FORCESMITH_PARAM_NAME_LIST(FORCESMITH_APD_eopp),                                                  [](auto p, auto lo, auto hi) { return RadialPotential(Eopp(p[0], p[1], p[2], p[3], p[4], p[5],                     lo, hi)); }, "eopp"                       );
-    add(m,  6, {"A","B","C","m","k","phi"},                                                  [](auto p, auto lo, auto hi) { return RadialPotential(EoppExp(p[0], p[1], p[2], p[3], p[4], p[5],                  lo, hi)); }, "eopp_exp",    "eopp_exp_"   );
-    add(m,  7, {"A","n","B","m","k","phi","r0"},                                             [](auto p, auto lo, auto hi) { return RadialPotential(Meopp(p[0], p[1], p[2], p[3], p[4], p[5], p[6],              lo, hi)); }, "meopp"                      );
-    add(m,  5, {"A","n","m","r0","B"},                                                       [](auto p, auto lo, auto hi) { return RadialPotential(GenLJ(p[0], p[1], p[2], p[3], p[4],                          lo, hi)); }, "gen_lj",      "genlj"       );
-    add(m,  7, {"D1","a1","r1","D2","a2","r2","C"},                                          [](auto p, auto lo, auto hi) { return RadialPotential(DoubleMorse(p[0], p[1], p[2], p[3], p[4], p[5], p[6],        lo, hi)); }, "double_morse","dbl_morse"   );
-    add(m,  5, {"A","B","r1","C","r2"},                                                      [](auto p, auto lo, auto hi) { return RadialPotential(DoubleExp(p[0], p[1], p[2], p[3], p[4],                      lo, hi)); }, "double_exp",  "dbl_exp"     );
-    add(m,  6, {"A","B","C","r0","n","d"},                                                   [](auto p, auto lo, auto hi) { return RadialPotential(Mishin(p[0], p[1], p[2], p[3], p[4], p[5],                   lo, hi)); }, "mishin"                     );
-    add(m,  2, FORCESMITH_PARAM_NAME_LIST(FORCESMITH_APD_sqrt),                                                                    [](auto p, auto lo, auto hi) { return RadialPotential(SqrtFunc(p[0], p[1],                                          lo, hi)); }, "sqrt"                       );
-    add(m,  1, FORCESMITH_PARAM_NAME_LIST(FORCESMITH_APD_const),                                                                        [](auto p, auto lo, auto hi) { return RadialPotential(ConstFunc(p[0],                                               lo, hi)); }, "const"                      );
-    add(m,  3, FORCESMITH_PARAM_NAME_LIST(FORCESMITH_APD_parabola),                                                                [](auto p, auto lo, auto hi) { return RadialPotential(Parabola(p[0], p[1], p[2],                                   lo, hi)); }, "parabola"                   );
-    add(m,  5, {"a0","a1","a2","a3","a4"},                                                   [](auto p, auto lo, auto hi) { return RadialPotential(Poly5(p[0], p[1], p[2], p[3], p[4],                          lo, hi)); }, "poly5"                      );
-    add(m,  6, {"A","B","p","q","delta","rc"},                                               [](auto p, auto lo, auto hi) { return RadialPotential(StiwWeb2(p[0], p[1], p[2], p[3], p[4], p[5],                 lo, hi)); }, "stiweb_2",    "sw2"         );
-    add(m,  2, {"gamma","a"},                                                                [](auto p, auto lo, auto hi) { return RadialPotential(StiwWeb3(p[0], p[1],                                          lo, hi)); }, "stiweb_3",    "sw3"         );
-    add(m, 11, {"A","B","lambda","mu","beta","n","c","d","h","R","S"},                        [](auto p, auto lo, auto hi) { return RadialPotential(TersoffPot(p[0], p[1], p[2], p[3], p[4], p[5], p[6], p[7], p[8], p[9], p[10], lo, hi)); }, "tersoff", "tersoff_pot");
-    add(m,  2, {"chi","omega"},                                                              [](auto p, auto lo, auto hi) { return RadialPotential(TersoffMix(p[0], p[1],                                        lo, hi)); }, "tersoff_mix"                );
-    add(m, 16, {"A","B","lambda","mu","beta","n","c","d","h","R","S","c1","c2","c3","c4","c5"}, [](auto p, auto lo, auto hi) { return RadialPotential(TersoffModPot(to_arr<16>(p),                               lo, hi)); }, "tersoff_mod", "tmod"        );
-    add(m,  9, {"A","B","C","D","E","F","G","H","I"},                                        [](auto p, auto lo, auto hi) { return RadialPotential(Kawamura(p[0], p[1], p[2], p[3], p[4], p[5], p[6], p[7], p[8], lo, hi)); }, "kawamura"                 );
-    add(m, 12, {"A","B","C","D","E","F","G","H","I","J","K","L"},                            [](auto p, auto lo, auto hi) { return RadialPotential(KawamuraMix(to_arr<12>(p),                                    lo, hi)); }, "kawamura_mix"               );
-    add(m,  2, FORCESMITH_PARAM_NAME_LIST(FORCESMITH_APD_softshell),                                                                    [](auto p, auto lo, auto hi) { return RadialPotential(Softshell(p[0], p[1],                                         lo, hi)); }, "softshell",   "soft"        );
-    add(m,  3, {"A","B","C"},                                                                [](auto p, auto lo, auto hi) { return RadialPotential(ExpPlus(p[0], p[1], p[2],                                    lo, hi)); }, "exp_plus",    "expplus"     );
-    add(m,  5, {"A","B","C","D","E"},                                                        [](auto p, auto lo, auto hi) { return RadialPotential(Strmm(p[0], p[1], p[2], p[3], p[4],                          lo, hi)); }, "strmm"                      );
-
-    // Smooth-cutoff (`_sc`) variants: SmoothCutoff decorator wraps the base and
-    // multiplies by apot_cutoff(r,rmax,h); `h` (switching width) is the appended
-    // last parameter. Match forcesmith's *_sc names. Adding more is a one-liner.
-    add(m,  3, FORCESMITH_PARAM_NAME_LIST(FORCESMITH_APD_lj_sc),                                                      [](auto p, auto lo, auto hi) { return RadialPotential(SmoothCutoff(LennardJones(p[0], p[1],            lo, hi), p[2])); }, "lj_sc",       "pair_lj_sc"  );
-    add(m,  4, FORCESMITH_PARAM_NAME_LIST(FORCESMITH_APD_morse_sc),                                                          [](auto p, auto lo, auto hi) { return RadialPotential(SmoothCutoff(Morse(p[0], p[1], p[2],            lo, hi), p[3])); }, "morse_sc"                   );
-    add(m,  3, FORCESMITH_PARAM_NAME_LIST(FORCESMITH_APD_exp_decay_sc),                                                                [](auto p, auto lo, auto hi) { return RadialPotential(SmoothCutoff(ExpDecay(p[0], p[1],               lo, hi), p[2])); }, "exp_decay_sc","exp_sc"       );
-    add(m,  7, FORCESMITH_PARAM_NAME_LIST(FORCESMITH_APD_eopp_sc),                                              [](auto p, auto lo, auto hi) { return RadialPotential(SmoothCutoff(Eopp(p[0], p[1], p[2], p[3], p[4], p[5], lo, hi), p[6])); }, "eopp_sc"                    );
-    // clang-format on
-
+    boost::mp11::mp_for_each<
+        boost::mp11::mp_transform<boost::mp11::mp_identity, AnalyticForms>>(
+        [&](auto tag) {
+          using T = typename decltype(tag)::type;
+          Entry e{static_cast<int>(T::num_params),
+                  std::vector<std::string>(T::param_names.begin(),
+                                           T::param_names.end()),
+                  [](std::span<const double> p, double lo, double hi) {
+                    std::array<double, T::num_params> a{};
+                    std::ranges::copy_n(
+                        p.begin(), static_cast<std::ptrdiff_t>(T::num_params),
+                        a.begin());
+                    return RadialPotential(T(a, lo, hi));
+                  }};
+          for (std::string_view name : T::names) {
+            if (!name.empty()) { // an unused alias slot
+              m.try_emplace(name, e);
+            }
+          }
+        });
     return m;
   }();
   return reg;
 }
 
-template <class T> leaf::result<T> field(const json &p, const char *key) {
+template <class T>
+  requires requires(const json &j, T &v) { j.get_to(v); }
+leaf::result<T> field(const json &p, const char *key) {
   if (!p.contains(key)) {
     return leaf::new_error(ParseError{std::string("missing '") + key + "'", 0});
   }
   return p.at(key).get<T>();
 }
 
-// "type" → the matching analytic Entry (or "unknown analytic function").
 leaf::result<const Entry *> find_analytic(const std::string &type_name) {
   const Registry &reg = registry();
   if (auto it = reg.find(type_name); it != reg.end()) {
@@ -119,8 +83,6 @@ leaf::result<const Entry *> find_analytic(const std::string &type_name) {
       ParseError{"unknown analytic function: " + type_name, 0});
 }
 
-// One parsed analytic parameter: its start value plus optional box constraint
-// and fixed flag. min/max default to ±∞ (unbounded), fixed to false.
 struct ParamSpec {
   double value = 0.0;
   double min = -std::numeric_limits<double>::infinity();
@@ -128,9 +90,6 @@ struct ParamSpec {
   bool fixed = false;
 };
 
-// Each named parameter may be either a bare number (→ value only, unbounded) or
-// an object {"value": x, "min": lo, "max": hi, "fixed": bool}. Bare numbers
-// keep the legacy format working unchanged.
 leaf::result<std::vector<ParamSpec>>
 gather_param_specs(const json &p, const std::vector<std::string> &names,
                    const std::string &type_name) {
@@ -178,12 +137,6 @@ leaf::result<std::vector<double>> knot_values(const json &p) {
   return y;
 }
 
-// ── Per-spec creators ─────────────────────────────────────────────────────
-// Each builds ONE RadialPotential from a single self-describing JSON spec
-// object; these are the concrete products the format factory hands out.
-
-// analytic: read "type" → its registry entry → radial range → its named
-// parameters (value + optional per-parameter [min,max] box and fixed flag).
 leaf::result<RadialPotential> make_analytic(const json &p) {
   BOOST_LEAF_AUTO(type_name, field<std::string>(p, "type"));
   BOOST_LEAF_AUTO(entry, find_analytic(type_name));
@@ -197,16 +150,15 @@ leaf::result<RadialPotential> make_analytic(const json &p) {
                          [](const ParamSpec &s) { return s.value; });
 
   RadialPotential pot = entry->maker(values, rmin, rmax);
-  for (std::size_t i = 0; i < specs.size(); ++i) {
-    pot.set_bounds(i, specs[i].min, specs[i].max);
-    if (specs[i].fixed) {
-      pot.set_fixed(i, true);
+  for (const auto &[i, s] : specs | std::views::enumerate) {
+    pot.set_bounds(static_cast<std::size_t>(i), s.min, s.max);
+    if (s.fixed) {
+      pot.set_fixed(static_cast<std::size_t>(i), true);
     }
   }
   return pot;
 }
 
-// tabulated: read bounds and knots → spread the knots over a uniform grid.
 leaf::result<RadialPotential> make_tabulated(const json &p) {
   BOOST_LEAF_AUTO(rmin, field<double>(p, "rmin"));
   BOOST_LEAF_AUTO(rmax, field<double>(p, "rmax"));
@@ -218,11 +170,10 @@ leaf::result<RadialPotential> make_tabulated(const json &p) {
         ParseError{"tabulated potential needs at least 2 knots", 0});
   }
   if (!(rmax > rmin)) {
-    return leaf::new_error(
-        ParseError{"tabulated potential requires rmax > rmin (got rmin=" +
-                       std::to_string(rmin) + ", rmax=" + std::to_string(rmax) +
-                       ")",
-                   0});
+    return leaf::new_error(ParseError{
+        "tabulated potential requires rmax > rmin (got rmin=" +
+            std::to_string(rmin) + ", rmax=" + std::to_string(rmax) + ")",
+        0});
   }
   const double h = (rmax - rmin) / static_cast<double>(n - 1);
   std::vector<double> x(n);
@@ -239,33 +190,22 @@ leaf::result<RadialPotential> make_tabulated(const json &p) {
   return RadialPotential(std::move(sp));
 }
 
-template <class IdentifierType, class AbstractProduct>
-struct UnsupportedFormatError {
-  static leaf::result<AbstractProduct> OnUnknownType(const IdentifierType &id) {
+using PotentialMaker = leaf::result<RadialPotential> (*)(const json &);
+
+constexpr std::array<std::pair<std::string_view, PotentialMaker>, 2> kFormats{
+    {{"analytic", &make_analytic}, {"tabulated", &make_tabulated}}};
+
+leaf::result<PotentialMaker> maker_for(std::string_view format) {
+  const auto it = std::ranges::find(kFormats, format,
+                                    &std::pair<std::string_view,
+                                               PotentialMaker>::first);
+  if (it == kFormats.end()) {
     return leaf::new_error(ParseError{
-        "unsupported potential format '" + std::string(id) + "'", 0});
+        "unsupported potential format '" + std::string(format) + "'", 0});
   }
-};
-
-// The concrete potential-format factory: format string → per-spec creator.
-using PotentialFactory =
-    ForcesmithFactory<RadialPotential, std::string,
-                      leaf::result<RadialPotential> (*)(const json &),
-                      UnsupportedFormatError>;
-
-const PotentialFactory &format_factory() {
-  static const PotentialFactory factory = [] {
-    PotentialFactory f;
-    f.Register("analytic", &make_analytic);
-    f.Register("tabulated", &make_tabulated);
-    return f;
-  }();
-  return factory;
+  return it->second;
 }
 
-// Build ONE potential from a single self-describing JSON spec, dispatching on
-// the keys present rather than a top-level "format" string. Shared by
-// RadialPotential::from_text and the single-entry parse path.
 leaf::result<RadialPotential> one_potential(const json &p) {
   if (!p.is_object()) {
     return leaf::new_error(
@@ -302,15 +242,12 @@ parse_potential(std::string_view input) {
     }
     const auto &pots_arr = j["potentials"];
 
-    if (!format_factory().IsRegistered(fmt)) {
-      return UnsupportedFormatError<
-          std::string, std::vector<RadialPotential>>::OnUnknownType(fmt);
-    }
+    BOOST_LEAF_AUTO(make, maker_for(fmt));
 
     std::vector<RadialPotential> potentials;
     potentials.reserve(pots_arr.size());
-    for (const auto &p : pots_arr) {
-      BOOST_LEAF_AUTO(pot, format_factory().CreateObject(fmt, p));
+    for (const json &p : pots_arr) {
+      BOOST_LEAF_AUTO(pot, make(p));
       potentials.push_back(std::move(pot));
     }
     return potentials;
@@ -345,13 +282,7 @@ RadialPotential::from_text(std::string_view text) {
 
 boost::leaf::result<RadialPotential>
 RadialPotential::from_file(const std::filesystem::path &path) {
-  std::ifstream f(path);
-  if (!f) {
-    return boost::leaf::new_error(
-        io::ParseError{"cannot open potential file: " + path.string(), 0});
-  }
-  std::string text((std::istreambuf_iterator<char>(f)),
-                   std::istreambuf_iterator<char>());
+  BOOST_LEAF_AUTO(text, io::read_file(path));
   return RadialPotential::from_text(text);
 }
 

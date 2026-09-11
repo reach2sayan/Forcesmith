@@ -1,10 +1,5 @@
 find_package(Eigen3 3.4 REQUIRED NO_MODULE)
 
-if (POLICY CMP0167)
-    cmake_policy(SET CMP0167 NEW)
-endif ()
-find_package(Boost 1.83 CONFIG REQUIRED COMPONENTS serialization program_options)
-
 find_package(TBB CONFIG REQUIRED)
 option(FORCESMITH_USE_MKL "Use system Intel MKL as Eigen's BLAS/LAPACK backend" ON)
 
@@ -59,22 +54,61 @@ else ()
 endif ()
 
 include(FetchContent)
-FetchContent_Declare(boost_parser
-        GIT_REPOSITORY https://github.com/boostorg/parser.git
-        GIT_TAG boost-1.91.0
+
+# ── GoogleTest ───────────────────────────────────────────────────────────────
+# Declared here, ahead of ddx: ddx declares a googletest of its own when its
+# dependency module is included, and FetchContent honours the FIRST declaration.
+# Consumed (MakeAvailable) in tests/CMakeLists.txt, which owns the test targets.
+FetchContent_Declare(googletest
+        GIT_REPOSITORY https://github.com/google/googletest.git
+        GIT_TAG v1.14.0
         GIT_SHALLOW TRUE
 )
 
-FetchContent_GetProperties(boost_parser)
-if (NOT boost_parser_POPULATED)
-    if (POLICY CMP0169)
-        cmake_policy(SET CMP0169 OLD)
-    endif ()
-    FetchContent_Populate(boost_parser)
-endif ()
-add_library(boost_parser INTERFACE)
-target_include_directories(boost_parser SYSTEM INTERFACE "${boost_parser_SOURCE_DIR}/include")
-target_link_libraries(boost_parser INTERFACE Boost::boost)
+# ── Boost 1.92 (one CMake superproject) ──────────────────────────────────────
+# One Boost for everything. The system 1.83 packages cannot supply Boost.Parser
+# (>= 1.87), which ddx and einsum require under Boost::headers, and mixing two
+# versions of one library is not an option. The official CMake tarball gives
+# Boost::headers, Boost::serialization and Boost::program_options out of a
+# single tree; every header-only library used here (parser, math, leaf, mp11,
+# describe, pfr, type_erasure, container, hana, hof, bimap, unordered, signals2,
+# multi_index) rides on Boost::headers. Declaring it before
+# ddx/einsum also makes their `if (NOT TARGET Boost::headers)` guards skip a
+# second Boost download.
+set(BOOST_ENABLE_CMAKE ON)
+set(BOOST_INCLUDE_LIBRARIES
+        serialization program_options parser math leaf mp11 describe pfr
+        type_erasure container hana hof bimap unordered signals2 multi_index
+        preprocessor)
+FetchContent_Declare(Boost
+        URL https://github.com/boostorg/boost/releases/download/boost-1.92.0/boost-1.92.0-cmake.tar.xz
+        DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+        EXCLUDE_FROM_ALL
+        SYSTEM
+)
+FetchContent_MakeAvailable(Boost)
+
+# ── ddx: compile-time symbolic differentiation (header-only) ─────────────────
+# Consumed through its own CMake. Only the header-only compile-time target
+# ddx::ddx is linked — never ddx::rt / ddx::jit. Its include root is flat, so
+# the include is always spelled "ddx.hpp"; never reach into its subdirectories.
+FetchContent_Declare(ddx
+        GIT_REPOSITORY https://github.com/reach2sayan/ddx.git
+        GIT_TAG 9472f81
+        EXCLUDE_FROM_ALL
+        SYSTEM
+)
+FetchContent_MakeAvailable(ddx)
+
+# ── einsum: subscript-driven tensor contractions (header-only) ───────────────
+set(EINSUM_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+FetchContent_Declare(einsum
+        GIT_REPOSITORY https://github.com/reach2sayan/einsum.git
+        GIT_TAG 666591d
+        EXCLUDE_FROM_ALL
+        SYSTEM
+)
+FetchContent_MakeAvailable(einsum)
 
 FetchContent_Declare(nlohmann_json
         GIT_REPOSITORY https://github.com/nlohmann/json.git
@@ -82,22 +116,6 @@ FetchContent_Declare(nlohmann_json
         GIT_SHALLOW TRUE
 )
 FetchContent_MakeAvailable(nlohmann_json)
-
-FetchContent_Declare(boost_math
-        GIT_REPOSITORY https://github.com/boostorg/math.git
-        GIT_TAG boost-1.91.0
-        GIT_SHALLOW TRUE
-)
-FetchContent_GetProperties(boost_math)
-if (NOT boost_math_POPULATED)
-    if (POLICY CMP0169)
-        cmake_policy(SET CMP0169 OLD)
-    endif ()
-    FetchContent_Populate(boost_math)
-endif ()
-add_library(boost_math INTERFACE)
-target_include_directories(boost_math SYSTEM INTERFACE "${boost_math_SOURCE_DIR}/include")
-target_link_libraries(boost_math INTERFACE Boost::boost)
 
 FetchContent_Declare(spdlog
         GIT_REPOSITORY https://github.com/gabime/spdlog.git

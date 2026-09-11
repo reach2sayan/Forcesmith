@@ -1,14 +1,15 @@
 #include "forcesmith/io/config_reader.hpp"
 
-#include "forcesmith/io/json_util.hpp"
+#include "forcesmith/core/json.hpp"
+#include "forcesmith/io/file.hpp"
 
+#include <concepts>
 #include <boost/leaf/error.hpp>
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
 #include <array>
 #include <cstddef>
-#include <fstream>
 #include <string>
 
 namespace forcesmith::io {
@@ -22,7 +23,6 @@ namespace {
   return leaf::new_error(ParseError{std::move(msg), 0});
 }
 
-// Required key present → sub-json by pointer (avoids result<T&>).
 [[nodiscard]] leaf::result<const json *>
 require_key(const json &obj, const char *key, std::string_view ctx) {
   if (!obj.contains(key)) {
@@ -31,7 +31,6 @@ require_key(const json &obj, const char *key, std::string_view ctx) {
   return &obj[key];
 }
 
-// Array of exactly N doubles.
 template <std::size_t N>
 [[nodiscard]] leaf::result<std::array<double, N>>
 get_array_n(const json &arr, std::string_view ctx) {
@@ -50,7 +49,6 @@ get_array_n(const json &arr, std::string_view ctx) {
   return Vec3{a[0], a[1], a[2]};
 }
 
-// Require key + parse as Vec3 in one shot.
 [[nodiscard]] leaf::result<Vec3> require_vec3(const json &obj, const char *key,
                                               std::string_view ctx) {
   BOOST_LEAF_AUTO(sub, require_key(obj, key, ctx));
@@ -75,7 +73,6 @@ get_array_n(const json &arr, std::string_view ctx) {
   return (*e).get<double>();
 }
 
-// Optional "S" = [xx, yy, zz, xy, yz, zx]; absent → Zero().
 [[nodiscard]] leaf::result<SymTens> parse_stress(const json &obj,
                                                  std::string_view ctx) {
   SymTens stress = SymTens::Zero();
@@ -91,14 +88,15 @@ get_array_n(const json &arr, std::string_view ctx) {
   return stress;
 }
 
-[[nodiscard]] leaf::result<Atom> parse_atom(const json &a_obj,
-                                            const SpeciesRegistry &registry,
+template <class Resolve>
+  requires std::invocable<Resolve, const std::string &>
+[[nodiscard]] leaf::result<Atom> parse_atom(const json &a_obj, Resolve resolve,
                                             std::string_view ctx) {
   BOOST_LEAF_AUTO(elem, require_key(a_obj, "element", ctx));
   BOOST_LEAF_AUTO(pos, require_vec3(a_obj, "position", ctx));
 
   Atom a;
-  BOOST_LEAF_AUTO(sp, species_of(registry, (*elem).get<std::string>()));
+  BOOST_LEAF_AUTO(sp, resolve((*elem).get<std::string>()));
   a.type = sp;
   a.pos = pos;
 
@@ -109,100 +107,52 @@ get_array_n(const json &arr, std::string_view ctx) {
   return a;
 }
 
-// Registry-free atom parse: resolve the element straight from the static
-// periodic-table catalog (Species::lookup). The compact table slot
-// (Species::index) is left at its default 0 — Forcesmith assigns the real slot
-// at freeze once the full element set is known. Used by Configuration::from_*.
-[[nodiscard]] leaf::result<Atom> parse_atom_catalog(const json &a_obj,
-                                                    std::string_view ctx) {
-  BOOST_LEAF_AUTO(elem, require_key(a_obj, "element", ctx));
-  BOOST_LEAF_AUTO(pos, require_vec3(a_obj, "position", ctx));
-
-  Atom a;
-  BOOST_LEAF_AUTO(sp, Species::lookup((*elem).get<std::string>()));
-  a.type = sp;
-  a.pos = pos;
-
-  if (a_obj.contains("force")) {
-    BOOST_LEAF_AUTO(f, get_vec3(a_obj["force"], std::string(ctx) + " 'force'"));
-    a.ref.force = f;
-  }
-  return a;
-}
-
-// Parse ONE configuration record using the catalog (no registry). Shared by
-// Configuration::from_text and (via re-serialised records) the streaming
-// loader in src/io/loaders.cpp.
-[[nodiscard]] leaf::result<Configuration> config_from_json(const json &obj) {
-  if (!obj.is_object())
-    return err("configuration must be a JSON object");
-
-  Configuration cfg;
-  cfg.name = obj.value("name", "");
-  BOOST_LEAF_AUTO(box, parse_box(obj, "configuration"));
-  cfg.bc = PeriodicBC(box);
-
-  BOOST_LEAF_AUTO(e, parse_energy(obj, "configuration"));
-  cfg.ref.energy = e;
-
-  cfg.weight = obj.value("W", 1.0);
-
-  BOOST_LEAF_AUTO(s, parse_stress(obj, "configuration"));
-  cfg.ref.stress = s;
-
-  BOOST_LEAF_AUTO(atoms, require_key(obj, "atoms", "configuration"));
-  if (!(*atoms).is_array())
-    return err("configuration: 'atoms' must be an array");
-
-  cfg.atoms.reserve((*atoms).size());
-  std::size_t ai = 0;
-  for (const auto &a_obj : *atoms) {
-    BOOST_LEAF_AUTO(
-        atom, parse_atom_catalog(a_obj, "atom[" + std::to_string(ai++) + "]"));
-    cfg.atoms.push_back(std::move(atom));
-  }
-  return cfg;
-}
-
+template <class Resolve>
+  requires std::invocable<Resolve, const std::string &>
 [[nodiscard]] leaf::result<Configuration>
-parse_configuration(const json &obj, const SpeciesRegistry &registry,
-                    std::string_view ctx) {
+parse_configuration(const json &obj, Resolve resolve, std::string_view ctx) {
   if (!obj.is_object()) {
     return err(std::string(ctx) + ": each configuration must be a JSON object");
   }
 
   Configuration cfg;
   cfg.name = obj.value("name", "");
-
   BOOST_LEAF_AUTO(box, parse_box(obj, ctx));
   cfg.bc = PeriodicBC(box);
-
   BOOST_LEAF_AUTO(e, parse_energy(obj, ctx));
   cfg.ref.energy = e;
-
   cfg.weight = obj.value("W", 1.0);
-
   BOOST_LEAF_AUTO(s, parse_stress(obj, ctx));
   cfg.ref.stress = s;
 
   BOOST_LEAF_AUTO(atoms, require_key(obj, "atoms", ctx));
-  if (!(*atoms).is_array())
+  if (!(*atoms).is_array()) {
     return err(std::string(ctx) + ": 'atoms' must be an array");
+  }
 
   cfg.atoms.reserve((*atoms).size());
   std::size_t ai = 0;
-  for (const auto &a_obj : *atoms) {
-    BOOST_LEAF_AUTO(atom, parse_atom(a_obj, registry,
-                                     std::string(ctx) + " atom[" +
-                                         std::to_string(ai++) + "]"));
+  for (const json &a_obj : *atoms) {
+    BOOST_LEAF_AUTO(atom,
+                    parse_atom(a_obj, resolve,
+                               std::string(ctx) + " atom[" +
+                                   std::to_string(ai++) + "]"));
     cfg.atoms.push_back(std::move(atom));
   }
   return cfg;
 }
 
-// First pass: gather every distinct element symbol that appears in any atom, so
-// the Z-sorted registry is fixed before atoms are stamped. Lenient about
-// structure — full validation happens in the second pass.
+constexpr auto from_catalog = [](const std::string &sym) {
+  return Species::lookup(sym);
+};
+auto through_registry(const SpeciesRegistry &reg) {
+  return [&reg](const std::string &sym) { return species_of(reg, sym); };
+}
+
+[[nodiscard]] leaf::result<Configuration> config_from_json(const json &obj) {
+  return parse_configuration(obj, from_catalog, "configuration");
+}
+
 [[nodiscard]] std::vector<std::string> collect_symbols(const json &j) {
   std::vector<std::string> syms;
   if (!j.is_array())
@@ -232,19 +182,17 @@ leaf::result<ParsedConfig> parse_config(std::string_view input) {
       return err("top-level JSON must be an array of configurations");
     }
 
-    // Pass 1 — gather symbols and build the Z-sorted element↔slot registry.
     const std::vector<std::string> sym_strings = collect_symbols(j);
     std::vector<std::string_view> sym_views(sym_strings.begin(),
                                             sym_strings.end());
     BOOST_LEAF_AUTO(registry, build_species_registry(sym_views));
 
-    // Pass 2 — parse each configuration, stamping atoms through the registry.
     std::vector<Configuration> configs;
     configs.reserve(j.size());
     std::size_t ci = 0;
     for (const auto &obj : j) {
       BOOST_LEAF_AUTO(
-          cfg, parse_configuration(obj, registry,
+          cfg, parse_configuration(obj, through_registry(registry),
                                    "config[" + std::to_string(ci++) + "]"));
       configs.push_back(std::move(cfg));
     }
@@ -267,13 +215,7 @@ Configuration::from_text(std::string_view text) {
 
 boost::leaf::result<Configuration>
 Configuration::from_file(const std::filesystem::path &path) {
-  std::ifstream f(path);
-  if (!f) {
-    return boost::leaf::new_error(
-        io::ParseError{"cannot open config file: " + path.string(), 0});
-  }
-  std::string text((std::istreambuf_iterator<char>(f)),
-                   std::istreambuf_iterator<char>());
+  BOOST_LEAF_AUTO(text, io::read_file(path));
   return Configuration::from_text(text);
 }
 

@@ -17,7 +17,6 @@
 
 namespace forcesmith::config_index {
 
-// Sorted, distinct atom-type ids present in a configuration.
 using CompositionKey = std::vector<std::size_t>;
 
 class ConfigRef {
@@ -25,9 +24,8 @@ public:
   ConfigRef(const Configuration *cfg, std::size_t order,
             CompositionKey composition, std::uint64_t comp_mask,
             std::string_view name)
-      : cfg_(cfg), order_(order), composition_(std::move(composition)),
-        comp_mask_(comp_mask), name_(name) {}
-
+      : cfg_{cfg}, order_{order}, composition_{std::move(composition)},
+        comp_mask_{comp_mask}, name_{name} {}
   [[nodiscard]] const Configuration *cfg() const { return cfg_; }
   [[nodiscard]] std::size_t order() const { return order_; }
   [[nodiscard]] const CompositionKey &composition() const {
@@ -49,17 +47,13 @@ private:
 [[nodiscard]] inline CompositionKey composition_of(const Configuration &c) {
   CompositionKey types;
   types.reserve(c.atoms.size());
-  for (const Atom &a : c.atoms) {
-    types.push_back(a.type);
-  }
-  std::sort(types.begin(), types.end());
+  std::ranges::transform(c.atoms, std::back_inserter(types),
+                         [](const Atom &a) { return a.type; });
+  std::ranges::sort(types);
   types.erase(std::unique(types.begin(), types.end()), types.end());
   return types;
 }
 
-// Bitmask with bit `t` set when type `t` is present. Returns 0 as a sentinel if
-// any type id is >= 64 (caller must fall back to the CompositionKey vector
-// path).
 [[nodiscard]] inline std::uint64_t composition_mask(const Configuration &c) {
   std::uint64_t mask = 0;
   for (const Atom &a : c.atoms) {
@@ -91,42 +85,37 @@ using ConfigIndex = bmi::multi_index_container<
     ConfigRef,
     bmi::indexed_by<
         bmi::random_access<bmi::tag<detail::by_order>>,
-        // group by element set
         bmi::ordered_non_unique<
             bmi::tag<detail::by_composition>,
             bmi::global_fun<const ConfigRef &, const CompositionKey &,
                             &detail::ref_composition>>,
-        // band/range queries on immutable reference energy
         bmi::ordered_non_unique<
             bmi::tag<detail::by_energy>,
             bmi::const_mem_fun<ConfigRef, double, &ConfigRef::energy>>,
-        // weight banding
         bmi::ordered_non_unique<
             bmi::tag<detail::by_weight>,
             bmi::const_mem_fun<ConfigRef, double, &ConfigRef::weight>>,
-        // unique human-facing identifier; string_view key into the owned name
         bmi::ordered_unique<bmi::tag<detail::by_name>,
                             bmi::const_mem_fun<ConfigRef, std::string_view,
                                                &ConfigRef::name>>>>;
 
-// Build the index from the owning configuration store. `order` is the position
-// in `configs`, which equals the residual block id used by the optimizer.
 [[nodiscard]] FORCE_INLINE ConfigIndex
 build_config_index(std::span<const Configuration> configs) {
   ConfigIndex idx;
   auto &ordered = idx.get<detail::by_order>();
-  for (std::size_t i = 0; i < configs.size(); ++i) {
-    const Configuration &c = configs[i];
-    ordered.push_back(
-        ConfigRef{&c, i, composition_of(c), composition_mask(c), c.name});
+  for (auto [i, c] : configs | std::views::enumerate) {
+    ordered.push_back(ConfigRef{&c, static_cast<long unsigned int>(i),
+                                composition_of(c), composition_mask(c),
+                                c.name});
   }
   return idx;
 }
 
 namespace detail {
-template <class It>
+template <std::input_iterator It>
+  requires std::same_as<std::iter_value_t<It>, ConfigRef>
 [[nodiscard]] std::vector<Configuration *> gather(It first, It last) {
-  std::vector<ConfigRef> refs(first, last);
+  std::vector refs(first, last);
   std::ranges::sort(refs, {}, &ConfigRef::order);
   auto out_view = refs | std::views::transform([](const ConfigRef &r) {
                     return const_cast<Configuration *>(r.cfg());
@@ -137,7 +126,6 @@ template <class It>
 }
 } // namespace detail
 
-// All configs whose distinct-type set exactly equals `comp`.
 [[nodiscard]] FORCE_INLINE std::vector<Configuration *>
 configs_with_composition(const ConfigIndex &idx, const CompositionKey &comp) {
   const auto &by_comp = idx.get<detail::by_composition>();
@@ -145,7 +133,6 @@ configs_with_composition(const ConfigIndex &idx, const CompositionKey &comp) {
   return detail::gather(lo, hi);
 }
 
-// All configs that contain at least one atom of type `type`.
 [[nodiscard]] FORCE_INLINE std::vector<Configuration *>
 configs_containing_element(const ConfigIndex &idx, std::size_t type) {
   const auto &ordered = idx.get<detail::by_order>();
@@ -162,21 +149,18 @@ configs_containing_element(const ConfigIndex &idx, std::size_t type) {
   return detail::gather(hits.begin(), hits.end());
 }
 
-// All configs whose reference weight lies in [lo, hi].
 [[nodiscard]] FORCE_INLINE std::vector<Configuration *>
 configs_in_weight_band(const ConfigIndex &idx, double lo, double hi) {
   const auto &by_w = idx.get<detail::by_weight>();
   return detail::gather(by_w.lower_bound(lo), by_w.upper_bound(hi));
 }
 
-// All configs whose reference energy lies in [lo, hi].
 [[nodiscard]] FORCE_INLINE std::vector<Configuration *>
 configs_in_energy_band(const ConfigIndex &idx, double lo, double hi) {
   const auto &by_e = idx.get<detail::by_energy>();
   return detail::gather(by_e.lower_bound(lo), by_e.upper_bound(hi));
 }
 
-// The config with the given unique name, or nullptr if none matches.
 [[nodiscard]] FORCE_INLINE Configuration *
 config_by_name(const ConfigIndex &idx, std::string_view name) {
   const auto &by_name = idx.get<detail::by_name>();

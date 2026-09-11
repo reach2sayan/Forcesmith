@@ -1,16 +1,16 @@
-// Round-trip tests for the `forcesmith init` scaffolder: drive the real init code
-// path to write a startpot, then load it back through the force-model factory
-// and assert the model parses with the expected per-region cardinalities and
-// head sizes. This proves every scaffolded file is a valid, loadable startpot —
-// the contract the scaffolder exists to guarantee.
+// Round-trip tests for the `forcesmith init` scaffolder: drive the real init
+// code path to write a startpot, then load it back through the force-model
+// factory and assert the model parses with the expected per-region
+// cardinalities and head sizes. This proves every scaffolded file is a valid,
+// loadable startpot — the contract the scaffolder exists to guarantee.
 
 #include "forcesmith/cli/init.hpp"
 #include "forcesmith/io/force_model_reader.hpp"
+#include "forcesmith/io/potential_reader.hpp"
 #include "forcesmith/potentials/acsf.hpp"
 #include "forcesmith/potentials/analytic_param_defs.hpp"
 #include "forcesmith/potentials/lmbtr.hpp"
 #include "forcesmith/potentials/soap.hpp"
-#include "forcesmith/io/potential_reader.hpp"
 
 #include <boost/leaf/handle_errors.hpp>
 #include <gtest/gtest.h>
@@ -18,6 +18,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -81,9 +82,9 @@ std::size_t paircol(std::size_t nt) { return nt * (nt + 1) / 2; }
 
 TEST(Init, PairLoadsForBothNtypes) {
   for (int nt : {1, 2}) {
-    auto m = scaffold_and_load("pair" + std::to_string(nt),
-                               {"--model", "pair", "--ntypes",
-                                std::to_string(nt)});
+    auto m =
+        scaffold_and_load("pair" + std::to_string(nt),
+                          {"--model", "pair", "--ntypes", std::to_string(nt)});
     ASSERT_TRUE(((m).target<PairForceCalculator>() != nullptr));
     EXPECT_EQ((*(m).target<PairForceCalculator>()).pair.size(),
               paircol(static_cast<std::size_t>(nt)));
@@ -92,9 +93,9 @@ TEST(Init, PairLoadsForBothNtypes) {
 
 TEST(Init, EamHasPairDensityEmbedding) {
   for (int nt : {1, 2}) {
-    auto m = scaffold_and_load("eam" + std::to_string(nt),
-                               {"--model", "eam", "--ntypes",
-                                std::to_string(nt)});
+    auto m =
+        scaffold_and_load("eam" + std::to_string(nt),
+                          {"--model", "eam", "--ntypes", std::to_string(nt)});
     ASSERT_TRUE(((m).target<EAMForceCalculator>() != nullptr));
     const auto &e = (*(m).target<EAMForceCalculator>());
     EXPECT_EQ(e.pair.size(), paircol(static_cast<std::size_t>(nt)));
@@ -104,8 +105,11 @@ TEST(Init, EamHasPairDensityEmbedding) {
 }
 
 TEST(Init, AdpAndAngularLoad) {
-  ASSERT_TRUE(((scaffold_and_load("adp2", {"--model", "adp", "--ntypes", "2"})).target<ADPForceCalculator>() != nullptr));
-  ASSERT_TRUE(((scaffold_and_load("ang2", {"--model", "angular", "--ntypes", "2"})).target<AngularForceCalculator>() != nullptr));
+  ASSERT_TRUE(((scaffold_and_load("adp2", {"--model", "adp", "--ntypes", "2"}))
+                   .target<ADPForceCalculator>() != nullptr));
+  ASSERT_TRUE(
+      ((scaffold_and_load("ang2", {"--model", "angular", "--ntypes", "2"}))
+           .target<AngularForceCalculator>() != nullptr));
 }
 
 // ── analytic: explicit makeapot-style -f list ───────────────────────────────
@@ -118,24 +122,80 @@ TEST(Init, EamWithExplicitFunctions) {
 }
 
 TEST(Init, FunctionsCountMismatchFailsGracefully) {
-  // eam ntypes=1 needs 3 functions; give 2. Expect a non-zero return, not a
-  // crash. (init reports the mismatch and exits.)
-  // Run in a child process via the death-test machinery to capture the exit.
-  EXPECT_EXIT(run_init({"--model", "eam", "--functions", "lj,lj", "--out",
-                        tmp_out("bad").string()}),
-              ::testing::ExitedWithCode(1), "needs 3");
+  // eam ntypes=1 needs 3 functions; give 2. Expect a non-zero return and the
+  // mismatch named on stderr — no crash, and no process exit: the scaffolder
+  // reports through boost::leaf and run() turns that into the exit code.
+  std::ostringstream captured;
+  std::streambuf *const saved = std::cerr.rdbuf(captured.rdbuf());
+  const int rc = run_init({"--model", "eam", "--functions", "lj,lj", "--out",
+                           tmp_out("bad").string()});
+  std::cerr.rdbuf(saved);
+
+  EXPECT_EQ(rc, 1);
+  EXPECT_NE(captured.str().find("needs 3"), std::string::npos)
+      << captured.str();
+  EXPECT_FALSE(std::filesystem::exists(tmp_out("bad")));
+}
+
+TEST(Init, UnknownFunctionIsReported) {
+  std::ostringstream captured;
+  std::streambuf *const saved = std::cerr.rdbuf(captured.rdbuf());
+  const int rc = run_init({"--model", "pair", "--functions", "no_such_form",
+                           "--out", tmp_out("unknown_fn").string()});
+  std::cerr.rdbuf(saved);
+
+  EXPECT_EQ(rc, 1);
+  EXPECT_NE(captured.str().find("no_such_form"), std::string::npos)
+      << captured.str();
+}
+
+TEST(Init, MalformedFunctionSpecIsReported) {
+  // The spec is a grammar now: a trailing separator is a parse error naming
+  // --functions, not a silently skipped empty token.
+  std::ostringstream captured;
+  std::streambuf *const saved = std::cerr.rdbuf(captured.rdbuf());
+  const int rc = run_init({"--model", "pair", "--functions", "lj,", "--out",
+                           tmp_out("bad_spec").string()});
+  std::cerr.rdbuf(saved);
+
+  EXPECT_EQ(rc, 1);
+  EXPECT_NE(captured.str().find("--functions"), std::string::npos)
+      << captured.str();
+}
+
+TEST(Init, UnknownModelIsReported) {
+  std::ostringstream captured;
+  std::streambuf *const saved = std::cerr.rdbuf(captured.rdbuf());
+  const int rc = run_init(
+      {"--model", "nosuchmodel", "--out", tmp_out("bad_model").string()});
+  std::cerr.rdbuf(saved);
+
+  EXPECT_EQ(rc, 1);
+  EXPECT_NE(captured.str().find("nosuchmodel"), std::string::npos)
+      << captured.str();
+}
+
+TEST(Init, RepeatCountExpandsFunctions) {
+  // "2*lj,exp_decay,sqrt" is eam ntypes=... — use pair with ntypes=2 (paircol
+  // 3) so a single region takes all three: the multiplier must expand.
+  auto m = scaffold_and_load("pair_repeat", {"--model", "pair", "--ntypes", "2",
+                                             "--functions", "2*lj,morse"});
+  ASSERT_TRUE(m.target<PairForceCalculator>() != nullptr);
+  EXPECT_EQ(m.target<PairForceCalculator>()->pair.size(), 3u);
 }
 
 // ── bond-order: built in memory, written via write_model ────────────────────
 
 TEST(Init, TersoffAndStiwebLoad) {
   for (int nt : {1, 2}) {
-    ASSERT_TRUE(((scaffold_and_load("ters" + std::to_string(nt),
-                          {"--model", "tersoff", "--ntypes",
-                           std::to_string(nt)})).target<TersoffForceCalculator>() != nullptr));
-    ASSERT_TRUE(((scaffold_and_load("sw" + std::to_string(nt),
-                          {"--model", "stiweb", "--ntypes",
-                           std::to_string(nt)})).target<StiwebForceCalculator>() != nullptr));
+    ASSERT_TRUE(((scaffold_and_load(
+                      "ters" + std::to_string(nt),
+                      {"--model", "tersoff", "--ntypes", std::to_string(nt)}))
+                     .target<TersoffForceCalculator>() != nullptr));
+    ASSERT_TRUE(((scaffold_and_load(
+                      "sw" + std::to_string(nt),
+                      {"--model", "stiweb", "--ntypes", std::to_string(nt)}))
+                     .target<StiwebForceCalculator>() != nullptr));
   }
 }
 
@@ -143,10 +203,10 @@ TEST(Init, TersoffAndStiwebLoad) {
 
 TEST(Init, SoapHeadsSizedToDescriptor) {
   for (int nt : {1, 2}) {
-    auto m = scaffold_and_load("soap" + std::to_string(nt),
-                               {"--model", "soap", "--ntypes",
-                                std::to_string(nt), "--n-max", "4", "--l-max",
-                                "3"});
+    auto m =
+        scaffold_and_load("soap" + std::to_string(nt),
+                          {"--model", "soap", "--ntypes", std::to_string(nt),
+                           "--n-max", "4", "--l-max", "3"});
     ASSERT_TRUE(((m).target<SoapModel>() != nullptr));
     const auto &s = (*(m).target<SoapModel>());
     EXPECT_EQ(s.heads.size(), static_cast<std::size_t>(nt));
@@ -154,14 +214,16 @@ TEST(Init, SoapHeadsSizedToDescriptor) {
 }
 
 TEST(Init, AcsfRequiresChannelsAndLoads) {
-  auto m = scaffold_and_load(
-      "acsf", {"--model", "acsf", "--g2-eta", "0.5", "1.2"});
+  auto m =
+      scaffold_and_load("acsf", {"--model", "acsf", "--g2-eta", "0.5", "1.2"});
   ASSERT_TRUE(((m).target<ACSF>() != nullptr));
   EXPECT_EQ((*(m).target<ACSF>()).radial.size(), 2u);
 }
 
 TEST(Init, LmbtrLoads) {
-  ASSERT_TRUE(((scaffold_and_load("lmbtr", {"--model", "lmbtr"})).target<LMBTR>() != nullptr));
+  ASSERT_TRUE(
+      ((scaffold_and_load("lmbtr", {"--model", "lmbtr"})).target<LMBTR>() !=
+       nullptr));
 }
 
 // ── the "same by definition" guarantee ──────────────────────────────────────

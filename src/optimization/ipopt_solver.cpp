@@ -1,5 +1,7 @@
 #include "forcesmith/optimization/ipopt_solver.hpp"
 
+#include "forcesmith/optimization/fd_jacobian.hpp"
+
 #include <IpIpoptApplication.hpp>
 #include <IpTNLP.hpp>
 
@@ -11,16 +13,12 @@ namespace forcesmith {
 
 namespace {
 
-// Ipopt's representation of ±∞ for unbounded variables.
 constexpr double kIpoptInf = 2e19;
 
-// TNLP for the unconstrained least-squares problem φ(x) = ½‖F(x)‖².
-// Holds the optimizer's residual/Jacobian maps and the live parameter vector
-// (used both as the start point and as the sink for the final solution).
 class ForcesmithTNLP final : public Ipopt::TNLP {
 public:
   ForcesmithTNLP(Eigen::VectorXd &x, ResidualFn f, JacobianFn jac, int n_vals,
-             const Eigen::VectorXd &lower, const Eigen::VectorXd &upper)
+                 const Eigen::VectorXd &lower, const Eigen::VectorXd &upper)
       : x_(x), f_(std::move(f)), jac_(std::move(jac)),
         n_(static_cast<int>(x.size())), n_vals_(n_vals), lower_(lower),
         upper_(upper) {}
@@ -36,7 +34,6 @@ public:
     return true;
   }
 
-  // Per-parameter box constraints, clamping ±∞ to Ipopt's ±kIpoptInf sentinel.
   bool get_bounds_info(Ipopt::Index n, Ipopt::Number *x_l, Ipopt::Number *x_u,
                        Ipopt::Index /*m*/, Ipopt::Number * /*g_l*/,
                        Ipopt::Number * /*g_u*/) override {
@@ -110,20 +107,10 @@ public:
   Ipopt::SolverReturn status() const { return status_; }
 
 private:
-  // Local central-difference Jacobian (Δ = 1e-5), mirroring FunctorAdapter::df.
   void finite_diff_jacobian(const Eigen::VectorXd &x, Eigen::Index m,
                             Eigen::MatrixXd &J) const {
-    constexpr double delta = 1e-5;
     J.resize(m, x.size());
-    Eigen::VectorXd xp = x;
-    for (int j : std::views::iota(0, static_cast<int>(x.size()))) {
-      xp[j] += delta;
-      const Eigen::VectorXd fp = f_(xp);
-      xp[j] -= 2.0 * delta;
-      const Eigen::VectorXd fm = f_(xp);
-      xp[j] += delta;
-      J.col(j) = (fp - fm) / (2.0 * delta);
-    }
+    opt::fd_jacobian(f_, x, J);
   }
 
   Eigen::VectorXd &x_;
@@ -162,8 +149,6 @@ int IpoptSolver::minimize(Eigen::VectorXd &x, ResidualFn f, JacobianFn jac,
   Ipopt::SmartPtr<Ipopt::TNLP> base = Ipopt::GetRawPtr(tnlp);
   app->OptimizeTNLP(base);
 
-  // Map Ipopt's outcome onto the ">=1 means success" convention shared with the
-  // other solvers (EigenLMSolver returns LM info codes 1..4).
   switch (tnlp->status()) {
   case Ipopt::SUCCESS:
     return 1;

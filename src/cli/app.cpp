@@ -1,5 +1,6 @@
 #include "forcesmith/cli/app.hpp"
 #include "forcesmith/cli/evaluate_report.hpp"
+#include "forcesmith/cli/solver_registry.hpp"
 
 #include "forcesmith/api/forcesmith.hpp"
 #include "forcesmith/core/checkpoint.hpp"
@@ -8,10 +9,8 @@
 #include "forcesmith/io/config_reader.hpp"
 #include "forcesmith/io/loaders.hpp"
 #include "forcesmith/io/logging.hpp"
-#include "forcesmith/optimization/ipopt_solver.hpp"
-#include "forcesmith/optimization/solver.hpp"
 
-#include <boost/leaf/handle_errors.hpp>
+#include "forcesmith/core/leaf_macros.hpp"
 #include <iostream>
 #include <optional>
 #include <string>
@@ -19,49 +18,7 @@
 
 namespace leaf = boost::leaf;
 
-// BOOST_LEAF_CHECK expands to a GNU statement-expression ({ ... }); silence the
-// pedantic complaint about that Boost idiom for this translation unit.
-#if defined(__clang__)
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored                                               \
-    "-Wgnu-statement-expression-from-macro-expansion"
-#endif
-
 namespace forcesmith::cli {
-namespace {
-
-// Build the configured solver named by --algorithm. The solver carries its own
-// tuning (iteration cap, DE parameters, seed), so the choice is materialised
-// here as a Solver and injected into the session. nullopt → unknown name.
-std::optional<forcesmith::Solver> build_solver(const CliOptions &o) {
-  if (o.algorithm == "lm") {
-    return forcesmith::Solver{forcesmith::EigenLMSolver{o.max_iter}};
-  } else if (o.algorithm == "powell") {
-    return forcesmith::Solver{forcesmith::EigenHybridSolver{o.max_iter}};
-  } else if (o.algorithm == "ls") {
-    return forcesmith::Solver{forcesmith::LineSearchSolver{o.max_iter}};
-  } else if (o.algorithm == "ipopt") {
-    return forcesmith::Solver{forcesmith::IpoptSolver{o.max_iter}};
-  } else if (o.algorithm == "lsq" || o.algorithm == "linear") {
-    // Closed-form least squares — exact for linear ML heads (SOAP/ACSF), and
-    // low-memory: the functor streams the Jacobian instead of caching the whole
-    // dataset. --smooth-weight doubles as the ridge λ (0 → auto tiny).
-    forcesmith::NormalEquationsSolver s;
-    s.ridge = o.smooth_weight;
-    return forcesmith::Solver{std::move(s)};
-  } else if (o.algorithm == "de") {
-    forcesmith::BoostDESolver s;
-    s.mutation_factor = o.de_F;
-    s.crossover_probability = o.de_CR;
-    s.NP_factor = static_cast<std::size_t>(o.de_np);
-    s.max_generations = static_cast<std::size_t>(o.de_gen);
-    s.seed = o.seed;
-    return forcesmith::Solver{std::move(s)};
-  }
-  return std::nullopt;
-}
-
-} // namespace
 
 int run(const CliOptions &o) {
 
@@ -69,28 +26,8 @@ int run(const CliOptions &o) {
   forcesmith::log::init();
   auto log_sinks = forcesmith::log::connect_signals(); // kept alive for the run
 
-  auto checkpoint_error_fn = [&](const forcesmith::CheckpointError &e) {
-    std::cerr << "checkpoint error: " << e.message << "\n";
-    ret = 1;
-  };
-
-  auto parse_error_fn = [&](const forcesmith::io::ParseError &e) {
-    std::cerr << "parse error (line " << e.line << "): " << e.message << "\n";
-    ret = 1;
-  };
-
-  auto default_exception_fn = [&](const std::exception &e) {
-    std::cerr << "error: " << e.what() << "\n";
-    ret = 1;
-  };
-
-  auto species_registry_error_fn = [&](const std::string &msg) {
-    std::cerr << "error: " << msg << "\n";
-    ret = 1;
-  };
-
-  auto unknown_error_fn = [&]() {
-    std::cerr << "unknown error\n";
+  const auto report = [&](std::string_view prefix, std::string_view msg) {
+    std::cerr << prefix << msg << "\n";
     ret = 1;
   };
 
@@ -145,7 +82,7 @@ int run(const CliOptions &o) {
       session.set_solver(std::move(*solver));
     } else {
       std::cerr << "unknown algorithm '" << o.algorithm
-                << "'; choose: lm | powell | de | ls | ipopt | lsq\n";
+                << "'; choose: " << solver_name_list() << "\n";
       ret = 1;
       return {};
     }
@@ -157,7 +94,7 @@ int run(const CliOptions &o) {
       BOOST_LEAF_AUTO(configs, session.configurations());
       BOOST_LEAF_AUTO(model, session.model());
       const std::vector<forcesmith::Configuration> cfg_copy(configs.begin(),
-                                                        configs.end());
+                                                            configs.end());
       BOOST_LEAF_CHECK(forcesmith::CheckpointWriter(ckpt_prefix)
                            .configs(cfg_copy)
                            .model(*model)
@@ -170,14 +107,19 @@ int run(const CliOptions &o) {
     return {};
   };
 
-  leaf::try_handle_all(main_runner, parse_error_fn, checkpoint_error_fn,
-                       default_exception_fn, species_registry_error_fn,
-                       unknown_error_fn);
+  leaf::try_handle_all(
+      main_runner,
+      [&](const forcesmith::io::ParseError &e) {
+        report("parse error (line " + std::to_string(e.line) + "): ",
+               e.message);
+      },
+      [&](const forcesmith::CheckpointError &e) {
+        report("checkpoint error: ", e.message);
+      },
+      [&](const std::exception &e) { report("error: ", e.what()); },
+      [&](const std::string &msg) { report("error: ", msg); },
+      [&] { report("", "unknown error"); });
   return ret;
 }
 
 } // namespace forcesmith::cli
-
-#if defined(__clang__)
-#pragma clang diagnostic pop
-#endif

@@ -3,6 +3,8 @@
 
 #include <boost/container_hash/hash.hpp>
 
+#include <ranges>
+
 #include <algorithm>
 #include <cmath>
 #include <execution>
@@ -13,9 +15,6 @@ namespace forcesmith {
 
 namespace {
 
-// Fingerprint of everything that determines the neighbour list besides rcut and
-// the potential table: atom count, positions, types and the periodic box. Cheap
-// (O(N)) compared to the O(N²·images) build it guards.
 std::size_t geometry_signature(const Configuration &cfg) {
   std::size_t h = 0;
   boost::hash_combine(h, cfg.atoms.size());
@@ -57,22 +56,11 @@ void add_neighbor(Configuration &cfg, const RadialPotentialPair *pots,
   cfg.atoms[i].neighbors.push_back(entry);
 }
 
-// Periodic build: replicate the cell out to ceil(rcut / box_height) image
-// shells per lattice direction (matching forcesmith's config.c), so that for
-// cells smaller than the cutoff every periodic neighbour — including an atom's
-// own images — is found. Each ordered pair is stored on the owning atom; the
-// equal-and-opposite mirror entry supplies the reaction on the partner, and the
-// +R/−R image entries of a self-pair cancel (zero net self force) and each
-// contribute the correct 0.5·phi, so no separate "self" handling is needed.
 void build_periodic(Configuration &cfg, double rcut, double rcut2,
                     const RadialPotentialPair *pots, const PeriodicBC &pbc) {
   const Mat3 &box = pbc.box();
   const Vec3 a = box.col(0), b = box.col(1), c = box.col(2);
 
-  // Image shells needed per axis: ceil(rcut * |reciprocal lattice vector|),
-  // where the reciprocal vectors are the rows of the inverse box. A degenerate
-  // box yields a non-finite inverse; guard so a NaN width can't reach the
-  // (undefined) NaN->int conversion and instead collapses to no images.
   const Mat3 &inv = pbc.inv_box();
   const auto shells = [&](int axis) -> int {
     const double w = inv.row(axis).norm();
@@ -82,29 +70,27 @@ void build_periodic(Configuration &cfg, double rcut, double rcut2,
   };
   const int sx = shells(0), sy = shells(1), sz = shells(2);
 
-  // Wrap positions into the unit cell so the base separation is minimal and
-  // the image shells above are guaranteed to cover the cutoff sphere.
   std::vector<Vec3> wpos(cfg.atoms.size());
   std::ranges::transform(cfg.atoms, wpos.begin(),
                          [&](const Atom &atom) { return pbc.wrap(atom.pos); });
 
+  const auto images = std::views::cartesian_product(
+      std::views::iota(-sx, sx + 1), std::views::iota(-sy, sy + 1),
+      std::views::iota(-sz, sz + 1));
+
   for (std::size_t i = 0; i < cfg.atoms.size(); ++i) {
     for (std::size_t j = 0; j < cfg.atoms.size(); ++j) {
       const Vec3 base = wpos[j] - wpos[i];
-      for (int ix = -sx; ix <= sx; ++ix)
-        for (int iy = -sy; iy <= sy; ++iy)
-          for (int iz = -sz; iz <= sz; ++iz) {
-            if (i == j && ix == 0 && iy == 0 && iz == 0) {
-              continue; // skip an atom paired with itself in the home cell
-            }
-            add_neighbor(cfg, pots, i, j, base + ix * a + iy * b + iz * c,
-                         rcut2);
-          }
+      for (const auto [ix, iy, iz] : images) {
+        if (i == j && ix == 0 && iy == 0 && iz == 0) {
+          continue; // skip an atom paired with itself in the home cell
+        }
+        add_neighbor(cfg, pots, i, j, base + ix * a + iy * b + iz * c, rcut2);
+      }
     }
   }
 }
 
-// Non-periodic (cluster) build: direct pairs only, no images.
 void build_infinite(Configuration &cfg, double rcut2,
                     const RadialPotentialPair *pots) {
   for (std::size_t i = 0; i < cfg.atoms.size(); ++i)
@@ -118,9 +104,6 @@ void build_infinite(Configuration &cfg, double rcut2,
 
 void build_impl(Configuration &cfg, double rcut,
                 const RadialPotentialPair *pots) {
-  // Cache hit: an identical list was already built for THIS configuration
-  // object (parent stamp rules out copies/loads, whose neighbour pointers would
-  // dangle into the source) with the same cutoff, potential table and geometry.
   const NeighborListKey key{rcut, static_cast<const void *>(pots),
                             geometry_signature(cfg)};
   if (cfg.nl_key == key && !cfg.atoms.empty() &&

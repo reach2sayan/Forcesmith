@@ -1,30 +1,11 @@
 #pragma once
 
-// Machine-learning potential abstraction.
-//
-// Idea: a configuration's local atomic environments reduce to a per-atom vector
-// of DESCRIPTORS D_i; the per-atom energy is E_i = head(D_i) for a fittable
-// "head" (the coefficients the optimizer drives). Forces are −dE/dr, which need
-// the descriptor gradients dD_i/dr.
-//
-// Layering (mirrors the rest of the force layer):
-//   * MLBase<Derived> is a CRTP ForceCalculator base. Its eval_forces is
-//     descriptor-agnostic: it calls the concrete model's get_descriptor hook,
-//     feeds the descriptor to the head, and assembles energy/forces/stress.
-//   * Derived (e.g. ACSF) supplies the descriptor:
-//       DescriptorValue get_descriptor(const Atom&) const;
-//       double          descriptor_cutoff() const;
-//       bool            analytic_grads() const;
-//   * The head is value-erased (EnergyHead, like RadialPotential) so swapping the
-//     descriptor→energy map never multiplies the ForceCalculator variant.
-
-// The fittable parameters are the head coefficients (one head per element
-// type); descriptor hyperparameters (η, Rs, cutoff …) are fixed.
-
 #include "forcesmith/core/atom.hpp"
 #include "forcesmith/core/fit_params.hpp"
 #include "forcesmith/core/neighbor_list.hpp" // build_neighbor_list, bc_volume
 #include "forcesmith/core/param.hpp"
+#include "forcesmith/core/strong.hpp"
+#include "forcesmith/core/voigt.hpp"
 #include "forcesmith/events/signals.hpp"
 #include "forcesmith/force/force_calculator_concept.hpp"
 #include "forcesmith/force/ml_energy_heads.hpp" // HeadConcept, HeadParams, EnergyHead
@@ -47,111 +28,109 @@
 
 namespace forcesmith {
 
-// Element/head slot index: which per-type head (and standardization row) a
-// cached atom or force-group routes to. Zero-overhead strong wrapper that
-// replaces the bare `int type` which carried this meaning implicitly (cf.
-// SiteId in core/site_id.hpp). Implicitly converts to std::size_t so it indexes
-// heads[]/col_off[]/mean_[] directly without a cast; it has no `.type` member,
-// so it does NOT trigger TypeArray's non-integral operator[] overload.
-class TypeIndex {
-public:
-  TypeIndex() = default;
-  explicit constexpr TypeIndex(std::size_t i) noexcept : index_(i) {}
-  [[nodiscard]] constexpr std::size_t index() const noexcept { return index_; }
-  constexpr operator std::size_t() const noexcept { return index_; }
+struct TypeIndexTag;
+using TypeIndex = Strong<std::size_t, TypeIndexTag, true>;
 
-private:
-  std::size_t index_ = 0;
-};
-
-// Per-neighbour descriptor gradient block: row k is dD_k/dr (a 3-vector).
 using DescriptorGrad = Eigen::Matrix<double, Eigen::Dynamic, 3>;
 struct DescriptorValue {
   Eigen::VectorXd values; // D_i, length = descriptor_size
   bool has_grad = false;
 
-  // only use when has_grad == true
   DescriptorGrad grad_self;               // dD_i/dr_i (S×3)
   std::vector<DescriptorGrad> grad_neigh; // dD_i/dr_j per neighbor jj
 };
 
-// Linear head: E_i = Σ_k coeffs_k · D_k + bias.  de/dD = coeffs (constant), so
-// forces reduce to coeffs · dD/dr.
 struct LinearHead : HeadParams<LinearHead> {
   std::vector<Param> coeffs;
   Param bias{0.0, true};
 
   double energy(const Eigen::VectorXd &D) const;
   Eigen::VectorXd grad(const Eigen::VectorXd &) const;
-  // Linear: de/dD = coeffs, independent of D — enables the batched cached path.
   constexpr bool constant_grad() const { return true; }
-  // E = c·D + bias ⇒ ∂E/∂θ = D (per free coeff), and ∂(∂E/∂D)/∂θ = I (the
-  // descriptor-gradient *is* the coeffs), so the force-Jacobian column for
-  // coeff k is just −dD/dr column k. Exact and trivial.
   bool has_param_jacobian() const { return true; }
   Eigen::VectorXd param_grad(const Eigen::VectorXd &D) const;
   Eigen::MatrixXd dgrad_dparam(const Eigen::VectorXd &D) const;
-  std::vector<Param *> field_ptrs();
-  std::vector<const Param *> field_ptrs() const;
+  auto param_range() {
+    return std::views::iota(std::size_t{0}, coeffs.size() + 1) |
+           std::views::transform([this](std::size_t i) -> Param & {
+             return i < coeffs.size() ? coeffs[i] : bias;
+           });
+  }
+  auto param_range() const {
+    return std::views::iota(std::size_t{0}, coeffs.size() + 1) |
+           std::views::transform([this](std::size_t i) -> const Param & {
+             return i < coeffs.size() ? coeffs[i] : bias;
+           });
+  }
 
-  // Re-rank: copy coeff k from old index map[k] (nullopt ⇒ 0.0), keeping bias
-  // and the coeffs' fixed flag.
   [[nodiscard]] LinearHead
   remapped(const std::vector<std::optional<Eigen::Index>> &map) const;
-  // Factory for a newly-added element's head: n zero (free) coeffs + default
-  // bias. Independent of any existing head, so it is not part of the erased
-  // head interface — MLBase::remap builds the fresh head in-place.
   [[nodiscard]] static LinearHead zero_like(Eigen::Index n);
 
-  // all_values()/set_all_values() inherited from HeadParams emit [coeffs…,
-  // bias].
   constexpr std::string type_tag() const { return "linear"; }
   constexpr std::vector<int> architecture() const {
     return {static_cast<int>(coeffs.size())};
   }
 };
 
-// JSON customization point for LinearHead (found by ADL from EnergyHead::Model<
-// LinearHead>::to_json). Defined in ml_force.cpp so nlohmann/json.hpp stays out
-// of this header. Emits {"type","coeffs","bias"}.
 nlohmann::json build_json_from_head(const LinearHead &lh);
 
 static_assert(CHead<LinearHead>);
 
-template <typename Derived>
-struct MLBase : ForceCalculatorBase<Derived> {
-  // One head per element type, indexed by atom.type.index.
+struct DescriptorNeighbor {
+  std::size_t slot; // element-type channel
+  double r;         // |d|
+};
+
+[[nodiscard]] FORCE_INLINE std::optional<DescriptorNeighbor>
+descriptor_neighbor(const NeighborEntry &nb, double rcut, std::size_t ntypes,
+                    double r_eps) {
+  const double r = nb.dist.norm();
+  if (r < r_eps || r >= rcut) {
+    return std::nullopt;
+  }
+  const auto slot = static_cast<long long>(nb.neighbor->type.index);
+  if (slot < 0 || static_cast<std::size_t>(slot) >= ntypes) {
+    return std::nullopt;
+  }
+  return DescriptorNeighbor{static_cast<std::size_t>(slot), r};
+}
+
+// What MLBase needs of the descriptor it is given. Naming it turns "MLBase
+// silently failed to find get_descriptor on your model" into one line at the
+// point of definition — the CRTP base called these four through
+// static_cast<const Derived&> with nothing stating the requirement.
+template <class T>
+concept CDescriptorModel = requires(const T &t, const Atom &a) {
+  { t.get_descriptor(a) };
+  { t.descriptor_cutoff() } -> std::convertible_to<double>;
+  { t.analytic_grads() } -> std::convertible_to<bool>;
+  { t.descriptor_size() } -> std::convertible_to<std::size_t>;
+};
+
+template <typename Derived> struct MLBase : ForceCalculatorBase<Derived> {
   TypeArray<EnergyHead> heads;
 
-  // Fit-time descriptor cache - D_i and its dD_i/dr are constant
-  // During a fit (FIXED geometry) descriptor.prepare() precomputes per atom.
+  [[nodiscard]] std::vector<std::optional<Eigen::Index>>
+  descriptor_index_map(const SpeciesRegistry &old_reg,
+                       const SpeciesRegistry &new_reg) const
+    requires requires(const Derived &d, std::size_t S) { d.layout_for(S); }
+  {
+    const std::size_t S_old = forcesmith::ntypes(old_reg);
+    const std::size_t S_new = forcesmith::ntypes(new_reg);
+    const Derived &self = static_cast<const Derived &>(*this);
+    return remap_layout(self.layout_for(S_old).d_, self.layout_for(S_new).d_,
+                        old_slot_of_new(old_reg, new_reg), S_old, S_new);
+  }
 
-  // Stored POINTER-FREE: each cached atom keeps its neighbours as flat atom
-  // indices (within the config) plus the bond vectors, so the cached force
-  // assembly needs no live neighbour list. That is what lets the parallel
-  // Jacobian (ForcesmithFunctor::df) accumulate forces into private per-column
-  // buffers with zero shared mutable state.
   struct AtomCache {
     TypeIndex type{};       // element slot → head index
     Eigen::VectorXd values; // D_i  (descriptor_size S)
 
-    // Every position-gradient block of D_i stacked COLUMN-WISE into one
-    // contiguous S×(3·(1+nbonds)) matrix: columns [0,3) are dD_i/dr_i (the
-    // centre), columns [3·(k+1), 3·(k+1)+3) are dD_i/dr_j for neighbour k
-    // (parallel to neigh_idx/neigh_dist). Stacking lets eval_cached and the
-    // Jacobian contract ALL blocks against ∂E/∂D in a single batched BLAS call
-    // — replacing the per-block 3×S gemv flood that dominated the SOAP profile.
     Eigen::MatrixXd grad_all;
     std::vector<std::size_t> neigh_idx; // neighbor atom index in the config
     std::vector<Vec3> neigh_dist;       // bond r_j − r_i (for the virial)
   };
-  // Per-(config, element type) grouping of EVERY gradient block of that type's
-  // atoms, concatenated column-wise. For a LINEAR head ∂E/∂D is one vector c_t
-  // per type, so the whole group's forces are a SINGLE gemv `grad^T · c_t`
-  // (and the Jacobian a single gemm `grad^T · M_t`) — one BLAS call per
-  // (config,type) instead of one per atom. Built only when every head reports
-  // constant_grad(); otherwise `groups` stays empty and eval falls back to the
-  // per-atom AtomCache path.
   struct ForceGroup {
     TypeIndex type{};
     Eigen::MatrixXd
@@ -161,10 +140,8 @@ struct MLBase : ForceCalculatorBase<Derived> {
   };
   struct CacheData {
     std::vector<std::vector<AtomCache>> rows; // [config][atom] (energy/values)
-    std::vector<std::vector<ForceGroup>> groups;  // [config][type]
-    std::vector<double> volume; // per-config cell volume
-    // M_t = ∂(∂E/∂D)/∂θ per type (linear heads): constant across atoms AND
-    // optimizer iterations, so precompute
+    std::vector<std::vector<ForceGroup>> groups; // [config][type]
+    std::vector<double> volume;                  // per-config cell volume
     std::vector<Eigen::MatrixXd> dgrad_param;
   };
   mutable std::shared_ptr<const CacheData> cache_;
@@ -180,7 +157,6 @@ struct MLBase : ForceCalculatorBase<Derived> {
            });
   }
 
-  // Every head linear ⇒ enable the batched per-(config,type) cache fast path.
   [[nodiscard]] bool all_constant_grad() const {
     return heads.size() > 0 &&
            std::ranges::all_of(
@@ -215,14 +191,6 @@ struct MLBase : ForceCalculatorBase<Derived> {
     return out;
   }
 
-  // Per-feature descriptor standardization
-  // prepare() whitens each feature to ≈zero mean / unit variance over the
-  // training set, per element type.
-  // The affine map D' = (D−μ)/σ is folded into the cached values WITH
-  // position-gradients (each gradient row k scaled by 1/σ_k; μ is a constant
-  // shift that drops out of the gradient), so eval_cached and the uncached
-  // force path are unchanged apart from receiving whitened inputs.
-  // μ/σ are FIXED FIXED transforms
   bool standardize_features = false;
   mutable TypeArray<Eigen::VectorXd> mean_; // per type, length descriptor_size
   mutable TypeArray<Eigen::VectorXd> inv_std_; // per type, 1/σ (0 for dead)
@@ -232,27 +200,20 @@ struct MLBase : ForceCalculatorBase<Derived> {
   }
 
 private:
-
-  // Declared before prepare() so its (non-dependent) calls resolve here.
-  // Flat (config, atom) index list over the whole training set.
   using Worklist = std::vector<std::pair<std::size_t, std::size_t>>;
 
-  // Stage 0 — the work-list: thousands of independent (config, atom) units, so
-  // one balanced parallel_for fills every core instead of stranding threads on
-  // a handful of uneven configs.
   static Worklist step_atom_worklist(std::span<Configuration> configs) {
-    Worklist work;
-    for (std::size_t c = 0; c < configs.size(); ++c) {
-      for (std::size_t a = 0; a < configs[c].atoms.size(); ++a) {
-        work.emplace_back(c, a);
-      }
-    }
-    return work;
+    return std::views::iota(std::size_t{0}, configs.size()) |
+           std::views::transform([configs](std::size_t c) {
+             return std::views::iota(std::size_t{0},
+                                     configs[c].atoms.size()) |
+                    std::views::transform([c](std::size_t a) {
+                      return Worklist::value_type{c, a};
+                    });
+           }) |
+           std::views::join | std::ranges::to<Worklist>();
   }
 
-  // Stage 1 — build each config's neighbour list (in parallel via the shared
-  // helper; disjoint per config), then size its cache row and record the cell
-  // volume in a cheap serial pass.
   CacheData step_allocate_cache(std::span<Configuration> configs) const {
     CacheData data;
     data.rows.resize(configs.size());
@@ -266,9 +227,6 @@ private:
     return data;
   }
 
-  // Stage 2 — force any lazy, model-internal descriptor init (e.g. SOAP's
-  // radial basis) exactly once, serially, so the parallel fill below never
-  // races on it.
   void step_warm_up_descriptors(std::span<Configuration> configs) const {
     for (auto &cfg : configs) {
       if (!cfg.atoms.empty()) {
@@ -278,8 +236,6 @@ private:
     }
   }
 
-  // Stage 3 — fill every atom's raw descriptor + gradients in parallel; each
-  // task touches only its own AtomCache, so the fill is race-free.
   CacheData step_fill_cache(std::span<Configuration> configs,
                             const Worklist &work, CacheData data) const {
     std::for_each(std::execution::par, work.begin(), work.end(),
@@ -290,10 +246,6 @@ private:
     return data;
   }
 
-  // Stage 4 — whiten the just-filled raw descriptors in place: derive per-type
-  // μ/σ from the full training set, then standardize every cached value +
-  // gradient (same work-list, each task still local to its AtomCache). No-op
-  // unless standardize_features.
   CacheData step_whiten_cache(const Worklist &work, CacheData data) const {
     if (!standardize_features) {
       return data;
@@ -307,14 +259,7 @@ private:
     return data;
   }
 
-  // Stage 5 — regroup the per-atom gradient blocks into per-(config,type)
-  // concatenations for the batched linear-head force/Jacobian path. Each config
-  // is independent → parallel over configs. After grouping, the per-atom grad
-  // blocks are released so total memory stays flat (the data just moves). No-op
-  // (groups left empty, per-atom layout kept) unless every head is linear.
   CacheData step_group_cache(CacheData data) const {
-    // Sized to rows either way so eval can index groups[cache_index] safely;
-    // left empty per config when not grouping (non-linear heads keep per-atom).
     data.groups.resize(data.rows.size());
     if (!all_constant_grad()) {
       return data; // keep per-atom AtomCache layout for non-linear heads
@@ -348,8 +293,7 @@ private:
           std::vector<Eigen::Index> off(T, 0);
           for (std::size_t a = 0; a < row.size(); ++a) {
             AtomCache &cc = row[a];
-            ForceGroup &g =
-                grps[static_cast<std::size_t>(gidx[cc.type])];
+            ForceGroup &g = grps[static_cast<std::size_t>(gidx[cc.type])];
             Eigen::Index &o = off[cc.type];
             g.grad.middleCols(o, cc.grad_all.cols()) = cc.grad_all;
             o += cc.grad_all.cols();
@@ -365,9 +309,6 @@ private:
           }
         });
 
-    // Precompute the constant per-type M_t = ∂(∂E/∂D)/∂θ once (linear heads):
-    // independent of D and of the optimizer params, so the Jacobian never has
-    // to build/zero it again. S is the descriptor size (first non-empty row).
     Eigen::Index S = 0;
     for (const auto &row : data.rows) {
       if (!row.empty()) {
@@ -391,7 +332,7 @@ public:
     CacheData data = step_allocate_cache(configs); // neighbour lists + sizing
     step_warm_up_descriptors(configs); // serial lazy descriptor init
     data = step_fill_cache(configs, work, std::move(data)); // parallel fill
-    data = step_whiten_cache(work, std::move(data)); // optional whiten
+    data = step_whiten_cache(work, std::move(data));        // optional whiten
     data = step_group_cache(std::move(data)); // batch linear heads per type
 
     cache_ = std::make_shared<CacheData>(std::move(data));
@@ -405,16 +346,12 @@ public:
     stress = SymTens::Zero();
     std::ranges::for_each(forces, [](Vec3 &f) { f.setZero(); });
 
-    // Energy is per atom either way (cheap dot products).
     for (const AtomCache &cc : rows) {
       energy += heads[cc.type].energy(cc.values);
     }
 
     const auto &groups = cache->groups[cache_index];
     if (!groups.empty()) {
-      // Linear-head fast path: one gemv per (config,type). ∂E/∂D = c_t is
-      // hoisted out of the atom loop; the whole type's blocks are contracted
-      // at once, then scattered. contrib block b is grad_block_b^T · c_t.
       for (const ForceGroup &g : groups) {
         const EnergyHead &h = heads[g.type];
         const Eigen::VectorXd dEdD =
@@ -427,7 +364,6 @@ public:
         }
       }
     } else {
-      // Fallback (non-linear heads): per-atom batched gemv over its blocks.
       for (auto [cc, fi] : std::views::zip(rows, forces)) {
         const EnergyHead &h = heads[cc.type];
         const Eigen::VectorXd dEdD = h.grad(cc.values);
@@ -446,15 +382,6 @@ public:
     stress /= cache->volume[cache_index];
   }
 
-  // Analytic ∂(residuals of config c)/∂θ, written into `fjac` at the config's
-  // row block (forces, energy, optional stress; limit row stays 0). The
-  // per-head parameter derivatives (param_grad = ∂E/∂θ, dgrad_dparam =
-  // ∂(∂E/∂D)/∂θ) are contracted against the SAME cached spatial gradients
-  // eval_cached uses, so the Jacobian is exact and consistent with the residual
-  // — no descriptor recompute, no per-parameter finite difference. `col_off[t]`
-  // is the first fjac column of head t (column analogue of the residual
-  // row_offset). A config's rows are disjoint across configs, so a
-  // config-parallel caller needs no locking.
   void eval_cached_jacobian(std::size_t cache_index, int row0,
                             const std::vector<int> &col_off,
                             double energy_weight, double stress_weight,
@@ -465,11 +392,7 @@ public:
     const int erow = row0 + 3 * na; // energy residual row
     const int srow = erow + 1;      // first stress row (if any)
     const double inv_vol = 1.0 / cache->volume[cache_index];
-    // Stress component order matches eval_into: (00,11,22,01,02,12).
-    static constexpr int sp[6] = {0, 1, 2, 0, 0, 1};
-    static constexpr int sq[6] = {0, 1, 2, 1, 2, 2};
 
-    // Energy column block ∂E_i/∂θ is per atom (param_grad depends on D_i).
     for (int i = 0; i < na; ++i) {
       const AtomCache &cc = rows[i];
       const std::size_t t = cc.type;
@@ -482,22 +405,19 @@ public:
       fjac.block(erow, c0, 1, pc).noalias() += energy_weight * gE.transpose();
     }
 
-    // Stress scatter shared by both layouts.
     const auto scatter_stress = [&](int c0, int pc, const Vec3 &nd,
                                     const Eigen::MatrixXd &fblk) {
       if (stress_weight > 0.0) {
         for (int s = 0; s < 6; ++s) {
           fjac.block(srow + s, c0, 1, pc) +=
-              (stress_weight * inv_vol * nd[sp[s]]) * fblk.row(sq[s]);
+              (stress_weight * inv_vol * nd[kVoigt6[s].first]) *
+              fblk.row(kVoigt6[s].second);
         }
       }
     };
 
     const auto &groups = cache->groups[cache_index];
     if (!groups.empty()) {
-      // Linear-head fast path: M_t = ∂(∂E/∂D)/∂θ is constant per type, so one
-      // gemm `grad^T · M_t` covers a whole (config,type); scatter each 3-row
-      // block. ∂f_target/∂θ = −block (self & neighbours alike; self bond==0).
       for (const ForceGroup &g : groups) {
         const std::size_t t = g.type;
         const int c0 = col_off[t];
@@ -516,7 +436,6 @@ public:
         }
       }
     } else {
-      // Fallback (non-linear heads): per-atom batched gemm over its blocks.
       for (int i = 0; i < na; ++i) {
         const AtomCache &cc = rows[i];
         const std::size_t t = cc.type;
@@ -540,13 +459,6 @@ public:
     }
   }
 
-  // Full path (evaluate / predict mode): geometry may differ from the cached
-  // training set, so always recompute. Used by force::evaluate and the
-  // start/final RMSE checks, keeping those honest independent of the cache. Per
-  // atom it gets the descriptor + its position-gradient (analytic when the
-  // model supplies it, else a cheap O(neighbors) finite-difference of the
-  // descriptor — NOT the old O(N²) finite-difference of the total energy) and
-  // assembles forces directly.
   void eval_forces(Configuration &cfg) const {
     build_neighbor_list(cfg, max_cutoff());
 
@@ -595,15 +507,12 @@ public:
         [](std::size_t n, const auto &h) { return n + h.param_count(); });
   }
 
-  // Per-head free-parameter counts — the column layout the analytic Jacobian
-  // contracts against (column analogue of the residual row_offset).
   std::vector<std::size_t> head_param_counts() const {
-    std::vector<std::size_t> counts;
-    counts.reserve(heads.size());
-    for (const auto &h : heads) {
-      counts.push_back(h.param_count());
-    }
-    return counts;
+    return heads |
+           std::views::transform([](const EnergyHead &h) {
+             return h.param_count();
+           }) |
+           std::ranges::to<std::vector<std::size_t>>();
   }
 
   void gather_params(Eigen::VectorXd &dst, std::size_t off) const {
@@ -633,15 +542,6 @@ public:
 private:
   const Derived &self() const { return static_cast<const Derived &>(*this); }
 
-  // Descriptor value + position-gradient for one atom: analytic when the model
-  // supplies it (has_grad), else a cheap O(neighbors) finite-difference of the
-  // descriptor. The descriptor of atom i depends on geometry only through each
-  // neighbour's displacement, so dD_i/d(r_j) is obtained by perturbing that
-  // neighbour's bond vector IN PLACE — no neighbour-list rebuild — and
-  // dD_i/dr_i = −Σ_j dD_i/dr_j (translation invariance). `atom` is mutated only
-  // transiently (each dist restored); callers must hold exclusive access to
-  // atom's own neighbour list (true in the serial eval_forces and in prepare's
-  // per-atom parallel tasks).
   DescriptorValue descriptor_with_grad(Atom &atom) const {
     DescriptorValue d = self().get_descriptor(atom);
     if (self().analytic_grads() && d.has_grad) {
@@ -671,18 +571,11 @@ private:
     return d;
   }
 
-  // Fill one atom's cache row, reusing descriptor_with_grad for the value +
-  // gradient and recording the pointer-free neighbor indices / bond vectors
-  // used by eval_cached. Each call touches only `atom`'s own neighbor list, so
-  // the parallel fill is race-free.
   void fill_atom_cache(Configuration &cfg, std::size_t a, AtomCache &cc) const {
     Atom &atom = cfg.atoms[a];
     cc.type = TypeIndex{atom.type.index};
     const DescriptorValue d = descriptor_with_grad(atom);
     cc.values = d.values;
-    // Stack the centre block + every neighbour block column-wise (see
-    // AtomCache::grad_all). The producer side keeps the natural per-block
-    // layout (DescriptorValue); only the cache is restacked for batched eval.
     const Eigen::Index S = d.values.size();
     const auto K = static_cast<Eigen::Index>(d.grad_neigh.size());
     cc.grad_all.resize(S, 3 * (K + 1));
@@ -699,8 +592,6 @@ private:
     }
   }
 
-  // Forces from atom i's descriptor: F_m = −Σ_i (de/dD_i)·(dD_i/dr_m).
-  // dD_i/dr_m is nonzero only for m=i (grad_self) and m∈neighbors(i).
   void accumulate_atom_forces(Configuration &cfg, Atom &ai,
                               const DescriptorValue &d,
                               const Eigen::VectorXd &dEdD) const {
@@ -709,14 +600,10 @@ private:
       Atom &aj = const_cast<Atom &>(*nb.neighbor);
       const Vec3 f_on_j = -(gn.transpose() * dEdD);
       aj.calc_force += f_on_j;
-      // Virial: bond ⊗ force-on-partner (matches Tersoff/EAM convention).
       cfg.calc_stress += nb.dist * f_on_j.transpose();
     }
   }
 
-  // Apply the per-type whitening D'=(D−μ)/σ to a descriptor value and its
-  // position-gradients in place. Each gradient row k scales by inv_std[k]; μ is
-  // a constant shift and drops out.
   void standardize_in_place(TypeIndex type, Eigen::VectorXd &values,
                             DescriptorGrad &grad_self,
                             std::vector<DescriptorGrad> &grad_neigh) const {

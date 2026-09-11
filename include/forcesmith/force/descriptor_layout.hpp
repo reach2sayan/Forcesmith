@@ -1,15 +1,7 @@
 #pragma once
 
-// Shared flat-layout machinery for local ML descriptors (ACSF, LMBTR, ...).
-// A per-atom descriptor is a flat vector partitioned into contiguous *blocks*.
-// Each block channels `count` values over `nchan` channels — `nchan = ntypes`
-// for per-species blocks, `nchan = P = ntypes(ntypes+1)/2` for per-species-pair
-// blocks — and a single component lives at `base + chan*count + t`. Every
-// descriptor differs only in which blocks it pushes and how it names them, so
-// the prefix-sum/index arithmetic lives here once and the concrete descriptors
-// wrap it (AcsfLayout, LmbtrLayout) to keep their domain vocabulary.
-
 #include "forcesmith/core/types.hpp"
+#include "forcesmith/force/potential_table.hpp" // pair_ordinal
 #include <Eigen/Core>
 #include <algorithm>
 #include <boost/container/static_vector.hpp>
@@ -19,20 +11,6 @@
 
 namespace forcesmith {
 
-// Upper-triangle ordinal of the unordered species pair {a,b}
-// 0 <= lo <= hi < S)
-constexpr FORCE_INLINE std::size_t pair_ordinal(std::size_t a, std::size_t b,
-                                                std::size_t S) {
-  const std::size_t lo = std::min(a, b);
-  const std::size_t hi = std::max(a, b);
-  return lo * S - lo * (lo - 1) / 2 + (hi - lo);
-}
-
-// Sequence of contiguous descriptor blocks. add() appends a block of `count`
-// values over `nchan` channels, prefix-summing the base offset, and returns the
-// block's id; index() maps (block, channel, t) to its flat position. Blocks
-// live in inline storage (a descriptor has only a handful: ACSF 5, LMBTR <= 2),
-// so a layout costs no heap allocation.
 struct DescriptorLayout {
   struct Block {
     std::size_t base = 0;  // first flat index of the block
@@ -44,7 +22,7 @@ struct DescriptorLayout {
   std::size_t size_ = 0;
 
   std::size_t add(std::size_t count, std::size_t nchan) {
-    blocks_.push_back(Block{size_, count, nchan});
+    blocks_.push_back(Block{.base = size_, .count = count, .nchan = nchan});
     size_ += count * nchan;
     return blocks_.size() - 1;
   }

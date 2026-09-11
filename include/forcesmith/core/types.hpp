@@ -25,7 +25,7 @@ enum class PotentialFormat {
   Unknown
 };
 
-constexpr auto tensor3D_indices = std::array{
+constexpr std::array tensor3D_indices = {
     std::pair{0, 0}, std::pair{0, 1}, std::pair{0, 2},
     std::pair{1, 0}, std::pair{1, 1}, std::pair{1, 2},
     std::pair{2, 0}, std::pair{2, 1}, std::pair{2, 2},

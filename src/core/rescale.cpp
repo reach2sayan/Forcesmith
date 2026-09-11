@@ -36,11 +36,9 @@ double rescale_rho_axis(EAMForceCalculator &calc,
                         std::span<Configuration> configs) {
   const std::size_t n = calc.ntypes;
 
-  // Density pass: fills each atom's a.rho via the EAM first pass.
   std::for_each(configs.begin(), configs.end(),
                 [&](auto &cfg) { calc.eval_forces(cfg); });
 
-  // Per-type min/max sampled electron density across all configs.
   constexpr double inf = std::numeric_limits<double>::infinity();
   std::vector<double> maxrho(n, -inf), minrho(n, inf);
   std::ranges::for_each(configs, [&](const auto &cfg) {
@@ -52,8 +50,6 @@ double rescale_rho_axis(EAMForceCalculator &calc,
     }
   });
 
-  // Dominant type: the one with the largest |ρ| extent. `sign_pos` selects
-  // whether the positive (max) or negative (min) side drives the scaling.
   std::size_t dom = 0;
   double best = -1.0;
   bool sign_pos = true;
@@ -86,7 +82,6 @@ double rescale_rho_axis(EAMForceCalculator &calc,
   }
   const double a = upper / right;
 
-  // Domain violation: any sampled ρ falls outside its embedding span.
   const bool violation = std::ranges::any_of(
       std::views::iota(std::size_t{0}, n), [&](std::size_t t) {
         if (!std::isfinite(maxrho[t]))
@@ -96,13 +91,11 @@ double rescale_rho_axis(EAMForceCalculator &calc,
         return minrho[t] < lo || maxrho[t] > hi;
       });
 
-  // forcesmith skip rule: only rescale when actually needed.
   if (!std::isfinite(a) || std::abs(a) < 1e-30 ||
       (!violation && std::abs(a) >= 0.95 && std::abs(a) <= 1.05)) {
     return 1.0;
   }
 
-  // Apply one global factor: density × a, embedding argument / a.
   for (auto &&[density, embedding] :
        std::views::zip(calc.density, calc.embedding)) {
     density = RadialPotential(ScaledOutputPotential{std::move(density), a});
@@ -114,7 +107,6 @@ double rescale_rho_axis(EAMForceCalculator &calc,
 void embed_shift(EAMForceCalculator &calc, std::span<const double> rho_ref) {
   const std::size_t n = calc.ntypes;
 
-  // slope_t = F_t′(rho_ref_t)
   std::vector<double> slope(n, 0.0);
   for (auto [s, rho, emb] : std::views::zip(slope, rho_ref, calc.embedding) |
                                 std::views::filter([](const auto &t) {
@@ -122,7 +114,6 @@ void embed_shift(EAMForceCalculator &calc, std::span<const double> rho_ref) {
                                 }))
     s = emb.deriv(rho);
 
-  // Shift embedding: F_t(ρ) → F_t(ρ) − slope_t × ρ
   for (auto [t, s] : std::views::enumerate(slope)) {
     if (std::abs(s) < 1e-14) {
       continue;
@@ -131,8 +122,6 @@ void embed_shift(EAMForceCalculator &calc, std::span<const double> rho_ref) {
     emb = RadialPotential(LinearAdjustedPotential{std::move(emb), s, 0.0});
   }
 
-  // Compensate pairs: φ_{αβ}(r) → φ_{αβ}(r) + slope_α × g_β(r) + slope_β ×
-  // g_α(r)
   for (auto [ti, tj] : calc.pair.indices()) {
     const double ca = slope[ti];
     const double cb = slope[tj];
@@ -148,18 +137,12 @@ void embed_shift(EAMForceCalculator &calc, std::span<const double> rho_ref) {
 }
 
 void rescale_eam(EAMForceCalculator &calc, std::span<Configuration> configs) {
-  // Step 0: density-axis stretch so sampled ρ fills the embedding table. Runs
-  // first; compute_rho_ref below re-evaluates ρ on the stretched density.
   rescale_rho_axis(calc, configs);
 
-  // embed_shift does not modify density functions, so rho_ref is stable across
-  // both steps.
   const auto rho_ref = compute_rho_ref(calc, configs);
 
-  // Step 1: gauge-invariant linear shift → F_t′(rho_ref) = 0
   embed_shift(calc, rho_ref);
 
-  // Step 2: constant zero-shift → F_t(rho_ref) = 0
   for (auto [emb, rho] : std::views::zip(calc.embedding, rho_ref)) {
     if (rho <= 0.0) {
       continue;

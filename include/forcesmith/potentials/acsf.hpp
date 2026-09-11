@@ -1,24 +1,5 @@
 #pragma once
 
-// Behler-style atom-centered symmetry functions (ACSF) — a local per-atom ML
-// descriptor that feeds the MLBase pipeline.
-//
-// Families (DScribe ACSF conventions), all using the cosine cutoff
-//   f_c(r) = ½(1 + cos(π r / rcut)) for r < rcut, else 0:
-//   G1  (per species)       Σ_j f_c(r_ij)
-//   G2  (per species)       Σ_j exp(−η (r_ij − Rs)²) f_c(r_ij)
-//   G3  (per species)       Σ_j cos(κ r_ij) f_c(r_ij)
-//   G4  (per species pair)  2^{1−ζ} Σ_{j<k} (1+λ cosθ)^ζ
-//                              exp(−η(r_ij²+r_ik²+r_jk²))
-//                              f_c(r_ij)f_c(r_ik)f_c(r_jk)
-//   G5  (per species pair)  2^{1−ζ} Σ_{j<k} (1+λ cosθ)^ζ
-//                              exp(−η(r_ij²+r_ik²)) f_c(r_ij)f_c(r_ik)
-// cosθ = (d_j·d_k)/(r_ij r_ik). Radial families channel over the neighbour
-// species s∈[0,ntypes); angular families channel over unordered species pairs
-// (the upper_triangle(ntypes) enumeration, matching SOAP). All hyperparameters
-// are fixed; only the head coefficients are fitted. dD/dr is closed-form for
-// every family, so the model reports analytic gradients.
-
 #include "forcesmith/core/atom.hpp"
 #include "forcesmith/force/descriptor_layout.hpp"
 #include "forcesmith/force/force_calculator_concept.hpp"
@@ -31,10 +12,6 @@
 
 namespace forcesmith {
 
-// The five symmetry-function families, in descriptor-block order. Radial
-// families (G1-G3) channel over the neighbour species s; angular families
-// (G4-G5) channel over unordered species pairs. The underlying values double as
-// the block ids in AcsfLayout's DescriptorLayout (pushed in this order).
 enum class SymmetryFunctionFamily : std::size_t {
   G1 = 0,
   G2 = 1,
@@ -43,12 +20,6 @@ enum class SymmetryFunctionFamily : std::size_t {
   G5 = 4
 };
 
-// Flat layout of the ACSF descriptor vector — the contiguous blocks
-//   [G1 per species][G2 per species][G3 per species][G4 per pair][G5 per pair]
-// — built once from the family counts + ntypes. A thin wrapper over the shared
-// DescriptorLayout that keeps the radial/angular vocabulary; the single source
-// of truth for both descriptor_size() and the per-component indices, so
-// get_descriptor never hand-rolls offset arithmetic.
 struct AcsfLayout {
   DescriptorLayout d_;
   AcsfLayout(std::size_t S, std::size_t nG1, std::size_t nG2, std::size_t nG3,
@@ -63,9 +34,6 @@ struct AcsfLayout {
 
   [[nodiscard]] constexpr Eigen::Index size() const { return d_.size(); }
 
-  // base + chan * count + t. radial() takes the per-species channel s;
-  // angular() takes the per-pair channel po; the two names document which
-  // channel space the caller is in.
   [[nodiscard]] Eigen::Index radial(SymmetryFunctionFamily f, std::size_t s,
                                     std::size_t t) const {
     return d_.index(std::to_underlying(f), s, t);
@@ -114,17 +82,11 @@ struct ACSF : MLBase<ACSF> {
             .size());
   }
 
-  // Re-rank hook (see MLBase::remap): new-layout flat index → old-layout flat
-  // index (or nullopt for a block touching a newly-added species). Delegates to
-  // the generic remap_layout over this descriptor's block structure.
-  [[nodiscard]] std::vector<std::optional<Eigen::Index>>
-  descriptor_index_map(const SpeciesRegistry &old_reg,
-                       const SpeciesRegistry &new_reg) const;
+  [[nodiscard]] AcsfLayout layout_for(std::size_t S) const {
+    return AcsfLayout{S, g1, radial.size(), g3.size(), g4.size(), g5.size()};
+  }
 
 private:
-  // A valid neighbour after distance/species filtering (collect_neighbours).
-  // `orig` index to atom.neighbors so the analytic gradients scatter
-  // into the full-length, neighbour-parallel grad_neigh array.
   struct Neighbor {
     std::size_t orig_index;
     Vec3 d;    // bond vector r_j − r_i
@@ -142,5 +104,7 @@ private:
 };
 
 static_assert(CForceCalculator<ACSF>);
+
+static_assert(CDescriptorModel<ACSF>);
 
 } // namespace forcesmith

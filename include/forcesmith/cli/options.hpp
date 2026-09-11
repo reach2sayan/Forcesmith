@@ -6,8 +6,6 @@
 
 namespace forcesmith::cli {
 
-// Parsed command-line options. A plain struct decoupled from the parser library
-// so the rest of the CLI never touches boost::program_options.
 struct CliOptions {
   std::string config;                  // --config,c  (required)
   std::string startpot;                // --startpot,s (required)
@@ -22,7 +20,7 @@ struct CliOptions {
   double smooth_weight = 0.0;   // --smooth-weight
   std::string algorithm = "lm"; // --algorithm,a
 
-  unsigned seed = 42;  // --seed
+  unsigned seed = 0;  // --seed (0 = seed DE from random_device)
   double de_F = 0.65; // --de-F
   double de_CR = 0.5; // --de-CR
   int de_np = 15;
