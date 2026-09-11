@@ -4,6 +4,7 @@
 
 #include <cmath>
 #include <limits>
+#include <numbers>
 #include <utility>
 
 namespace forcesmith {

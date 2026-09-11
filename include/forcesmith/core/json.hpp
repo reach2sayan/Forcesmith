@@ -47,10 +47,13 @@ struct adl_serializer<T, std::enable_if_t<forcesmith::CDescribed<T>>> {
   static void from_json(const json &j, T &v) {
     boost::mp11::mp_for_each<forcesmith::detail::described_public_members<T>>(
         [&](auto D) {
-          const bool optional = std::ranges::contains(
-              forcesmith::optional_members<T>, std::string_view(D.name));
-          if (optional && !j.contains(D.name)) {
-            return;
+          constexpr bool optional =
+              std::ranges::contains(forcesmith::optional_members<T>,
+                                    std::string_view(decltype(D)::name));
+          if constexpr (optional) {
+            if (!j.contains(D.name)) {
+              return;
+            }
           }
           j.at(D.name).get_to(v.*D.pointer);
         });
