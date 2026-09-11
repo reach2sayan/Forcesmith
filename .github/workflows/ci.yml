@@ -92,9 +92,9 @@ jobs:
 
       - uses: ilammy/msvc-dev-cmd@v1
 
-      # vcpkg (preinstalled at VCPKG_INSTALLATION_ROOT) supplies the manifest-less
-      # dependencies. ipopt is available as a vcpkg port, so MKL/IPOPT from-source
-      # are not used on this platform.
+      # vcpkg's IPOPT port is coin-or-ipopt; Boost 1.92 is fetched by CMake. Still
+      # not enough: cmake/FetchIPOPT.cmake always builds IPOPT with sh/make and
+      # never looks for an installed one, so the Build step fails on MSVC.
       - name: Install dependencies (vcpkg)
         shell: bash
         run: |
