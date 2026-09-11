@@ -3,11 +3,15 @@ project(Forcesmith CXX)
 
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+# No C++ modules here; scanning only adds an uncacheable step per TU.
+set(CMAKE_CXX_SCAN_FOR_MODULES OFF)
 set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 find_program(CCACHE_PROGRAM ccache)
-if (CCACHE_PROGRAM)
+if (CMAKE_CXX_COMPILER_LAUNCHER)
+    message(STATUS "Compiler launcher: ${CMAKE_CXX_COMPILER_LAUNCHER}")
+elseif (CCACHE_PROGRAM)
     set(CMAKE_CXX_COMPILER_LAUNCHER "${CCACHE_PROGRAM}")
     set(CMAKE_C_COMPILER_LAUNCHER "${CCACHE_PROGRAM}")
     message(STATUS "ccache enabled: ${CCACHE_PROGRAM}")
@@ -39,7 +43,14 @@ else ()
     target_compile_options(forcesmith_warnings INTERFACE
             -Wall -Wextra -Wpedantic -Wshadow -Wnon-virtual-dtor
             $<$<CONFIG:Debug>:-g -fsanitize=address,undefined>
-            $<$<CONFIG:Release>:-O3 -march=native -DNDEBUG>)
+            $<$<CONFIG:Release>:-O3 -DNDEBUG>)
+    # CI shares a ccache across runners with different CPUs, so it pins a
+    # portable target; native objects from one runner SIGILL on another.
+    set(FORCESMITH_ARCH "native" CACHE STRING "-march for Release builds (empty: none)")
+    if (FORCESMITH_ARCH)
+        target_compile_options(forcesmith_warnings INTERFACE
+                $<$<CONFIG:Release>:-march=${FORCESMITH_ARCH}>)
+    endif ()
 
     target_link_options(forcesmith_warnings INTERFACE $<$<CONFIG:Debug>:-fsanitize=address,undefined>)
 endif ()

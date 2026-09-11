@@ -1,0 +1,21 @@
+name: GCC 15
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  linux:
+    uses: ./.github/workflows/linux-build.yml
+    with:
+      compiler: gcc
+      cc: gcc-15
+      cxx: g++-15
+      pkg: g++-15

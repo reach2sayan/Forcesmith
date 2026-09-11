@@ -1,0 +1,77 @@
+name: Linux build
+
+# Reusable Ubuntu job, called by gcc.yml and clang.yml. Linux builds IPOPT +
+# MUMPS from source (cmake/FetchIPOPT.cmake).
+
+on:
+  workflow_call:
+    inputs:
+      compiler:
+        required: true
+        type: string
+      cc:
+        required: true
+        type: string
+      cxx:
+        required: true
+        type: string
+      pkg:
+        required: true
+        type: string
+
+jobs:
+  build:
+    name: ${{ inputs.compiler }} (Ubuntu)
+    runs-on: ubuntu-24.04
+    env:
+      CC: ${{ inputs.cc }}
+      CXX: ${{ inputs.cxx }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # ddx/einsum need GCC >= 14 / Clang >= 20; noble has neither 15 nor 20, so
+      # pull them from the toolchain PPA and apt.llvm.org. g++-15 is installed for
+      # both jobs so clang picks up libstdc++-15. Boost 1.92 is fetched by CMake.
+      - name: Install dependencies
+        run: |
+          sudo add-apt-repository -y ppa:ubuntu-toolchain-r/test
+          wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc
+          echo "deb http://apt.llvm.org/noble/ llvm-toolchain-noble-20 main" | sudo tee /etc/apt/sources.list.d/llvm-20.list
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            ninja-build ccache \
+            libeigen3-dev libtbb-dev \
+            gfortran pkg-config patch \
+            libblas-dev liblapack-dev \
+            g++-15 ${{ inputs.pkg }}
+
+      # v2: v1 held -march=native objects from whichever runner CPU built them,
+      # which SIGILL on runners without those instructions.
+      - name: ccache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ccache
+          key: ccache-v2-${{ inputs.compiler }}-${{ github.sha }}
+          restore-keys: ccache-v2-${{ inputs.compiler }}-
+
+      # The presets pin gcc-15 as a cache variable, which beats CC/CXX — override
+      # it on the command line. MKL is not on the runner. x86-64-v3 (AVX2+FMA)
+      # runs on every GitHub runner, so cached objects stay valid across CPUs.
+      - name: Configure
+        run: >
+          cmake --preset ci
+          -DCMAKE_C_COMPILER=${{ inputs.cc }}
+          -DCMAKE_CXX_COMPILER=${{ inputs.cxx }}
+          -DFORCESMITH_USE_MKL=OFF
+          -DFORCESMITH_ARCH=x86-64-v3
+
+      # Template-heavy TUs (ddx/einsum/Boost) exhaust the runner's 16 GB at -j4 and
+      # systemd-oomd SIGTERMs ninja ("interrupted by user", exit 143).
+      - name: Build
+        run: |
+          ccache -z
+          cmake --build --preset ci -j 2
+          ccache -s
+
+      - name: Test
+        run: ctest --preset ci

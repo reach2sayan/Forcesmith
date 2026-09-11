@@ -1,0 +1,21 @@
+name: Clang 20
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  linux:
+    uses: ./.github/workflows/linux-build.yml
+    with:
+      compiler: clang
+      cc: clang-20
+      cxx: clang++-20
+      pkg: clang-20

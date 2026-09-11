@@ -1,6 +1,8 @@
 # Forcesmith
 
-[![CI](https://github.com/reach2sayan/Forcesmith/actions/workflows/ci.yml/badge.svg)](https://github.com/reach2sayan/Forcesmith/actions/workflows/ci.yml)
+[![GCC 15](https://github.com/reach2sayan/Forcesmith/actions/workflows/gcc.yml/badge.svg)](https://github.com/reach2sayan/Forcesmith/actions/workflows/gcc.yml)
+[![Clang 20](https://github.com/reach2sayan/Forcesmith/actions/workflows/clang.yml/badge.svg)](https://github.com/reach2sayan/Forcesmith/actions/workflows/clang.yml)
+[![MSVC 2022](https://github.com/reach2sayan/Forcesmith/actions/workflows/msvc.yml/badge.svg)](https://github.com/reach2sayan/Forcesmith/actions/workflows/msvc.yml)
 
 A modern **C++23** reimplementation of [potfit](https://www.potfit.net/), the
 open-source force-matching tool for constructing interatomic potentials. Given a

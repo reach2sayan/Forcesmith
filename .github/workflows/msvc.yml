@@ -1,0 +1,67 @@
+name: MSVC 2022
+
+# Windows links conda-forge's IPOPT; the sh/make source build cannot run under MSVC.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows:
+    name: MSVC (Windows)
+    runs-on: windows-2022
+    env:
+      SCCACHE_GHA_ENABLED: "true"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ilammy/msvc-dev-cmd@v1
+
+      # conda-forge ships an MSVC-ABI IPOPT built with MUMPS (vcpkg's
+      # coin-or-ipopt has no linear solver), plus Eigen and TBB. Boost 1.92 is
+      # fetched by CMake; FORCESMITH_SYSTEM_IPOPT defaults ON under WIN32.
+      - uses: mamba-org/setup-micromamba@v3
+        with:
+          micromamba-root-path: ${{ runner.temp }}/micromamba
+          environment-name: deps
+          create-args: eigen=3.4 tbb-devel ipopt
+          cache-environment: true
+
+      # Library/bin on PATH: the test binaries (and gtest discovery, which runs
+      # them at build time) need ipopt/tbb/openblas DLLs.
+      - name: Expose dependencies
+        shell: bash
+        run: |
+          lib="$(cygpath -m '${{ runner.temp }}/micromamba/envs/deps/Library')"
+          echo "DEPS_PREFIX=$lib" >> "$GITHUB_ENV"
+          cygpath -w "$lib/bin" >> "$GITHUB_PATH"
+
+      # sccache over the GitHub Actions cache: ccache's MSVC support is partial.
+      - uses: mozilla-actions/sccache-action@v0.0.9
+
+      # pwsh, not Git bash: its /usr/bin/link shadows MSVC's link.exe.
+      - name: Configure
+        run: >
+          cmake -S . -B build/ci -G Ninja
+          -DCMAKE_BUILD_TYPE=Release
+          -DCMAKE_C_COMPILER=cl -DCMAKE_CXX_COMPILER=cl
+          -DCMAKE_C_COMPILER_LAUNCHER=sccache -DCMAKE_CXX_COMPILER_LAUNCHER=sccache
+          "-DCMAKE_PREFIX_PATH=$env:DEPS_PREFIX"
+          -DFORCESMITH_USE_MKL=OFF
+
+      - name: Build
+        run: cmake --build build/ci -j 2
+
+      - name: sccache stats
+        if: always()
+        run: sccache --show-stats
+
+      - name: Test
+        run: ctest --test-dir build/ci --output-on-failure
