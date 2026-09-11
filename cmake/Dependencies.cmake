@@ -94,7 +94,7 @@ FetchContent_MakeAvailable(Boost)
 # the include is always spelled "ddx.hpp"; never reach into its subdirectories.
 FetchContent_Declare(ddx
         GIT_REPOSITORY https://github.com/reach2sayan/ddx.git
-        GIT_TAG 9472f81
+        GIT_TAG 13c8c9a
         EXCLUDE_FROM_ALL
         SYSTEM
 )
