@@ -35,7 +35,7 @@ jobs:
           - compiler: clang
             cc: clang-20
             cxx: clang++-20
-            pkg: clang-20
+            pkg: clang-20 clang-tools-20  # clang-scan-deps for C++23 module scanning
     env:
       CC: ${{ matrix.cc }}
       CXX: ${{ matrix.cxx }}
@@ -74,8 +74,10 @@ jobs:
           -DCMAKE_CXX_COMPILER=${{ matrix.cxx }}
           -DFORCESMITH_USE_MKL=OFF
 
+      # Template-heavy TUs (ddx/einsum/Boost) exhaust the runner's 16 GB at -j4 and
+      # systemd-oomd SIGTERMs ninja ("interrupted by user", exit 143).
       - name: Build
-        run: cmake --build --preset ci
+        run: cmake --build --preset ci -j 2
 
       - name: Test
         run: ctest --preset ci
@@ -96,7 +98,7 @@ jobs:
       - name: Install dependencies (vcpkg)
         shell: bash
         run: |
-          vcpkg install eigen3 tbb boost-serialization boost-program-options ipopt --triplet x64-windows
+          vcpkg install eigen3 tbb coin-or-ipopt --triplet x64-windows
 
       - name: Configure
         shell: bash

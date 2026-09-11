@@ -56,6 +56,7 @@ reference/
 data/
 *.log
 *.sh
+!tests/integration/harness/*.sh
 *.txt
 !CMakeLists.txt
 !**/CMakeLists.txt
